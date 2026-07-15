@@ -1,12 +1,6 @@
 {
-  "build": {
-    "env": {
-      "NEXT_PUBLIC_FORCE_DYNAMIC": "true"
-    }
-  },
-  "rewrites": [],
   "functions": {
-    "app/api/**/route.js": {
+    "app/api/**": {
       "runtime": "nodejs18.x"
     }
   }
