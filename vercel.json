@@ -1,19 +1,13 @@
 {
-  "headers": [
-    {
-      "source": "/fonts/inter-var-latin.woff2",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_FORCE_DYNAMIC": "true"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/mtvpls",
-      "schedule": "0 1 * * *"
+  },
+  "rewrites": [],
+  "functions": {
+    "app/api/**/route.js": {
+      "runtime": "nodejs18.x"
     }
-  ]
+  }
 }
