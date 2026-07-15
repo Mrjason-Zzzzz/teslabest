@@ -1,4 +1,17 @@
 /** @type {import('next').NextConfig} */
+const nextConfig = {
+  // 新增这一行，全局关闭静态预渲染，所有接口动态执行
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb"
+    }
+  },
+  // 强制全部路由动态，根治 searchParams 静态报错
+  reactStrictMode: true,
+}
+
+module.exports = nextConfig
+/** @type {import('next').NextConfig} */
 /* eslint-disable @typescript-eslint/no-var-requires */
 
 const { PHASE_DEVELOPMENT_SERVER } = require('next/constants');
