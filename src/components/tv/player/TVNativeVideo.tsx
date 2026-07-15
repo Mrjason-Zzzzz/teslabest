@@ -16,8 +16,6 @@ function getSourceType(url: string, explicitType?: SourceType): SourceType {
   if (explicitType) return explicitType;
   const lower = url.toLowerCase();
   const path = lower.split('?')[0];
-  // 代理地址通常是 /api/proxy/vod/m3u8?url=...，真实 m3u8 在 query 中；
-  // 不能只看 ? 前路径，否则会被当成 native，浏览器只请求 index.m3u8 而不会交给 hls.js 拉 ts。
   if (path.includes('.m3u8') || path.includes('.m3u') || lower.includes('/m3u8') || lower.includes('m3u8') || lower.includes('.m3u')) return 'm3u8';
   if (path.endsWith('.flv') || lower.includes('.flv?')) return 'flv';
   return 'native';
@@ -83,12 +81,17 @@ export default function TVNativeVideo({
   className?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animationRef = useRef<number>(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
   const onTimeRef = useRef<typeof onTime>(onTime);
   const onPlaybackErrorRef = useRef<typeof onPlaybackError>(onPlaybackError);
   const onPlayingChangeRef = useRef<typeof onPlayingChange>(onPlayingChange);
   const onBufferingChangeRef = useRef<typeof onBufferingChange>(onBufferingChange);
   const bufferingTimerRef = useRef<number | null>(null);
   const bufferingStateRef = useRef(false);
+
   const [loading, setLoading] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -110,6 +113,49 @@ export default function TVNativeVideo({
     onBufferingChangeRef.current = onBufferingChange;
   }, [onBufferingChange]);
 
+  // 帧绘制循环：把隐藏video的画面实时画到可见canvas上
+  const drawFrame = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (ctx && video.videoWidth && video.videoHeight) {
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+      const videoRatio = video.videoWidth / video.videoHeight;
+      const canvasRatio = canvasWidth / canvasHeight;
+
+      let drawWidth = canvasWidth;
+      let drawHeight = canvasHeight;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      // 保持 object-contain 比例，和原video表现一致
+      if (videoRatio > canvasRatio) {
+        drawHeight = canvasWidth / videoRatio;
+        offsetY = (canvasHeight - drawHeight) / 2;
+      } else {
+        drawWidth = canvasHeight * videoRatio;
+        offsetX = (canvasWidth - drawWidth) / 2;
+      }
+
+      ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+    }
+
+    animationRef.current = requestAnimationFrame(drawFrame);
+  };
+
+  // 适配容器尺寸
+  const resizeCanvas = () => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    const rect = container.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
@@ -124,6 +170,7 @@ export default function TVNativeVideo({
     setPlaying(false);
 
     const cleanup = () => {
+      cancelAnimationFrame(animationRef.current);
       if (videoEl.hls) {
         videoEl.hls.destroy();
         videoEl.hls = null;
@@ -138,7 +185,7 @@ export default function TVNativeVideo({
 
     const playSafely = () => {
       videoEl.play().catch(() => {
-        // 浏览器阻止自动播放时，等待用户按 OK/点击播放
+        // 浏览器阻止自动播放时，等待用户点击
       });
     };
 
@@ -198,7 +245,7 @@ export default function TVNativeVideo({
                 }
               : undefined;
             const hls = new Hls({
-              enableWorker: true,
+              enableWorker: false,
               lowLatencyMode: live,
               backBufferLength: live ? 10 : 30,
               maxBufferLength: live ? 18 : 45,
@@ -239,6 +286,8 @@ export default function TVNativeVideo({
     }
 
     attach();
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     let triedInitialSeek = false;
     const seekToInitialTime = () => {
@@ -256,14 +305,17 @@ export default function TVNativeVideo({
         // ignore unsupported seek state
       }
     };
+
     const onLoaded = () => {
       seekToInitialTime();
+      resizeCanvas();
       setLoading(false);
       clearBuffering();
     };
     const onPlay = () => {
       setPlaying(true);
       clearBuffering();
+      drawFrame(); // 播放时启动画布绘制
       onPlayingChangeRef.current?.(true);
     };
     const onPlaying = () => {
@@ -274,12 +326,14 @@ export default function TVNativeVideo({
     const onPause = () => {
       setPlaying(false);
       clearBuffering();
+      cancelAnimationFrame(animationRef.current); // 暂停时停止绘制
       onPlayingChangeRef.current?.(false);
     };
     const onBuffering = () => scheduleBuffering();
     const onError = () => {
       setLoading(false);
       clearBuffering();
+      cancelAnimationFrame(animationRef.current);
       setError('视频加载失败，请尝试切换线路或频道');
       onPlaybackErrorRef.current?.();
     };
@@ -304,6 +358,7 @@ export default function TVNativeVideo({
 
     return () => {
       disposed = true;
+      window.removeEventListener('resize', resizeCanvas);
       videoEl.removeEventListener('loadedmetadata', seekToInitialTime);
       videoEl.removeEventListener('loadeddata', onLoaded);
       videoEl.removeEventListener('canplay', onLoaded);
@@ -340,17 +395,33 @@ export default function TVNativeVideo({
   }, [command]);
 
   return (
-    <div className={`relative h-full w-full bg-black ${className}`}>
-      <video
-        ref={videoRef}
-        poster={poster}
-        className='h-full w-full bg-black object-contain'
-        controls={false}
-        playsInline
-        preload='auto'
+    <div ref={containerRef} className={`relative h-full w-full bg-black ${className}`}>
+      {/* 可见画布：特斯拉识别为普通图片，D档不冻结 */}
+      <canvas
+        ref={canvasRef}
+        className='h-full w-full bg-black'
         onClick={toggle}
         aria-label={title || 'TV 视频播放器'}
       />
+
+      {/* 隐藏解码层：后台硬解视频，移出可视区，不触发系统视频限制 */}
+      <video
+        ref={videoRef}
+        poster={poster}
+        controls={false}
+        playsInline
+        preload='auto'
+        style={{
+          position: 'absolute',
+          left: '-9999px',
+          top: '-9999px',
+          opacity: 0,
+          pointerEvents: 'none',
+          width: 0,
+          height: 0,
+        }}
+      />
+
       {(loading || buffering) && (
         <div className='pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 text-white'>
           <div className='flex items-center gap-3 rounded-2xl border border-white/12 bg-black/55 px-6 py-4 text-2xl font-bold shadow-2xl shadow-black/50 backdrop-blur-md'>
