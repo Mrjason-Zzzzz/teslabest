@@ -18,7 +18,7 @@ export default function PlayPageClient() {
   // --- 1. 核心状态 ---
   const [loadingStage, setLoadingStage] = useState<'searching' | 'fetching' | 'ready'>('searching');
   const [detail, setDetail] = useState<any>(null);
-  const [episodes, setEpisodes] = useState<any[]>([]);
+  const [episodes, setEpisodes] = useState<any[]>([]); // 明确这是数组
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(0);
   const [videoUrl, setVideoUrl] = useState('');
   
@@ -48,7 +48,7 @@ export default function PlayPageClient() {
     fetchAdFilterCode();
   }, []);
 
-  // --- 3. 搜索与初始化逻辑 (已修复类型错误) ---
+  // --- 3. 核心搜索与解析 (已修复类型匹配问题) ---
   useEffect(() => {
     const initData = async () => {
       const title = searchParams.get('title');
@@ -56,10 +56,9 @@ export default function PlayPageClient() {
 
       try {
         setLoadingStage('searching');
-        // 使用 as any 规避类型错误，直接处理搜索结果
-        const searchResults: any = await searchAnime(title);
         
-        // 兼容处理：检查 .results, .list, 或者直接就是数组的情况
+        // 搜索解析
+        const searchResults: any = await searchAnime(title);
         const items = searchResults?.results || searchResults?.list || (Array.isArray(searchResults) ? searchResults : []);
 
         if (items && items.length > 0) {
@@ -67,7 +66,14 @@ export default function PlayPageClient() {
           setDetail(firstResult);
           
           setLoadingStage('fetching');
-          const episodeList = await getEpisodes(firstResult.id);
+          
+          // --- 这里是修复点：处理 getEpisodes 返回的对象 ---
+          const episodeResponse: any = await getEpisodes(firstResult.id);
+          // 提取数组：不管后端把列表藏在哪个字段里，这里做兼容提取
+          const episodeList = Array.isArray(episodeResponse) 
+            ? episodeResponse 
+            : (episodeResponse?.episodes || episodeResponse?.list || episodeResponse?.data || []);
+            
           setEpisodes(episodeList);
           
           if (episodeList.length > 0) {
@@ -75,8 +81,7 @@ export default function PlayPageClient() {
           }
           setLoadingStage('ready');
         } else {
-          console.error('未找到搜索结果');
-          setLoadingStage('ready'); // 即使没结果也结束状态，避免死循环
+          setLoadingStage('ready');
         }
       } catch (e) {
         console.error('初始化播放流失败', e);
@@ -92,7 +97,7 @@ export default function PlayPageClient() {
       <div className="relative w-full h-screen bg-black flex flex-col">
         {/* 顶部标题栏 */}
         <div className="absolute top-0 left-0 p-4 z-20 text-white flex justify-between w-full bg-gradient-to-b from-black/80">
-            <h1 className="text-lg font-bold truncate">{detail?.title || '正在搜索...'}</h1>
+            <h1 className="text-lg font-bold truncate">{detail?.title || '加载中...'}</h1>
             <button onClick={() => router.back()} className="p-2 bg-black/50 rounded-full hover:bg-black">
                 <X />
             </button>
@@ -113,7 +118,6 @@ export default function PlayPageClient() {
               playsInline
               src={videoUrl}
               onPlay={() => {
-                  // 播放时注入去广告脚本
                   if (customAdFilterCodeRef.current) {
                       try { eval(customAdFilterCodeRef.current); } catch(e) {}
                   }
