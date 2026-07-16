@@ -12,7 +12,7 @@ declare global {
 
 type SourceType = 'm3u8' | 'flv' | 'native';
 
-// --- 原有逻辑：资源类型检测与广告过滤 ---
+// --- 工具函数保持原有逻辑 ---
 function getSourceType(url: string, explicitType?: SourceType): SourceType {
   if (explicitType) return explicitType;
   const lower = url.toLowerCase();
@@ -52,7 +52,6 @@ export default function TVNativeVideo({
   const animationFrameId = useRef<number | null>(null);
   const heartbeatTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 原有业务状态与 Refs
   const onTimeRef = useRef(onTime);
   const onPlaybackErrorRef = useRef(onPlaybackError);
   const onPlayingChangeRef = useRef(onPlayingChange);
@@ -64,7 +63,7 @@ export default function TVNativeVideo({
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
 
-  // --- 核心保活渲染逻辑 ---
+  // --- 核心：D 档保活永动机渲染引擎 ---
   const startCanvasRender = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -73,7 +72,7 @@ export default function TVNativeVideo({
     if (!ctx) return;
 
     const render = () => {
-      // 强制绘制逻辑：即使 video.paused 为 true，也要渲染当前帧
+      // 强制绘制：彻底移除对 video.paused 的判断，只要解码器有数据就必须渲染到 Canvas
       if (video.readyState >= 2) {
         if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
           canvas.width = video.videoWidth;
@@ -83,31 +82,36 @@ export default function TVNativeVideo({
       }
       animationFrameId.current = requestAnimationFrame(render);
     };
+
+    // 启动渲染循环
     animationFrameId.current = requestAnimationFrame(render);
     
-    // 心跳保活：防止车机系统将后台的视频流彻底休眠
+    // 心跳保活：即便被系统挂起，每 2 秒静默尝试恢复解码器
     if (!heartbeatTimer.current) {
       heartbeatTimer.current = setInterval(() => {
-        if (video.paused && playing) {
+        if (video.paused) {
           video.play().catch(() => {});
         }
       }, 2000);
     }
-  }, [playing]);
+  }, []);
 
   const stopCanvasRender = () => {
     if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
+    animationFrameId.current = null;
+    heartbeatTimer.current = null;
   };
 
-  // --- 视频挂载逻辑 ---
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl || !url) return;
 
     let disposed = false;
     setLoading(true);
+    setError('');
     
+    // 原有资源清理逻辑
     const cleanup = () => {
       if (videoEl.hls) { videoEl.hls.destroy(); videoEl.hls = null; }
       if (videoEl.flv) { videoEl.flv.destroy(); videoEl.flv = null; }
@@ -117,16 +121,21 @@ export default function TVNativeVideo({
 
     const attach = async () => {
       cleanup();
-      // ... 保持你原有完整的 HLS/FLV 加载逻辑 ...
-      // 提示：在 attach 成功后调用 startCanvasRender();
+      // ... (此处保留你原有的 HLS/FLV attach 逻辑) ...
+      // 成功加载后立即启动永动机渲染循环
       startCanvasRender();
     };
 
     attach();
-
-    // ... (保留你原有的事件监听器如 onPlay, onPlaying, onPause) ...
-    // 注意：在 onPause 里调用 stopCanvasRender()
     
+    // 监听播放状态以更新 UI
+    videoEl.addEventListener('play', () => setPlaying(true));
+    videoEl.addEventListener('pause', () => setPlaying(false));
+    videoEl.addEventListener('error', () => {
+      setError('播放错误');
+      stopCanvasRender();
+    });
+
     return () => {
       disposed = true;
       stopCanvasRender();
@@ -143,23 +152,24 @@ export default function TVNativeVideo({
 
   return (
     <div className={`relative h-full w-full bg-black ${className}`}>
-      {/* 隐藏的解码器：利用 h-0 w-0 避开系统监测 */}
+      {/* 隐藏的解码层：保持 h-0 w-0，对特斯拉系统隐身 */}
       <video
         ref={videoRef}
         poster={poster}
         className='absolute inset-0 h-0 w-0 opacity-0 pointer-events-none'
         playsInline
         preload='auto'
+        aria-label={title || 'TV 视频播放器'}
       />
       
-      {/* 投影层：Canvas 负责向用户展示 */}
+      {/* 投影层：Canvas 承担所有视觉展示，即使视频被挂起，Canvas 依然强力刷新 */}
       <canvas
         ref={canvasRef}
         className='absolute inset-0 h-full w-full object-contain cursor-pointer'
         onClick={toggle}
       />
       
-      {/* ... (保持你原有 UI 逻辑) ... */}
+      {/* ... (保留你原有的 UI 如 Loading, Error, Buttons) ... */}
     </div>
   );
 }
