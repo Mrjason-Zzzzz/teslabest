@@ -1,18 +1,23 @@
 import React from 'react';
 
-// 扩展 Props 以兼容 page.tsx 传进来的所有属性
+// 这里是全量定义的 Props，涵盖了报错中提到的所有参数
 interface Props {
   url: string;
-  sourceType?: string;
   poster?: string;
-  live?: boolean;
   title?: string;
+  onTime?: (current: number, duration: number) => void;
+  command?: number;
+  startTime?: number;
   onError?: () => void;
+  onPlayingChange?: (playing: boolean) => void;
+  onBufferingChange?: (buffering: boolean) => void;
+  adFilterEnabled?: boolean;
+  playbackRate?: number;
   className?: string;
 }
 
 const TVNativeVideo: React.FC<Props> = ({ url, className }) => {
-  // 注意：这里用 url 参数来构建地址
+  // 核心：构建沙箱 URL
   const playerUrl = `https://player.dorezst.cn/player.html?url=${encodeURIComponent(url)}`;
 
   return (
