@@ -1,8 +1,10 @@
 import React from 'react';
 
-// 这里是全量定义的 Props，涵盖了报错中提到的所有参数
+// 添加了 sourceType 和 live 属性，彻底匹配 page.tsx 的调用
 interface Props {
   url: string;
+  sourceType?: any;
+  live?: boolean;
   poster?: string;
   title?: string;
   onTime?: (current: number, duration: number) => void;
