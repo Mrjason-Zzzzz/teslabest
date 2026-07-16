@@ -5,8 +5,7 @@ interface Props {
   className?: string;
 }
 
-export const TVNativeVideo: React.FC<Props> = ({ videoUrl, className }) => {
-  // 核心：构建沙箱 URL
+const TVNativeVideo: React.FC<Props> = ({ videoUrl, className }) => {
   const playerUrl = `https://player.dorezst.cn/player.html?url=${encodeURIComponent(videoUrl)}`;
 
   return (
@@ -21,3 +20,5 @@ export const TVNativeVideo: React.FC<Props> = ({ videoUrl, className }) => {
     </div>
   );
 };
+
+export default TVNativeVideo;
