@@ -1,68 +1,26 @@
 'use client';
 
-import { Loader2, Pause, Play } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 declare global {
-  interface HTMLVideoElement {
-    hls?: any;
-    flv?: any;
+  interface Window {
+    Player: any;
+    muxjs: any;
   }
 }
 
-type SourceType = 'm3u8' | 'flv' | 'native';
+type SourceType = 'm3u8' | 'native';
 
 function getSourceType(url: string, explicitType?: SourceType): SourceType {
   if (explicitType) return explicitType;
   const lower = url.toLowerCase();
-  const path = lower.split('?')[0];
-  if (path.includes('.m3u8') || path.includes('.m3u') || lower.includes('/m3u8') || lower.includes('m3u8') || lower.includes('.m3u')) return 'm3u8';
-  if (path.endsWith('.flv') || lower.includes('.flv?')) return 'flv';
-  return 'native';
-}
-
-function filterAdsFromM3U8(m3u8Content: string): string {
-  if (!m3u8Content) return '';
-  const adKeywords = ['sponsor', '/ad/', '/ads/', 'advert', 'advertisement', '/adjump', 'redtraffic'];
-  const lines = m3u8Content.split('\n');
-  const filteredLines: string[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.includes('#EXT-X-DISCONTINUITY')) {
-      i++;
-      continue;
-    }
-    if (line.includes('#EXTINF:') && i + 1 < lines.length) {
-      const nextLine = lines[i + 1];
-      const isAd = adKeywords.some((keyword) => nextLine.toLowerCase().includes(keyword));
-      if (isAd) {
-        i += 2;
-        continue;
-      }
-    }
-    filteredLines.push(line);
-    i++;
-  }
-
-  return filteredLines.join('\n');
+  return lower.includes('m3u8') || lower.includes('.m3u') ? 'm3u8' : 'native';
 }
 
 export default function TVNativeVideo({
   url,
   poster,
-  live = false,
-  title,
-  onTime,
-  onError: onPlaybackError,
-  onPlayingChange,
-  onBufferingChange,
-  adFilterEnabled = false,
-  playbackRate = 1,
-  startTime = 0,
-  command,
-  sourceType,
   className = '',
 }: {
   url: string;
@@ -80,346 +38,150 @@ export default function TVNativeVideo({
   sourceType?: SourceType;
   className?: string;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationRef = useRef<number>(0);
-  const isDrawingRef = useRef(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const playerRef = useRef<any>(null);
+  const hlsRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const onTimeRef = useRef<typeof onTime>(onTime);
-  const onPlaybackErrorRef = useRef<typeof onPlaybackError>(onPlaybackError);
-  const onPlayingChangeRef = useRef<typeof onPlayingChange>(onPlayingChange);
-  const onBufferingChangeRef = useRef<typeof onBufferingChange>(onBufferingChange);
-  const bufferingTimerRef = useRef<number | null>(null);
-  const bufferingStateRef = useRef(false);
-
-  const [loading, setLoading] = useState(false);
-  const [buffering, setBuffering] = useState(false);
-  const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    onTimeRef.current = onTime;
-  }, [onTime]);
-
-  useEffect(() => {
-    onPlaybackErrorRef.current = onPlaybackError;
-  }, [onPlaybackError]);
-
-  useEffect(() => {
-    onPlayingChangeRef.current = onPlayingChange;
-  }, [onPlayingChange]);
-
-  useEffect(() => {
-    onBufferingChangeRef.current = onBufferingChange;
-  }, [onBufferingChange]);
-
-  // 帧绘制：把视频画面画到canvas上
-  const drawFrame = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx && video.videoWidth > 0 && video.videoHeight > 0) {
-      // 画布尺寸和视频原始尺寸一致，保证清晰
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    }
-
-    animationRef.current = requestAnimationFrame(drawFrame);
-  };
-
-  const startDrawing = () => {
-    if (isDrawingRef.current) return;
-    isDrawingRef.current = true;
-    drawFrame();
-  };
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !url) return;
-    const videoEl = video;
-
+    if (!url || !canvasRef.current) return;
     let disposed = false;
+
     setLoading(true);
-    bufferingStateRef.current = false;
-    setBuffering(false);
-    onBufferingChangeRef.current?.(false);
     setError('');
-    setPlaying(false);
-    isDrawingRef.current = false;
 
-    const cleanup = () => {
-      cancelAnimationFrame(animationRef.current);
-      isDrawingRef.current = false;
-      if (videoEl.hls) {
-        videoEl.hls.destroy();
-        videoEl.hls = null;
+    // 动态加载 Broadway 解码器 + mux.js 解封装工具
+    const loadScripts = async () => {
+      if (!window.Player) {
+        await Promise.all([
+          import('/broadway/Decoder.js'),
+          import('/broadway/YUVCanvas.js'),
+          import('/broadway/Player.js'),
+        ]);
       }
-      if (videoEl.flv) {
-        videoEl.flv.destroy();
-        videoEl.flv = null;
+      if (!window.muxjs) {
+        // 从CDN加载mux.js，用于解TS封装提取H.264帧
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js';
+          script.onload = () => resolve();
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
       }
-      videoEl.removeAttribute('src');
-      videoEl.load();
     };
 
-    const playSafely = () => {
-      videoEl.play().catch(() => {
-        // 自动播放被拦截也启动绘制，显示首帧
-        startDrawing();
-      });
-    };
-
-    const setBufferingState = (next: boolean) => {
-      if (bufferingStateRef.current === next) return;
-      bufferingStateRef.current = next;
-      setBuffering(next);
-      onBufferingChangeRef.current?.(next);
-    };
-
-    const clearBuffering = () => {
-      if (bufferingTimerRef.current) {
-        window.clearTimeout(bufferingTimerRef.current);
-        bufferingTimerRef.current = null;
-      }
-      setBufferingState(false);
-    };
-
-    const scheduleBuffering = () => {
-      if (videoEl.paused || videoEl.ended || bufferingTimerRef.current) return;
-      bufferingTimerRef.current = window.setTimeout(() => {
-        bufferingTimerRef.current = null;
-        if (!videoEl.paused && !videoEl.ended && videoEl.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
-          setBufferingState(true);
-        }
-      }, 700);
-    };
-
-    async function attach() {
-      cleanup();
-      const type = getSourceType(url, sourceType);
-
+    const initPlayer = async () => {
       try {
-        if (type === 'm3u8' && !videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-          const HlsModule = await import('hls.js');
-          if (disposed) return;
-          const Hls = HlsModule.default;
-          if (Hls.isSupported()) {
-            const CustomLoader = adFilterEnabled
-              ? class TVAdFilterLoader extends Hls.DefaultConfig.loader {
-                  constructor(config: any) {
-                    super(config);
-                    const load = this.load.bind(this);
-                    this.load = (context: any, config: any, callbacks: any) => {
-                      if (context?.type === 'manifest' || context?.type === 'level') {
-                        const onSuccess = callbacks.onSuccess;
-                        callbacks.onSuccess = (response: any, stats: any, context: any, networkDetails: any) => {
-                          if (typeof response?.data === 'string') {
-                            response.data = filterAdsFromM3U8(response.data);
-                          }
-                          return onSuccess(response, stats, context, networkDetails);
-                        };
-                      }
-                      load(context, config, callbacks);
-                    };
-                  }
-                }
-              : undefined;
-            const hls = new Hls({
-              enableWorker: false,
-              lowLatencyMode: live,
-              backBufferLength: live ? 10 : 30,
-              maxBufferLength: live ? 18 : 45,
-              ...(CustomLoader ? { loader: CustomLoader } : {}),
-            });
-            hls.loadSource(url);
-            hls.attachMedia(videoEl);
-            videoEl.hls = hls;
-          } else {
-            videoEl.src = url;
-          }
-        } else if (type === 'flv') {
-          const flvModule = await import('flv.js');
-          if (disposed) return;
-          const flvjs = flvModule.default;
-          if (flvjs.isSupported()) {
-            const flv = flvjs.createPlayer({ type: 'flv', url, isLive: live });
-            flv.attachMediaElement(videoEl);
-            flv.load();
-            videoEl.flv = flv;
-          } else {
-            videoEl.src = url;
-          }
-        } else {
-          videoEl.src = url;
+        await loadScripts();
+        if (disposed) return;
+
+        // 初始化 Broadway 软解播放器
+        const broadwayPlayer = new window.Player({
+          useWorker: true,
+          workerFile: '/broadway/Decoder.js',
+          webgl: 'auto',
+        });
+        playerRef.current = broadwayPlayer;
+
+        // 把解码器的canvas替换到页面上
+        if (canvasRef.current?.parentNode) {
+          canvasRef.current.parentNode.replaceChild(
+            broadwayPlayer.canvas,
+            canvasRef.current
+          );
+          broadwayPlayer.canvas.className = 'h-full w-full object-contain';
         }
 
-        videoEl.setAttribute('playsinline', 'true');
-        videoEl.setAttribute('webkit-playsinline', 'true');
-        videoEl.playbackRate = playbackRate;
-        videoEl.muted = false;
-        playSafely();
+        const type = getSourceType(url);
+        if (type === 'm3u8') {
+          const HlsModule = await import('hls.js');
+          const Hls = HlsModule.default;
+
+          if (!Hls.isSupported()) {
+            setError('当前浏览器不支持HLS');
+            return;
+          }
+
+          const hls = new Hls({
+            enableWorker: false,
+            maxBufferLength: 30,
+            backBufferLength: 10,
+          });
+          hlsRef.current = hls;
+          hls.loadSource(url);
+
+          // 监听分片加载，解封装后喂给Broadway
+          hls.on(Hls.Events.FRAG_LOADED, (_: any, data: any) => {
+            if (disposed) return;
+            const frag = data.frag;
+            const dataArray = new Uint8Array(frag.data);
+
+            // 用mux.js解TS封装，提取H.264视频帧
+            const transmuxer = new window.muxjs.mp4.Transmuxer();
+            transmuxer.on('data', (segment: any) => {
+              if (disposed) return;
+              // 提取视频轨的H.264数据喂给解码器
+              if (segment.video?.data) {
+                broadwayPlayer.decode(segment.video.data);
+              }
+            });
+            transmuxer.push(new Uint8Array(dataArray));
+            transmuxer.flush();
+          });
+
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            setLoading(false);
+          });
+
+          hls.on(Hls.Events.ERROR, (_: any, data: any) => {
+            if (data.fatal) {
+              setError('视频加载失败');
+              setLoading(false);
+            }
+          });
+        }
       } catch (err) {
-        console.error('[TVNativeVideo] attach failed:', err);
+        console.error('播放器初始化失败', err);
         setError('播放器初始化失败');
         setLoading(false);
       }
-    }
-
-    attach();
-
-    let triedInitialSeek = false;
-    const seekToInitialTime = () => {
-      if (live || triedInitialSeek || !startTime || startTime <= 1) return;
-      if ((videoEl.currentTime || 0) > 1) {
-        triedInitialSeek = true;
-        return;
-      }
-      const duration = videoEl.duration || 0;
-      const safeTime = duration > 30 ? Math.min(startTime, Math.max(0, duration - 8)) : startTime;
-      try {
-        videoEl.currentTime = safeTime;
-        triedInitialSeek = true;
-      } catch {
-        // ignore
-      }
     };
 
-    const onLoadedMeta = () => {
-      seekToInitialTime();
-      // 视频尺寸一出来就启动绘制
-      startDrawing();
-    };
-    const onLoaded = () => {
-      setLoading(false);
-      clearBuffering();
-      startDrawing();
-    };
-    const onPlay = () => {
-      setPlaying(true);
-      clearBuffering();
-      startDrawing();
-      onPlayingChangeRef.current?.(true);
-    };
-    const onPlaying = () => {
-      setPlaying(true);
-      clearBuffering();
-      onPlayingChangeRef.current?.(true);
-    };
-    const onPause = () => {
-      setPlaying(false);
-      clearBuffering();
-      onPlayingChangeRef.current?.(false);
-    };
-    const onBuffering = () => scheduleBuffering();
-    const onError = () => {
-      setLoading(false);
-      clearBuffering();
-      setError('视频加载失败，请尝试切换线路或频道');
-      onPlaybackErrorRef.current?.();
-    };
-    const onTimeUpdate = () => {
-      clearBuffering();
-      onTimeRef.current?.(videoEl.currentTime || 0, videoEl.duration || 0);
-    };
-
-    videoEl.addEventListener('loadedmetadata', onLoadedMeta);
-    videoEl.addEventListener('loadeddata', onLoaded);
-    videoEl.addEventListener('canplay', onLoaded);
-    videoEl.addEventListener('canplaythrough', onLoaded);
-    videoEl.addEventListener('play', onPlay);
-    videoEl.addEventListener('playing', onPlaying);
-    videoEl.addEventListener('pause', onPause);
-    videoEl.addEventListener('waiting', onBuffering);
-    videoEl.addEventListener('stalled', onBuffering);
-    videoEl.addEventListener('seeking', onBuffering);
-    videoEl.addEventListener('seeked', clearBuffering);
-    videoEl.addEventListener('error', onError);
-    videoEl.addEventListener('timeupdate', onTimeUpdate);
+    initPlayer();
 
     return () => {
       disposed = true;
-      videoEl.removeEventListener('loadedmetadata', onLoadedMeta);
-      videoEl.removeEventListener('loadeddata', onLoaded);
-      videoEl.removeEventListener('canplay', onLoaded);
-      videoEl.removeEventListener('canplaythrough', onLoaded);
-      videoEl.removeEventListener('play', onPlay);
-      videoEl.removeEventListener('playing', onPlaying);
-      videoEl.removeEventListener('pause', onPause);
-      videoEl.removeEventListener('waiting', onBuffering);
-      videoEl.removeEventListener('stalled', onBuffering);
-      videoEl.removeEventListener('seeking', onBuffering);
-      videoEl.removeEventListener('seeked', clearBuffering);
-      videoEl.removeEventListener('error', onError);
-      videoEl.removeEventListener('timeupdate', onTimeUpdate);
-      clearBuffering();
-      cleanup();
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (playerRef.current?.worker) {
+        playerRef.current.worker.terminate();
+      }
     };
-  }, [url, live, startTime, adFilterEnabled, playbackRate, sourceType]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (video) video.playbackRate = playbackRate;
-  }, [playbackRate]);
-
-  const toggle = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused) video.play().catch(() => undefined);
-    else video.pause();
-  };
-
-  useEffect(() => {
-    if (command) toggle();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [command]);
+  }, [url]);
 
   return (
-    <div className={`relative w-full bg-black ${className}`} style={{ aspectRatio: '16 / 9' }}>
-      {/* 可见画布层：用户实际看到的画面 */}
-      <canvas
-        ref={canvasRef}
-        className='absolute inset-0 h-full w-full object-contain'
-        onClick={toggle}
-        aria-label={title || 'TV 视频播放器'}
-      />
+    <div ref={containerRef} className={`relative h-full w-full bg-black ${className}`}>
+      <canvas ref={canvasRef} className='h-full w-full bg-black object-contain' />
 
-      {/* 底层视频层：负责解码，几乎透明，保证浏览器正常解码管线 */}
-      <video
-        ref={videoRef}
-        poster={poster}
-        controls={false}
-        playsInline
-        preload='auto'
-        className='absolute inset-0 h-full w-full object-contain'
-        style={{ opacity: 0.001, zIndex: 0 }}
-      />
-
-      {(loading || buffering) && (
-        <div className='pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/35 text-white'>
+      {loading && (
+        <div className='pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 text-white'>
           <div className='flex items-center gap-3 rounded-2xl border border-white/12 bg-black/55 px-6 py-4 text-2xl font-bold shadow-2xl shadow-black/50 backdrop-blur-md'>
             <Loader2 className='h-9 w-9 animate-spin text-rose-500' />
-            <span>{buffering ? '缓冲中' : '正在载入'}</span>
+            <span>正在载入</span>
           </div>
         </div>
       )}
       {error && (
-        <div className='absolute inset-0 z-10 flex items-center justify-center bg-black/70 p-8 text-center text-3xl font-black text-white'>
+        <div className='absolute inset-0 flex items-center justify-center bg-black/70 p-8 text-center text-3xl font-black text-white'>
           {error}
         </div>
       )}
-      <button
-        type='button'
-        onClick={toggle}
-        className='tv-focusable absolute left-1/2 top-1/2 z-10 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/35 text-white opacity-0 outline-none backdrop-blur transition hover:opacity-100 focus:opacity-100'
-        aria-label={playing ? '暂停' : '播放'}
-      >
-        {playing ? <Pause className='h-12 w-12' /> : <Play className='h-12 w-12 fill-current' />}
-      </button>
     </div>
   );
 }
