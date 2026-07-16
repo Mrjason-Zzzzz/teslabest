@@ -967,20 +967,30 @@ function PlayPageClient() {
           // 转换弹幕格式
           let danmakuData = convertDanmakuFormat(cachedData.comments);
 
-          // 手动应用过滤规则
-          const filterConfig = danmakuFilterConfigRef.current;
-          if (filterConfig && filterConfig.rules.length > 0) {
-            const originalCount = danmakuData.length;
-            danmakuData = danmakuData.filter((danmu) => {
-              for (const rule of filterConfig.rules) {
-if (!rule.enabled) continue;
-try {
-    if (rule.type === 'normal') {
-        if (danmu.text.includes(rule.keyword)) {
-            // 这里执行你的逻辑
-            console.log("关键词匹配成功");
-        } // 对应 if (danmu.text.includes...)
-    } // 对应 if (rule.type === 'normal')
-} catch (error) {
-    console.error("处理逻辑出错:", error);
-} // 对应 try { ... }
+// 手动应用过滤规则
+const filterConfig = danmakuFilterConfigRef.current;
+if (filterConfig && filterConfig.rules.length > 0) {
+  const originalCount = danmakuData.length;
+  
+  // 修正后的过滤逻辑
+  danmakuData = danmakuData.filter((danmu) => {
+    for (const rule of filterConfig.rules) {
+      if (!rule.enabled) continue;
+      
+      try {
+        if (rule.type === 'normal') {
+          // 如果匹配到了关键词
+          if (danmu.text.includes(rule.keyword)) {
+            console.log("关键词匹配成功，过滤掉该条弹幕");
+            return false; // 返回 false 表示过滤掉（不保留）
+          }
+        }
+      } catch (error) {
+        console.error("处理逻辑出错:", error);
+      }
+    }
+    return true; // 如果没有匹配到任何规则，则返回 true，保留该条弹幕
+  });
+  
+  console.log(`过滤完成。原始数量: ${originalCount}, 剩余数量: ${danmakuData.length}`);
+}
