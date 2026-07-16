@@ -18,6 +18,22 @@ function getSourceType(url: string, explicitType?: SourceType): SourceType {
   return lower.includes('m3u8') || lower.includes('.m3u') ? 'm3u8' : 'native';
 }
 
+// 动态加载全局脚本工具
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
 export default function TVNativeVideo({
   url,
   poster,
@@ -38,46 +54,31 @@ export default function TVNativeVideo({
   sourceType?: SourceType;
   className?: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const hlsRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!url || !canvasRef.current) return;
+    if (!url || !canvasContainerRef.current) return;
     let disposed = false;
 
     setLoading(true);
     setError('');
 
-    // 动态加载 Broadway 解码器 + mux.js 解封装工具
-    const loadScripts = async () => {
-      if (!window.Player) {
-        await Promise.all([
-          import('/broadway/Decoder.js'),
-          import('/broadway/YUVCanvas.js'),
-          import('/broadway/Player.js'),
-        ]);
-      }
-      if (!window.muxjs) {
-        // 从CDN加载mux.js，用于解TS封装提取H.264帧
-        await new Promise<void>((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js';
-          script.onload = () => resolve();
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-      }
-    };
-
     const initPlayer = async () => {
       try {
-        await loadScripts();
-        if (disposed) return;
+        // 按顺序加载 Broadway 三个全局脚本
+        await loadScript('/broadway/Decoder.js');
+        await loadScript('/broadway/YUVCanvas.js');
+        await loadScript('/broadway/Player.js');
+        // 加载 mux.js 用于解 TS 封装
+        await loadScript('https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js');
+
+        if (disposed || !window.Player) return;
 
         // 初始化 Broadway 软解播放器
         const broadwayPlayer = new window.Player({
@@ -87,14 +88,13 @@ export default function TVNativeVideo({
         });
         playerRef.current = broadwayPlayer;
 
-        // 把解码器的canvas替换到页面上
-        if (canvasRef.current?.parentNode) {
-          canvasRef.current.parentNode.replaceChild(
-            broadwayPlayer.canvas,
-            canvasRef.current
-          );
-          broadwayPlayer.canvas.className = 'h-full w-full object-contain';
-        }
+        // 把画布插入到容器中
+        const canvas = broadwayPlayer.canvas;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.objectFit = 'contain';
+        canvas.style.display = 'block';
+        canvasContainerRef.current?.appendChild(canvas);
 
         const type = getSourceType(url);
         if (type === 'm3u8') {
@@ -103,6 +103,7 @@ export default function TVNativeVideo({
 
           if (!Hls.isSupported()) {
             setError('当前浏览器不支持HLS');
+            setLoading(false);
             return;
           }
 
@@ -114,23 +115,24 @@ export default function TVNativeVideo({
           hlsRef.current = hls;
           hls.loadSource(url);
 
-          // 监听分片加载，解封装后喂给Broadway
+          // 监听分片加载，解封装后喂给 Broadway 解码
           hls.on(Hls.Events.FRAG_LOADED, (_: any, data: any) => {
-            if (disposed) return;
-            const frag = data.frag;
-            const dataArray = new Uint8Array(frag.data);
+            if (disposed || !window.muxjs) return;
+            const dataArray = new Uint8Array(data.frag.data);
 
-            // 用mux.js解TS封装，提取H.264视频帧
-            const transmuxer = new window.muxjs.mp4.Transmuxer();
-            transmuxer.on('data', (segment: any) => {
-              if (disposed) return;
-              // 提取视频轨的H.264数据喂给解码器
-              if (segment.video?.data) {
-                broadwayPlayer.decode(segment.video.data);
-              }
-            });
-            transmuxer.push(new Uint8Array(dataArray));
-            transmuxer.flush();
+            try {
+              const transmuxer = new window.muxjs.mp4.Transmuxer();
+              transmuxer.on('data', (segment: any) => {
+                if (disposed) return;
+                if (segment.video?.data) {
+                  broadwayPlayer.decode(segment.video.data);
+                }
+              });
+              transmuxer.push(dataArray);
+              transmuxer.flush();
+            } catch (e) {
+              console.warn('解封装失败', e);
+            }
           });
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -143,9 +145,11 @@ export default function TVNativeVideo({
               setLoading(false);
             }
           });
+        } else {
+          setLoading(false);
         }
       } catch (err) {
-        console.error('播放器初始化失败', err);
+        console.error('[Broadway Player] 初始化失败:', err);
         setError('播放器初始化失败');
         setLoading(false);
       }
@@ -156,18 +160,26 @@ export default function TVNativeVideo({
     return () => {
       disposed = true;
       if (hlsRef.current) {
-        hlsRef.current.destroy();
+        try { hlsRef.current.destroy(); } catch (e) {}
         hlsRef.current = null;
       }
       if (playerRef.current?.worker) {
-        playerRef.current.worker.terminate();
+        try { playerRef.current.worker.terminate(); } catch (e) {}
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+      // 清理画布
+      if (canvasContainerRef.current) {
+        canvasContainerRef.current.innerHTML = '';
       }
     };
   }, [url]);
 
   return (
-    <div ref={containerRef} className={`relative h-full w-full bg-black ${className}`}>
-      <canvas ref={canvasRef} className='h-full w-full bg-black object-contain' />
+    <div className={`relative h-full w-full bg-black ${className}`}>
+      <div ref={canvasContainerRef} className='h-full w-full bg-black' />
 
       {loading && (
         <div className='pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 text-white'>
