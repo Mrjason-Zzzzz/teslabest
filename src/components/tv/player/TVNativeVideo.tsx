@@ -21,7 +21,19 @@ interface Props {
 const TVNativeVideo: React.FC<Props> = ({ url, className }) => {
   // 核心：构建沙箱 URL
   const playerUrl = `https://player.dorezst.cn/player.html?url=${encodeURIComponent(url)}`;
-
+const TVNativeVideo = (props: { [key: string]: any }) => {
+  // 添加这一行测试代码
+  console.log(">>> [DEBUG] TVNativeVideo 已加载: 正在进入 iframe 模式");
+  
+  // 原有的逻辑...
+  const videoUrl = props.url || '';
+  // ...
+  return (
+    <div className={`relative w-full h-full ${props.className || ''}`} style={{ border: '5px solid red' }}> {/* 加一个红框 */}
+       {/* iframe 代码 */}
+    </div>
+  );
+};
   return (
     <div className={`relative w-full h-full ${className}`}>
       <iframe 
