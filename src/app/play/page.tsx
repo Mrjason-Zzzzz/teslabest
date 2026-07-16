@@ -975,5 +975,6 @@ function PlayPageClient() {
               for (const rule of filterConfig.rules) {
                 if (!rule.enabled) continue;
                 try {
-                  if (rule.type === 'normal') {
-                    if (danmu.text.includes(rule.keyword))
+                 if (rule.type === 'normal') {
+  if (danmu.text.includes(rule.keyword))
+    // 你这里可能漏写了 { 或者漏写了 }
