@@ -973,8 +973,14 @@ function PlayPageClient() {
             const originalCount = danmakuData.length;
             danmakuData = danmakuData.filter((danmu) => {
               for (const rule of filterConfig.rules) {
-                if (!rule.enabled) continue;
-                try {
-                 if (rule.type === 'normal') {
-  if (danmu.text.includes(rule.keyword))
-    // 你这里可能漏写了 { 或者漏写了 }
+if (!rule.enabled) continue;
+try {
+    if (rule.type === 'normal') {
+        if (danmu.text.includes(rule.keyword)) {
+            // 这里执行你的逻辑
+            console.log("关键词匹配成功");
+        } // 对应 if (danmu.text.includes...)
+    } // 对应 if (rule.type === 'normal')
+} catch (error) {
+    console.error("处理逻辑出错:", error);
+} // 对应 try { ... }
