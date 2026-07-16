@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        #video-container { width: 100vw; height: 100vh; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
+</head>
+<body>
+    <div id="video-container"></div>
+    <script>
+        // 获取父页面传来的 URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoUrl = urlParams.get('url');
+
+        if (videoUrl) {
+            const art = new Artplayer({
+                container: '#video-container',
+                url: videoUrl,
+                autoplay: true,
+                type: 'm3u8', // 或 flv
+                fullscreen: true,
+                setting: true,
+                playbackRate: true,
+            });
+        }
+    </script>
+</body>
+</html>
