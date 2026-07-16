@@ -2,106 +2,93 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
-import { X, Loader2 } from 'lucide-react';
-import PageLayout from '@/components/PageLayout';
+import { X } from 'lucide-react'; // 仅保留必要的图标
 
 export default function PlayPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  // 1. 核心状态：去广告
-  const [blockAdEnabled] = useState(true);
-  const customAdFilterCodeRef = useRef<string>('');
-
-  // 2. 核心状态：播放与换源
+  // 核心状态：只保留播放必要的
   const [loading, setLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState('');
-  const [sources, setSources] = useState<any[]>([]); 
-  const [currentSource, setCurrentSource] = useState(searchParams.get('source') || '');
   const [videoTitle] = useState(searchParams.get('title') || '播放器');
+  
+  // 核心引用：保持播放器的引用
+  const videoRef = useRef<HTMLVideoElement>(null);
 
-  // 3. 去广告代码初始化 (完全保留原逻辑)
+  // 初始化：模拟播放器就绪，跳过所有多余的初始化检查
   useEffect(() => {
-    const fetchAdFilterCode = async () => {
-      if (typeof window === 'undefined') return;
-      try {
-        const cachedCode = localStorage.getItem('custom_ad_filter_code_cache');
-        if (cachedCode) customAdFilterCodeRef.current = cachedCode;
-        
-        const version = (window as any).RUNTIME_CONFIG?.CUSTOM_AD_FILTER_VERSION || 0;
-        if (version === 0) return;
+    setLoading(false);
+    document.title = videoTitle;
+  }, [videoTitle]);
 
-        const fullResponse = await fetch('/api/ad-filter?full=true');
-        if (fullResponse.ok) {
-          const { code } = await fullResponse.json();
-          if (code) {
-            localStorage.setItem('custom_ad_filter_code_cache', code);
-            localStorage.setItem('custom_ad_filter_version_cache', version.toString());
-            customAdFilterCodeRef.current = code;
+  // 核心功能：键盘控制（倍速、快进、全屏）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      switch (e.key) {
+        case ' ': // 播放/暂停
+          e.preventDefault();
+          video.paused ? video.play() : video.pause();
+          break;
+        case 'ArrowRight': // 快进
+          video.currentTime += 10;
+          break;
+        case 'ArrowLeft': // 快退
+          video.currentTime -= 10;
+          break;
+        case 'f': // 全屏
+        case 'F':
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else {
+            video.requestFullscreen().catch(console.error);
           }
-        }
-      } catch (error) {
-        console.error('获取去广告代码配置失败:', error);
+          break;
+        case '+': // 倍速增加
+          video.playbackRate = Math.min(video.playbackRate + 0.25, 4);
+          break;
+        case '-': // 倍速减少
+          video.playbackRate = Math.max(video.playbackRate - 0.25, 0.5);
+          break;
       }
     };
-    fetchAdFilterCode();
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // 4. 加载数据 (在此处接入你原有的 API)
-  useEffect(() => {
-    const initPlayer = async () => {
-      setLoading(true);
-      // --- 在此处调用你原来的 API ---
-      // const data = await getDetail(...); 
-      // setSources(data.sources); 
-      // setVideoUrl(data.url);
-      setLoading(false);
-    };
-    initPlayer();
-  }, [currentSource]);
-
   return (
-    <PageLayout>
-      <div className="relative w-full h-screen bg-black flex flex-col">
-        {/* 顶部：标题与退出 */}
-        <div className="absolute top-0 left-0 p-4 z-10 text-white flex justify-between w-full">
-            <h1 className="text-lg font-bold truncate">{videoTitle}</h1>
-            <button onClick={() => router.back()} className="p-2 bg-black/50 rounded-full">
-                <X />
-            </button>
-        </div>
-
-        {/* 播放器区域 */}
-        <div className="flex-1 w-full flex items-center justify-center">
-          {loading ? (
-            <div className="flex flex-col items-center text-white">
-                <Loader2 className="animate-spin w-10 h-10 mb-2" />
-                <span>加载中...</span>
-            </div>
-          ) : (
-            <video
-              className="w-full h-full max-h-screen"
-              controls
-              autoPlay
-              playsInline
-              src={videoUrl}
-            />
-          )}
-        </div>
-
-        {/* 底部：换源选择器 */}
-        <div className="absolute bottom-4 left-4 z-10 flex gap-2 flex-wrap">
-            {sources.map((src) => (
-                <button 
-                    key={src.id}
-                    onClick={() => setCurrentSource(src.id)}
-                    className={`px-4 py-2 rounded-lg text-sm ${currentSource === src.id ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'}`}
-                >
-                    {src.name}
-                </button>
-            ))}
-        </div>
+    <div className="relative w-full h-screen bg-black flex flex-col">
+      {/* 顶部简单的标题栏 (可按需删减) */}
+      <div className="absolute top-0 left-0 p-4 text-white z-10">
+        <h1 className="text-lg font-bold">{videoTitle}</h1>
       </div>
-    </PageLayout>
+
+      {/* 播放器核心区域 */}
+      <div className="flex-1 w-full flex items-center justify-center">
+        {loading ? (
+          <div className="text-white">加载中...</div>
+        ) : (
+          <video
+            ref={videoRef}
+            className="w-full h-full max-h-screen"
+            controls
+            autoPlay
+            playsInline
+            src={searchParams.get('url') || ''} // 假设URL通过参数传入
+          />
+        )}
+      </div>
+
+      {/* 退出按钮 */}
+      <button 
+        onClick={() => router.back()}
+        className="absolute top-4 right-4 p-2 bg-black/50 text-white rounded-full z-10"
+      >
+        <X />
+      </button>
+    </div>
   );
 }
