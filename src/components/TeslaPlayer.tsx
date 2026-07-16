@@ -1,31 +1,37 @@
-'use client'; // 这一行是灵魂，强制 Next.js 只在浏览器加载此组件
+'use client';
+import { useEffect, useState } from 'react';
 
-import { useEffect, useRef } from 'react';
-
-export default function TeslaPlayer({ url }) {
-  const containerRef = useRef(null);
+export default function TeslaPlayer() {
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const initPlayer = async () => {
-      // 使用动态导入，确保只在组件挂载到 DOM 后才去读取 JS 文件
-      // 这里直接指向 /dist/index.js
-      const { createTeslaPlayer } = await import('/dist/index.js');
-      
-      if (containerRef.current) {
-        const player = createTeslaPlayer(containerRef.current, {
-          decoderMode: 'auto',
-          renderer: 'webgl',
-          controls: true
-        });
+    // 检查脚本是否已经存在，防止重复加载
+    if (document.querySelector('script[src="/dist/index.js"]')) {
+      setIsLoaded(true);
+      return;
+    }
 
-        // 加载流
-        await player.load(url);
-        await player.play();
-      }
+    const script = document.createElement('script');
+    script.src = '/dist/index.js'; // 告诉浏览器去 public 文件夹下拿这个文件
+    script.async = true;
+    script.onload = () => setIsLoaded(true);
+    script.onerror = () => console.error("播放器脚本加载失败");
+    
+    document.body.appendChild(script);
+
+    return () => {
+      // 严苛要求：在组件卸载时移除脚本，避免内存泄漏
+      // document.body.removeChild(script); 
     };
+  }, []);
 
-    initPlayer();
-  }, [url]);
+  if (!isLoaded) return <div>播放器加载中...</div>;
 
-  return <div ref={containerRef} style={{ width: '100%', height: '500px', backgroundColor: '#000' }} />;
+  return (
+    <div>
+      {/* 在这里调用你的播放器，通常它会挂载到 window 对象上 */}
+      {/* 例如: <div id="tesla-player-container"></div> */}
+      <h1>播放器已就绪</h1>
+    </div>
+  );
 }
