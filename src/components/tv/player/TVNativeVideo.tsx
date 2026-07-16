@@ -84,6 +84,7 @@ export default function TVNativeVideo({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const isDrawingRef = useRef(false);
 
   const onTimeRef = useRef<typeof onTime>(onTime);
   const onPlaybackErrorRef = useRef<typeof onPlaybackError>(onPlaybackError);
@@ -113,14 +114,14 @@ export default function TVNativeVideo({
     onBufferingChangeRef.current = onBufferingChange;
   }, [onBufferingChange]);
 
-  // 帧绘制循环：把隐藏video的画面实时画到可见canvas上
+  // 帧绘制循环
   const drawFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
     const ctx = canvas.getContext('2d');
-    if (ctx && video.videoWidth && video.videoHeight) {
+    if (ctx && video.videoWidth > 0 && video.videoHeight > 0) {
       const canvasWidth = canvas.width;
       const canvasHeight = canvas.height;
       const videoRatio = video.videoWidth / video.videoHeight;
@@ -131,7 +132,6 @@ export default function TVNativeVideo({
       let offsetX = 0;
       let offsetY = 0;
 
-      // 保持 object-contain 比例，和原video表现一致
       if (videoRatio > canvasRatio) {
         drawHeight = canvasWidth / videoRatio;
         offsetY = (canvasHeight - drawHeight) / 2;
@@ -146,14 +146,22 @@ export default function TVNativeVideo({
     animationRef.current = requestAnimationFrame(drawFrame);
   };
 
+  // 启动绘制（保证只启动一次）
+  const startDrawing = () => {
+    if (isDrawingRef.current) return;
+    isDrawingRef.current = true;
+    drawFrame();
+  };
+
   // 适配容器尺寸
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
     const rect = container.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+    // 兜底：容器高度为0时按16:9计算
+    canvas.width = rect.width || 1280;
+    canvas.height = rect.height || rect.width * 9 / 16 || 720;
   };
 
   useEffect(() => {
@@ -168,9 +176,11 @@ export default function TVNativeVideo({
     onBufferingChangeRef.current?.(false);
     setError('');
     setPlaying(false);
+    isDrawingRef.current = false;
 
     const cleanup = () => {
       cancelAnimationFrame(animationRef.current);
+      isDrawingRef.current = false;
       if (videoEl.hls) {
         videoEl.hls.destroy();
         videoEl.hls = null;
@@ -185,7 +195,8 @@ export default function TVNativeVideo({
 
     const playSafely = () => {
       videoEl.play().catch(() => {
-        // 浏览器阻止自动播放时，等待用户点击
+        // 自动播放被拦截时，也先启动绘制，显示首帧画面
+        startDrawing();
       });
     };
 
@@ -302,7 +313,7 @@ export default function TVNativeVideo({
         videoEl.currentTime = safeTime;
         triedInitialSeek = true;
       } catch {
-        // ignore unsupported seek state
+        // ignore
       }
     };
 
@@ -311,11 +322,13 @@ export default function TVNativeVideo({
       resizeCanvas();
       setLoading(false);
       clearBuffering();
+      // 关键：加载出首帧就启动绘制，不等待play事件
+      startDrawing();
     };
     const onPlay = () => {
       setPlaying(true);
       clearBuffering();
-      drawFrame(); // 播放时启动画布绘制
+      startDrawing();
       onPlayingChangeRef.current?.(true);
     };
     const onPlaying = () => {
@@ -326,14 +339,12 @@ export default function TVNativeVideo({
     const onPause = () => {
       setPlaying(false);
       clearBuffering();
-      cancelAnimationFrame(animationRef.current); // 暂停时停止绘制
       onPlayingChangeRef.current?.(false);
     };
     const onBuffering = () => scheduleBuffering();
     const onError = () => {
       setLoading(false);
       clearBuffering();
-      cancelAnimationFrame(animationRef.current);
       setError('视频加载失败，请尝试切换线路或频道');
       onPlaybackErrorRef.current?.();
     };
@@ -399,12 +410,12 @@ export default function TVNativeVideo({
       {/* 可见画布：特斯拉识别为普通图片，D档不冻结 */}
       <canvas
         ref={canvasRef}
-        className='h-full w-full bg-black'
+        className='h-full w-full bg-black object-contain'
         onClick={toggle}
         aria-label={title || 'TV 视频播放器'}
       />
 
-      {/* 隐藏解码层：后台硬解视频，移出可视区，不触发系统视频限制 */}
+      {/* 隐藏解码层：保留1px尺寸保证解码正常，移出可视区域 */}
       <video
         ref={videoRef}
         poster={poster}
@@ -417,8 +428,8 @@ export default function TVNativeVideo({
           top: '-9999px',
           opacity: 0,
           pointerEvents: 'none',
-          width: 0,
-          height: 0,
+          width: '1px',
+          height: '1px',
         }}
       />
 
