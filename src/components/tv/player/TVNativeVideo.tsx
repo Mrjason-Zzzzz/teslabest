@@ -83,7 +83,6 @@ export default function TVNativeVideo({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number>(0);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const isDrawingRef = useRef(false);
 
   const onTimeRef = useRef<typeof onTime>(onTime);
@@ -114,7 +113,7 @@ export default function TVNativeVideo({
     onBufferingChangeRef.current = onBufferingChange;
   }, [onBufferingChange]);
 
-  // 帧绘制循环
+  // 帧绘制：把视频画面画到canvas上
   const drawFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -122,46 +121,21 @@ export default function TVNativeVideo({
 
     const ctx = canvas.getContext('2d');
     if (ctx && video.videoWidth > 0 && video.videoHeight > 0) {
-      const canvasWidth = canvas.width;
-      const canvasHeight = canvas.height;
-      const videoRatio = video.videoWidth / video.videoHeight;
-      const canvasRatio = canvasWidth / canvasHeight;
-
-      let drawWidth = canvasWidth;
-      let drawHeight = canvasHeight;
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (videoRatio > canvasRatio) {
-        drawHeight = canvasWidth / videoRatio;
-        offsetY = (canvasHeight - drawHeight) / 2;
-      } else {
-        drawWidth = canvasHeight * videoRatio;
-        offsetX = (canvasWidth - drawWidth) / 2;
+      // 画布尺寸和视频原始尺寸一致，保证清晰
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
       }
-
-      ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
 
     animationRef.current = requestAnimationFrame(drawFrame);
   };
 
-  // 启动绘制（保证只启动一次）
   const startDrawing = () => {
     if (isDrawingRef.current) return;
     isDrawingRef.current = true;
     drawFrame();
-  };
-
-  // 适配容器尺寸
-  const resizeCanvas = () => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    const rect = container.getBoundingClientRect();
-    // 兜底：容器高度为0时按16:9计算
-    canvas.width = rect.width || 1280;
-    canvas.height = rect.height || rect.width * 9 / 16 || 720;
   };
 
   useEffect(() => {
@@ -195,7 +169,7 @@ export default function TVNativeVideo({
 
     const playSafely = () => {
       videoEl.play().catch(() => {
-        // 自动播放被拦截时，也先启动绘制，显示首帧画面
+        // 自动播放被拦截也启动绘制，显示首帧
         startDrawing();
       });
     };
@@ -297,8 +271,6 @@ export default function TVNativeVideo({
     }
 
     attach();
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
 
     let triedInitialSeek = false;
     const seekToInitialTime = () => {
@@ -317,12 +289,14 @@ export default function TVNativeVideo({
       }
     };
 
-    const onLoaded = () => {
+    const onLoadedMeta = () => {
       seekToInitialTime();
-      resizeCanvas();
+      // 视频尺寸一出来就启动绘制
+      startDrawing();
+    };
+    const onLoaded = () => {
       setLoading(false);
       clearBuffering();
-      // 关键：加载出首帧就启动绘制，不等待play事件
       startDrawing();
     };
     const onPlay = () => {
@@ -353,7 +327,7 @@ export default function TVNativeVideo({
       onTimeRef.current?.(videoEl.currentTime || 0, videoEl.duration || 0);
     };
 
-    videoEl.addEventListener('loadedmetadata', seekToInitialTime);
+    videoEl.addEventListener('loadedmetadata', onLoadedMeta);
     videoEl.addEventListener('loadeddata', onLoaded);
     videoEl.addEventListener('canplay', onLoaded);
     videoEl.addEventListener('canplaythrough', onLoaded);
@@ -369,8 +343,7 @@ export default function TVNativeVideo({
 
     return () => {
       disposed = true;
-      window.removeEventListener('resize', resizeCanvas);
-      videoEl.removeEventListener('loadedmetadata', seekToInitialTime);
+      videoEl.removeEventListener('loadedmetadata', onLoadedMeta);
       videoEl.removeEventListener('loadeddata', onLoaded);
       videoEl.removeEventListener('canplay', onLoaded);
       videoEl.removeEventListener('canplaythrough', onLoaded);
@@ -406,35 +379,28 @@ export default function TVNativeVideo({
   }, [command]);
 
   return (
-    <div ref={containerRef} className={`relative h-full w-full bg-black ${className}`}>
-      {/* 可见画布：特斯拉识别为普通图片，D档不冻结 */}
+    <div className={`relative w-full bg-black ${className}`} style={{ aspectRatio: '16 / 9' }}>
+      {/* 可见画布层：用户实际看到的画面 */}
       <canvas
         ref={canvasRef}
-        className='h-full w-full bg-black object-contain'
+        className='absolute inset-0 h-full w-full object-contain'
         onClick={toggle}
         aria-label={title || 'TV 视频播放器'}
       />
 
-      {/* 隐藏解码层：保留1px尺寸保证解码正常，移出可视区域 */}
+      {/* 底层视频层：负责解码，几乎透明，保证浏览器正常解码管线 */}
       <video
         ref={videoRef}
         poster={poster}
         controls={false}
         playsInline
         preload='auto'
-        style={{
-          position: 'absolute',
-          left: '-9999px',
-          top: '-9999px',
-          opacity: 0,
-          pointerEvents: 'none',
-          width: '1px',
-          height: '1px',
-        }}
+        className='absolute inset-0 h-full w-full object-contain'
+        style={{ opacity: 0.001, zIndex: 0 }}
       />
 
       {(loading || buffering) && (
-        <div className='pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 text-white'>
+        <div className='pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/35 text-white'>
           <div className='flex items-center gap-3 rounded-2xl border border-white/12 bg-black/55 px-6 py-4 text-2xl font-bold shadow-2xl shadow-black/50 backdrop-blur-md'>
             <Loader2 className='h-9 w-9 animate-spin text-rose-500' />
             <span>{buffering ? '缓冲中' : '正在载入'}</span>
@@ -442,14 +408,14 @@ export default function TVNativeVideo({
         </div>
       )}
       {error && (
-        <div className='absolute inset-0 flex items-center justify-center bg-black/70 p-8 text-center text-3xl font-black text-white'>
+        <div className='absolute inset-0 z-10 flex items-center justify-center bg-black/70 p-8 text-center text-3xl font-black text-white'>
           {error}
         </div>
       )}
       <button
         type='button'
         onClick={toggle}
-        className='tv-focusable absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/35 text-white opacity-0 outline-none backdrop-blur transition hover:opacity-100 focus:opacity-100'
+        className='tv-focusable absolute left-1/2 top-1/2 z-10 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/35 text-white opacity-0 outline-none backdrop-blur transition hover:opacity-100 focus:opacity-100'
         aria-label={playing ? '暂停' : '播放'}
       >
         {playing ? <Pause className='h-12 w-12' /> : <Play className='h-12 w-12 fill-current' />}
