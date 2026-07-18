@@ -2,7 +2,6 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import 'xgplayer/dist/index.min.css';
 import Hls from 'hls.js';
 import {
   Loader2,
@@ -13,16 +12,18 @@ import {
   RotateCcw,
   SkipForward,
   SkipBack,
-  MonitorPlay,
   Cpu,
+  MonitorPlay,
   Settings,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { setTeslaOptOut } from '@/components/TeslaAutoRedirect';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
-type PlayMode = 'xgplayer' | 'webcodecs';
+type PlayMode = 'webcodecs' | 'video';
 
 interface TeslaPlayerProps {
   url: string;
@@ -97,10 +98,10 @@ function saveProgress(key: string, time: number): void {
 }
 
 function getInitialMode(): PlayMode {
-  if (typeof window === 'undefined') return 'xgplayer';
+  if (typeof window === 'undefined') return 'webcodecs';
   const saved = localStorage.getItem('tesla_player_mode') as PlayMode | null;
-  if (saved && ['xgplayer', 'webcodecs'].includes(saved)) return saved;
-  return 'xgplayer';
+  if (saved && ['webcodecs', 'video'].includes(saved)) return saved;
+  return 'webcodecs';
 }
 
 export default function TeslaPlayer({
@@ -114,13 +115,14 @@ export default function TeslaPlayer({
   defaultMode,
 }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const xgContainerRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const xgPlayerRef = useRef<any>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const wcPlayerRef = useRef<WebCodecsPlayer | null>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const bufferingTimeoutRef = useRef<number | null>(null);
+  const loadTimeoutRef = useRef<number | null>(null);
 
   const [mode, setMode] = useState<PlayMode>(defaultMode || getInitialMode());
   const [showModeMenu, setShowModeMenu] = useState(false);
@@ -142,6 +144,8 @@ export default function TeslaPlayer({
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -167,8 +171,8 @@ export default function TeslaPlayer({
     if (mode === 'webcodecs' && wcPlayerRef.current) {
       wcPlayerRef.current.seek(t);
       setCurrentTime(t);
-    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
-      xgPlayerRef.current.currentTime = t;
+    } else if (mode === 'video' && videoRef.current) {
+      videoRef.current.currentTime = t;
       setCurrentTime(t);
     }
   }, [mode]);
@@ -176,19 +180,32 @@ export default function TeslaPlayer({
   const togglePlay = useCallback(() => {
     if (mode === 'webcodecs' && wcPlayerRef.current) {
       wcPlayerRef.current.togglePlay();
-    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
-      const p = xgPlayerRef.current;
-      if (p.paused) p.play();
-      else p.pause();
+    } else if (mode === 'video' && videoRef.current) {
+      const v = videoRef.current;
+      if (v.paused) v.play().catch(() => {});
+      else v.pause();
     }
   }, [mode]);
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
+      const el = containerRef.current;
+      if (el.requestFullscreen) {
+        el.requestFullscreen().catch(() => {});
+      } else if ((el as any).webkitRequestFullscreen) {
+        (el as any).webkitRequestFullscreen?.();
+      } else if ((el as any).msRequestFullscreen) {
+        (el as any).msRequestFullscreen?.();
+      }
     } else {
-      document.exitFullscreen().catch(() => {});
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen?.();
+      } else if ((document as any).msExitFullscreen) {
+        (document as any).msExitFullscreen?.();
+      }
     }
   }, []);
 
@@ -197,25 +214,51 @@ export default function TeslaPlayer({
       setIsFullscreen(!!document.fullscreenElement);
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     };
   }, []);
 
   const setPlaybackRate = useCallback((r: number) => {
     if (mode === 'webcodecs') {
+      wcPlayerRef.current?.setPlaybackRate(r);
       setRate(r);
-    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
-      xgPlayerRef.current.playbackRate = r;
+    } else if (mode === 'video' && videoRef.current) {
+      videoRef.current.playbackRate = r;
       setRate(r);
     }
     setShowRateMenu(false);
   }, [mode]);
 
+  const toggleMute = useCallback(() => {
+    if (mode === 'webcodecs' && wcPlayerRef.current) {
+      const newMuted = !muted;
+      wcPlayerRef.current.setVolume(newMuted ? 0 : volume);
+      setMuted(newMuted);
+    } else if (mode === 'video' && videoRef.current) {
+      const v = videoRef.current;
+      v.muted = !v.muted;
+      setMuted(v.muted);
+    }
+  }, [mode, muted, volume]);
+
   const switchQuality = useCallback((q: string) => {
     setQuality(q);
     setShowQualityMenu(false);
-  }, []);
+    if (mode === 'video' && hlsRef.current) {
+      const hls = hlsRef.current;
+      if (q === 'auto') {
+        hls.currentLevel = -1;
+      } else {
+        const level = parseInt(q, 10);
+        if (!isNaN(level)) {
+          hls.currentLevel = level;
+        }
+      }
+    }
+  }, [mode]);
 
   const switchMode = useCallback((newMode: PlayMode) => {
     if (newMode === 'webcodecs' && !wcSupported) return;
@@ -250,6 +293,184 @@ export default function TeslaPlayer({
     };
   }, [playRecordKey, playing, currentTime]);
 
+  const clearBufferingTimeout = useCallback(() => {
+    if (bufferingTimeoutRef.current) {
+      clearTimeout(bufferingTimeoutRef.current);
+      bufferingTimeoutRef.current = null;
+    }
+  }, []);
+
+  const startBufferingTimeout = useCallback(() => {
+    clearBufferingTimeout();
+    bufferingTimeoutRef.current = window.setTimeout(() => {
+      console.warn('[TeslaPlayer] buffering timeout after 30s');
+      setError('缓冲超时，网络可能不稳定');
+      setLoading(false);
+    }, 30000);
+  }, [clearBufferingTimeout]);
+
+  // ===== Video 模式初始化（原生 video + hls.js 降级方案）=====
+  useEffect(() => {
+    if (mode !== 'video') return;
+    if (!videoRef.current) return;
+
+    let destroyed = false;
+    setLoading(true);
+    setError(null);
+    setBuffering(false);
+
+    const video = videoRef.current;
+    const startPos = seekToTime !== null ? seekToTime : savedProgress;
+
+    const onLoadedMetadata = () => {
+      if (destroyed) return;
+      setDuration(video.duration || 0);
+      setLoading(false);
+    };
+
+    const onTimeUpdate = () => {
+      if (!destroyed) setCurrentTime(video.currentTime);
+    };
+
+    const onPlay = () => {
+      if (!destroyed) {
+        setPlaying(true);
+        setBuffering(false);
+        setLoading(false);
+      }
+    };
+
+    const onPause = () => {
+      if (!destroyed) setPlaying(false);
+    };
+
+    const onWaiting = () => {
+      if (destroyed) return;
+      setBuffering(true);
+      startBufferingTimeout();
+    };
+
+    const onPlaying = () => {
+      if (destroyed) return;
+      setBuffering(false);
+      setLoading(false);
+      clearBufferingTimeout();
+    };
+
+    const onEnded = () => {
+      if (destroyed) return;
+      setPlaying(false);
+      if (playRecordKey) saveProgress(playRecordKey, video.duration || 0);
+      setTimeout(() => onEndedCallback?.(), 500);
+    };
+
+    const onError = () => {
+      if (destroyed) return;
+      setError('播放错误，请尝试切换模式');
+      setLoading(false);
+    };
+
+    const onRateChange = () => {
+      if (!destroyed) setRate(video.playbackRate);
+    };
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('playing', onPlaying);
+    video.addEventListener('ended', onEnded);
+    video.addEventListener('error', onError);
+    video.addEventListener('ratechange', onRateChange);
+
+    let hls: Hls | null = null;
+
+    if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        autoStartLoad: true,
+        startPosition: startPos,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        backBufferLength: 60,
+      });
+      hlsRef.current = hls;
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+        if (destroyed) return;
+        const levels = data.levels || [];
+        const qs: Array<{ label: string; value: string }> = [
+          { label: '自动', value: 'auto' },
+          ...levels.map((l: any, i: number) => ({
+            label: l.height ? `${l.height}p` : `清晰度 ${i + 1}`,
+            value: String(i),
+          })),
+        ];
+        setQualities(qs);
+      });
+
+      hls.on(Hls.Events.LEVEL_LOADED, () => {
+        if (destroyed) return;
+        if (startPos > 0 && video.paused) {
+          video.currentTime = startPos;
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (destroyed) return;
+        console.warn('[TeslaPlayer] HLS ERROR:', data.type, data.details);
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            try { hlsRef.current?.startLoad(); } catch {}
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            try { hlsRef.current?.recoverMediaError(); } catch {}
+          } else {
+            setError('播放错误: ' + (data.details || data.type));
+            setLoading(false);
+          }
+        }
+      });
+
+      hls.attachMedia(video);
+      hls.loadSource(url);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+      if (startPos > 0) {
+        video.currentTime = startPos;
+      }
+    } else {
+      setError('当前浏览器不支持 HLS 播放');
+      setLoading(false);
+    }
+
+    const loadTimeout = window.setTimeout(() => {
+      if (!destroyed && !video.duration) {
+        setLoading(false);
+      }
+    }, 10000);
+
+    return () => {
+      destroyed = true;
+      clearTimeout(loadTimeout);
+      clearBufferingTimeout();
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onError);
+      video.removeEventListener('ratechange', onRateChange);
+      if (hls) {
+        try { hls.destroy(); } catch {}
+        hlsRef.current = null;
+      }
+    };
+  }, [mode, url, playRecordKey, onEndedCallback, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
+
   // ===== WebCodecs 模式初始化 =====
   useEffect(() => {
     if (mode !== 'webcodecs') return;
@@ -281,21 +502,27 @@ export default function TeslaPlayer({
             setPlaying(true);
             setBuffering(false);
             setLoading(false);
+            clearBufferingTimeout();
           } else if (s === 'paused') {
             setPlaying(false);
             setBuffering(false);
           } else if (s === 'buffering') {
             setBuffering(true);
+            startBufferingTimeout();
           } else if (s === 'ended') {
             setPlaying(false);
+            clearBufferingTimeout();
             if (playRecordKey) saveProgress(playRecordKey, duration || 0);
             setTimeout(() => onEndedCallback?.(), 500);
+          } else if (s === 'error') {
+            clearBufferingTimeout();
           }
         },
         onError: (msg) => {
           if (!destroyed) {
             setError(msg);
             setLoading(false);
+            clearBufferingTimeout();
           }
         },
       });
@@ -311,7 +538,6 @@ export default function TeslaPlayer({
         }
       });
 
-      // Debug stats
       const statsTimer = window.setInterval(() => {
         if (showDebug && player) {
           try {
@@ -325,6 +551,7 @@ export default function TeslaPlayer({
       return () => {
         destroyed = true;
         clearInterval(statsTimer);
+        clearBufferingTimeout();
         player.destroy();
         wcPlayerRef.current = null;
       };
@@ -333,134 +560,32 @@ export default function TeslaPlayer({
       setLoading(false);
       return () => { destroyed = true; };
     }
-  }, [mode, url, wcSupported, showDebug, playRecordKey, onEndedCallback, duration, savedProgress, seekToTime]);
+  }, [mode, url, wcSupported, showDebug, playRecordKey, onEndedCallback, duration, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
 
-  // 同步 showDebug 到 wc player
   useEffect(() => {
     if (mode !== 'webcodecs') return;
     const p = wcPlayerRef.current;
     if (p) p.setShowDebug(showDebug);
   }, [mode, showDebug]);
 
-  // ===== Xgplayer 模式初始化 =====
-  useEffect(() => {
-    if (mode !== 'xgplayer') return;
-    if (!xgContainerRef.current) return;
-
-    let destroyed = false;
-    setLoading(true);
-    setError(null);
-
-    import('xgplayer').then(({ default: Player }) => {
-      if (destroyed) return;
-
-      const startPos = seekToTime !== null ? seekToTime : savedProgress;
-
-      const player = new Player({
-        el: xgContainerRef.current!,
-        url,
-        poster,
-        autoplay: false,
-        playsinline: true,
-        volume: 1,
-        startAt: startPos > 0 ? startPos : undefined,
-        controls: true,
-        screenShot: false,
-        pip: false,
-        mini: false,
-        playbackRate: [0.5, 0.75, 1, 1.25, 1.5, 2],
-        defaultPlaybackRate: 1,
-      });
-
-      xgPlayerRef.current = player;
-
-      player.on('ready', () => {
-        if (destroyed) return;
-        setLoading(false);
-        setDuration(player.duration || 0);
-      });
-
-      player.on('timeupdate', () => {
-        if (!destroyed) setCurrentTime(player.currentTime);
-      });
-
-      player.on('play', () => {
-        if (!destroyed) {
-          setPlaying(true);
-          setLoading(false);
-          setBuffering(false);
-        }
-      });
-
-      player.on('pause', () => {
-        if (!destroyed) setPlaying(false);
-      });
-
-      player.on('waiting', () => {
-        if (!destroyed) setBuffering(true);
-      });
-
-      player.on('playing', () => {
-        if (destroyed) return;
-        setBuffering(false);
-        setLoading(false);
-      });
-
-      player.on('ended', () => {
-        if (destroyed) return;
-        setPlaying(false);
-        if (playRecordKey) saveProgress(playRecordKey, player.duration || 0);
-        setTimeout(() => onEndedCallback?.(), 500);
-      });
-
-      player.on('error', (err: any) => {
-        if (destroyed) return;
-        setError('播放错误: ' + (err?.message || String(err)));
-        setLoading(false);
-      });
-
-      player.on('ratechange', () => {
-        if (!destroyed) setRate(player.playbackRate);
-      });
-
-      const loadTimeout = window.setTimeout(() => {
-        if (!destroyed) setLoading(false);
-      }, 8000);
-
-      return () => {
-        destroyed = true;
-        clearTimeout(loadTimeout);
-        try { player.destroy(); } catch {}
-        xgPlayerRef.current = null;
-      };
-    }).catch((e) => {
-      if (!destroyed) {
-        setError('播放器加载失败: ' + (e?.message || String(e)));
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      destroyed = true;
-    };
-  }, [mode, url, poster, playRecordKey, onEndedCallback, savedProgress, seekToTime]);
-
-  const modeLabel = mode === 'webcodecs' ? 'WebCodecs' : 'Xgplayer';
+  const modeLabel = mode === 'webcodecs' ? 'WebCodecs' : 'Video';
 
   return (
     <div
       ref={containerRef}
       className="relative w-full h-full bg-black"
       onMouseMove={resetControlsTimer}
+      onTouchStart={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* xgplayer 容器 */}
-      {mode === 'xgplayer' && (
-        <div
-          ref={xgContainerRef}
-          className="absolute inset-0 h-full w-full overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-          style={{ minWidth: 0, minHeight: 0 }}
+      {/* video 元素（video 模式用） */}
+      {mode === 'video' && (
+        <video
+          ref={videoRef}
+          className="absolute inset-0 h-full w-full object-contain"
+          playsInline
+          poster={poster}
+          crossOrigin="anonymous"
         />
       )}
 
@@ -487,23 +612,23 @@ export default function TeslaPlayer({
       {/* 加载状态 */}
       {loading && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
-          <Loader2 className="h-8 w-8 animate-spin text-green-500" />
+          <Loader2 className="h-10 w-10 animate-spin text-green-500" />
         </div>
       )}
 
       {/* 缓冲状态 */}
       {buffering && !loading && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <Loader2 className="h-6 w-6 animate-spin text-white/50" />
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+          <Loader2 className="h-8 w-8 animate-spin text-white/60" />
         </div>
       )}
 
       {/* 错误提示 */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
           <div className="text-center px-4">
             <p className="text-red-400 text-sm">{error}</p>
-            <div className="mt-3 flex gap-2 justify-center">
+            <div className="mt-3 flex gap-2 justify-center flex-wrap">
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); window.location.reload(); }}
@@ -511,16 +636,16 @@ export default function TeslaPlayer({
               >
                 重试
               </button>
-              {mode === 'webcodecs' && wcSupported && (
+              {mode === 'webcodecs' && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('xgplayer'); }}
+                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
                   className="rounded bg-gray-600 px-4 py-1.5 text-sm text-white"
                 >
-                  切换 Xgplayer 模式
+                  切换 Video 模式
                 </button>
               )}
-              {mode === 'xgplayer' && wcSupported && (
+              {mode === 'video' && wcSupported && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
@@ -529,67 +654,68 @@ export default function TeslaPlayer({
                   切换 WebCodecs 模式
                 </button>
               )}
+              {onBackToOriginal && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); backToOriginal(); }}
+                  className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white"
+                >
+                  返回原版
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 暂停时的播放按钮（仅 webcodecs 模式） */}
-      {mode === 'webcodecs' && !loading && !playing && !error && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      {/* 暂停时的播放按钮 */}
+      {!loading && !playing && !error && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-            className="pointer-events-auto rounded-full bg-black/40 p-4 backdrop-blur-sm hover:bg-black/60"
+            className="pointer-events-auto rounded-full bg-black/40 p-5 backdrop-blur-sm hover:bg-black/60 transition-all active:scale-95"
           >
-            <Play className="h-8 w-8 text-white" />
+            <Play className="h-10 w-10 text-white md:h-12 md:w-12" />
           </button>
         </div>
       )}
 
       {/* 顶部条 */}
-      <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="pointer-events-auto flex items-center gap-3">
+      <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent p-3 md:p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="pointer-events-auto flex items-center gap-2 md:gap-3">
           {onBackToOriginal && (
             <button
               type="button"
               onClick={backToOriginal}
-              className="rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium backdrop-blur hover:bg-white/20"
+              className="rounded-md bg-white/10 px-2.5 py-1.5 text-xs md:text-sm font-medium backdrop-blur hover:bg-white/20"
               title="返回原版播放器"
             >
-              <RotateCcw className="inline h-4 w-4" /> 原版
+              <RotateCcw className="inline h-4 w-4" /> <span className="hidden md:inline">原版</span>
             </button>
           )}
-          <h1 className="text-base font-semibold drop-shadow md:text-xl max-w-[60vw] truncate">
+          <h1 className="text-sm md:text-base font-semibold drop-shadow max-w-[50vw] md:max-w-[60vw] truncate">
             {title || '播放中'}
             {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
           </h1>
         </div>
-        <div className="pointer-events-auto flex items-center gap-2">
-          {/* 模式切换 */}
+        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2">
           <div className="relative">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium backdrop-blur ${
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium backdrop-blur ${
                 mode === 'webcodecs'
                   ? 'bg-purple-500/30 text-purple-300 ring-1 ring-purple-400/50'
-                  : 'bg-orange-500/30 text-orange-300 ring-1 ring-orange-400/50'
+                  : 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-400/50'
               }`}
               title="播放模式"
             >
               {mode === 'webcodecs' ? <Cpu className="h-3.5 w-3.5" /> : <MonitorPlay className="h-3.5 w-3.5" />}
-              {modeLabel}
+              <span className="hidden sm:inline">{modeLabel}</span>
             </button>
             {showModeMenu && (
               <div className="absolute top-full right-0 mt-1 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20 min-w-[160px]">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('xgplayer'); }}
-                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'xgplayer' ? 'bg-orange-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                >
-                  Xgplayer 模式（推荐）
-                </button>
                 {wcSupported && (
                   <button
                     type="button"
@@ -599,11 +725,17 @@ export default function TeslaPlayer({
                     WebCodecs 模式（行驶用）
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
+                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                >
+                  Video 模式（兼容）
+                </button>
               </div>
             )}
           </div>
 
-          {/* 调试按钮 */}
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setShowDebug(!showDebug); }}
@@ -617,14 +749,13 @@ export default function TeslaPlayer({
         </div>
       </div>
 
-      {/* 底部控制条（仅 webcodecs 模式，xgplayer 自带控制条） */}
-      {mode === 'webcodecs' && (
-        <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-        {/* 进度条 */}
-        <div className="pointer-events-auto mb-3">
+      {/* 底部控制条 */}
+      <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pb-3 pt-8 md:px-4 md:pb-4 md:pt-10 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="pointer-events-auto mb-2 md:mb-3">
           <div
-            className="relative h-1 cursor-pointer rounded-full bg-white/20 hover:h-1.5 transition-all"
+            className="relative h-1.5 md:h-1 cursor-pointer rounded-full bg-white/20 hover:h-2 md:hover:h-1.5 transition-all"
             onClick={(e) => {
+              e.stopPropagation();
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               const percent = (e.clientX - rect.left) / rect.width;
               seek(percent * (duration || 1));
@@ -634,6 +765,10 @@ export default function TeslaPlayer({
               className="h-full rounded-full bg-green-500"
               style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             />
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-green-500 shadow-lg opacity-0 hover:opacity-100 transition-opacity"
+              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 6px)` }}
+            />
           </div>
           <div className="mt-1 flex justify-between text-xs text-white/70">
             <span>{formatTime(currentTime)}</span>
@@ -641,35 +776,35 @@ export default function TeslaPlayer({
           </div>
         </div>
 
-        {/* 控制按钮 */}
         <div className="pointer-events-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.max(0, currentTime - 10)); }}
-              className="rounded p-1.5 hover:bg-white/10"
+              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
             >
-              <SkipBack className="h-4 w-4" />
+              <SkipBack className="h-5 w-5 md:h-5 md:w-5" />
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-              className="rounded-full bg-white/10 p-2 hover:bg-white/20"
+              className="rounded-full bg-white/10 p-2.5 md:p-3 hover:bg-white/20 active:scale-95 transition-all"
             >
-              {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+              {playing ? <Pause className="h-6 w-6 md:h-6 md:w-6" /> : <Play className="h-6 w-6 md:h-6 md:w-6" />}
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.min(duration || 1, currentTime + 10)); }}
-              className="rounded p-1.5 hover:bg-white/10"
+              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
             >
-              <SkipForward className="h-4 w-4" />
+              <SkipForward className="h-5 w-5 md:h-5 md:w-5" />
             </button>
-            <div className="relative ml-2">
+
+            <div className="relative ml-1 md:ml-2">
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setShowRateMenu(!showRateMenu); }}
-                className="rounded px-2 py-1 text-xs font-medium hover:bg-white/10"
+                className="rounded px-2 py-1 text-xs md:text-sm font-medium hover:bg-white/10"
               >
                 {rate}x
               </button>
@@ -690,13 +825,13 @@ export default function TeslaPlayer({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {mode !== 'webcodecs' && qualities.length > 1 && (
+          <div className="flex items-center gap-1 md:gap-2">
+            {mode === 'video' && qualities.length > 1 && (
               <div className="relative">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }}
-                  className="rounded px-2 py-1 text-xs font-medium hover:bg-white/10"
+                  className="rounded px-2 py-1 text-xs md:text-sm font-medium hover:bg-white/10"
                 >
                   {qualities.find((q) => q.value === quality)?.label || '清晰度'}
                 </button>
@@ -718,18 +853,25 @@ export default function TeslaPlayer({
             )}
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-              className="rounded p-1.5 hover:bg-white/10"
+              onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
             >
-              {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              {muted ? <VolumeX className="h-5 w-5 md:h-5 md:w-5" /> : <Volume2 className="h-5 w-5 md:h-5 md:w-5" />}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+            >
+              {isFullscreen ? <Minimize className="h-5 w-5 md:h-5 md:w-5" /> : <Maximize className="h-5 w-5 md:h-5 md:w-5" />}
             </button>
           </div>
         </div>
-        </div>
-      )}
+      </div>
 
       <style>{`
         canvas { display: block; }
+        video { display: block; }
       `}</style>
     </div>
   );

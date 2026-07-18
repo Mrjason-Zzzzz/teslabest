@@ -18,7 +18,6 @@ export class WebCodecsPlayer {
 
   private hls: any = null;
   private videoEl: HTMLVideoElement | null = null;
-  private audioEl: HTMLAudioElement | null = null;
 
   private packetStream: any = null;
   private parseStream: any = null;
@@ -42,6 +41,7 @@ export class WebCodecsPlayer {
   private needVideoKey = true;
   private lastTimeReportMs = 0;
   private lastRenderTime = 0;
+  private playbackRate = 1;
 
   private spsNalu: Uint8Array | null = null;
   private ppsNalu: Uint8Array | null = null;
@@ -50,6 +50,11 @@ export class WebCodecsPlayer {
   private decodedFrames = 0;
   private droppedFrames = 0;
   private statsMark = { t: 0, rendered: 0, decoded: 0 };
+
+  private decoderErrorCount = 0;
+  private decoderStallCheckTimer = 0;
+  private lastDecodedFrameCount = 0;
+  private lastDecodedCheckTime = 0;
 
   private debugStats = {
     hlsState: 'init',
@@ -87,7 +92,9 @@ export class WebCodecsPlayer {
     this.renderedFrames = 0;
     this.decodedFrames = 0;
     this.droppedFrames = 0;
+    this.decoderErrorCount = 0;
     this.statsMark = { t: performance.now(), rendered: 0, decoded: 0 };
+    this.playbackRate = 1;
     this.setState('buffering');
     console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
 
@@ -159,6 +166,11 @@ export class WebCodecsPlayer {
       console.warn('[WebCodecsPlayer] video element error:', videoEl.error);
     });
 
+    videoEl.addEventListener('ratechange', () => {
+      if (this.destroyed) return;
+      this.playbackRate = videoEl.playbackRate;
+    });
+
     const hls = new Hls({
       enableWorker: false,
       lowLatencyMode: false,
@@ -209,6 +221,7 @@ export class WebCodecsPlayer {
     hls.attachMedia(videoEl);
     hls.loadSource(url);
 
+    this.startDecoderStallCheck();
     this.loop();
   }
 
@@ -310,8 +323,81 @@ export class WebCodecsPlayer {
     this.needVideoKey = true;
     this.videoDecoder = new VideoDecoder({
       output: (frame) => this.onVideoFrame(frame),
-      error: (e) => this.fail('video decoder: ' + e.message),
+      error: (e) => {
+        console.warn('[WebCodecsPlayer] video decoder error:', e.message);
+        this.handleVideoDecoderError();
+      },
     });
+  }
+
+  private handleVideoDecoderError() {
+    this.decoderErrorCount++;
+    const maxErrors = 10;
+    if (this.decoderErrorCount > maxErrors) {
+      this.fail('video decoder: Decoder failure');
+      return;
+    }
+    console.log('[WebCodecsPlayer] restarting video decoder, attempt:', this.decoderErrorCount);
+    
+    try {
+      if (this.videoDecoder && this.videoDecoder.state !== 'closed') {
+        this.videoDecoder.close();
+      }
+    } catch {}
+    this.videoDecoder = null;
+    
+    for (const f of this.frameQueue) f.close();
+    this.frameQueue = [];
+    this.needVideoKey = true;
+    this.hasOffset = false;
+    this.videoTimeOffset = 0;
+    
+    this.setupVideoDecoder();
+    
+    if (this.videoConfig && this.videoDecoder) {
+      try {
+        this.videoDecoder.configure({
+          codec: this.videoConfig.codec,
+          codedWidth: this.videoConfig.codedWidth,
+          codedHeight: this.videoConfig.codedHeight,
+          description: this.videoConfig.description,
+          optimizeForLatency: false,
+        });
+        setTimeout(() => {
+          if (!this.destroyed) {
+            this.decoderErrorCount = Math.max(0, this.decoderErrorCount - 1);
+          }
+        }, 10000);
+      } catch (e) {
+        console.warn('[WebCodecsPlayer] reconfigure failed:', e);
+      }
+    }
+  }
+
+  private startDecoderStallCheck() {
+    this.lastDecodedFrameCount = 0;
+    this.lastDecodedCheckTime = performance.now();
+    
+    const check = () => {
+      if (this.destroyed) return;
+      
+      const now = performance.now();
+      const dt = now - this.lastDecodedCheckTime;
+      
+      if (this.state === 'playing' && dt > 3000) {
+        const newDecoded = this.decodedFrames - this.lastDecodedFrameCount;
+        if (newDecoded === 0 && this.frameQueue.length < 2 && this.encodedVideo.length - this.vIdx > 0) {
+          console.warn('[WebCodecsPlayer] decoder stall detected, attempting recovery');
+          this.handleVideoDecoderError();
+        }
+        this.lastDecodedFrameCount = this.decodedFrames;
+        this.lastDecodedCheckTime = now;
+      }
+      
+      this.decoderStallCheckTimer = window.setTimeout(check, 2000);
+    };
+    
+    this.decoderStallCheckTimer = window.setTimeout(check, 3000);
   }
 
   private onVideoFrame(frame: VideoFrame) {
@@ -323,7 +409,8 @@ export class WebCodecsPlayer {
     }
 
     this.frameQueue.push(frame);
-    while (this.frameQueue.length > 80) {
+    const maxQueue = Math.max(30, Math.floor(60 * this.playbackRate));
+    while (this.frameQueue.length > maxQueue) {
       const old = this.frameQueue.shift()!;
       old.close();
       this.droppedFrames++;
@@ -355,10 +442,10 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const MAX_OUTSTANDING = 50;
+    const maxOutstanding = Math.max(30, Math.floor(50 * this.playbackRate));
     while (
       this.vIdx < this.encodedVideo.length &&
-      this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
+      this.frameQueue.length + dec.decodeQueueSize < maxOutstanding
     ) {
       const s = this.encodedVideo[this.vIdx++];
       if (this.needVideoKey) {
@@ -385,7 +472,7 @@ export class WebCodecsPlayer {
     if (this.frameQueue.length === 0) return;
 
     const now = performance.now();
-    const minFrameInterval = 1000 / 65;
+    const minFrameInterval = 1000 / (65 * this.playbackRate);
 
     if (now - this.lastRenderTime < minFrameInterval) {
       return;
@@ -396,23 +483,26 @@ export class WebCodecsPlayer {
     if (!this.hasOffset && this.frameQueue.length > 0) {
       const firstFrame = this.frameQueue[0];
       const firstPts = firstFrame.timestamp / 1e6;
-      this.videoTimeOffset = clock - firstPts;
+      this.videoTimeOffset = clock - firstPts + 0.12;
       this.hasOffset = true;
       console.log('[WebCodecsPlayer] sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
     }
+
+    const aheadThreshold = 0.08 + 0.02 * this.playbackRate;
+    const behindThreshold = -0.2;
 
     while (this.frameQueue.length > 0) {
       const first = this.frameQueue[0];
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
-      if (diff < -0.1) {
+      if (diff < behindThreshold) {
         if (toDraw) {
           toDraw.close();
           this.droppedFrames++;
         }
         toDraw = this.frameQueue.shift()!;
-      } else if (diff <= 0.034) {
+      } else if (diff <= aheadThreshold) {
         if (toDraw) {
           toDraw.close();
           this.droppedFrames++;
@@ -447,10 +537,11 @@ export class WebCodecsPlayer {
       `[WC] render: ${stats.renderFps} fps  decode: ${stats.decodeFps} fps`,
       `[WC] frameQueue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
       `[WC] ${stats.resolution} ${stats.codec}`,
-      `[WC] t=${stats.currentSec}s`,
+      `[WC] t=${stats.currentSec}s  rate=${this.playbackRate.toFixed(2)}x`,
       `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
       `[WC] vBuf: ${stats.demuxVideoQueue}`,
       `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}  offset: ${this.hasOffset ? this.videoTimeOffset.toFixed(2) + 's' : 'pending'}`,
+      `[WC] errCount: ${this.decoderErrorCount}`,
       `--- HLS ---`,
       `  state: ${ds.hlsState}  levels: ${ds.levelCount}  level: ${ds.currentLevel}`,
       `  frags: ${ds.fragLoaded}  bytes: ${(ds.bytesLoaded / 1024 / 1024).toFixed(2)}MB`,
@@ -492,9 +583,12 @@ export class WebCodecsPlayer {
   }
 
   setPlaybackRate(r: number) {
+    const rate = Math.max(0.25, Math.min(4, r));
+    this.playbackRate = rate;
     if (this.videoEl) {
-      this.videoEl.playbackRate = Math.max(0.25, Math.min(4, r));
+      this.videoEl.playbackRate = rate;
     }
+    console.log('[WebCodecsPlayer] setPlaybackRate:', rate);
   }
 
   async seek(seconds: number) {
@@ -532,6 +626,11 @@ export class WebCodecsPlayer {
   private teardown() {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+
+    if (this.decoderStallCheckTimer) {
+      clearTimeout(this.decoderStallCheckTimer);
+      this.decoderStallCheckTimer = 0;
+    }
 
     if (this.hls) {
       try { this.hls.destroy(); } catch {}
@@ -599,6 +698,8 @@ export class WebCodecsPlayer {
       renderedFrames: this.renderedFrames,
       demuxVideoQueue: this.encodedVideo.length - this.vIdx,
       demuxAudioQueue: 0,
+      bufferedVideoSec: 0,
+      bufferedAudioSec: 0,
     };
   }
 
