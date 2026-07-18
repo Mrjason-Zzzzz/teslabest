@@ -409,16 +409,14 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       onTouchStart={showControlsTemporarily}
       onClick={(e) => { if ((e.target as HTMLElement).dataset?.role === 'stage') togglePlay(); }}
     >
-      {/* Video 模式 */}
-      {mode === 'video' && (
-        <video
-          ref={videoRef}
-          data-role="stage"
-          className="absolute inset-0 h-full w-full bg-black"
-          style={{ objectFit: 'contain' }}
-          playsInline autoPlay poster={poster}
-        />
-      )}
+      {/* Video 模式 - 始终渲染，用 CSS 控制显示，避免切换时 ref 时序问题 */}
+      <video
+        ref={videoRef}
+        data-role="stage"
+        className={`absolute inset-0 h-full w-full bg-black ${mode === 'video' ? '' : 'hidden'}`}
+        style={{ objectFit: 'contain' }}
+        playsInline autoPlay poster={poster}
+      />
 
       {/* Canvas 模式 */}
       <div ref={canvasHostRef} data-role="stage"
