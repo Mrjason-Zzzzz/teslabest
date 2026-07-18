@@ -299,10 +299,19 @@ export class HlsBroadwayEngine {
     }
   }
 
+  /** 判断 URL 是否同源（代理接口等），同源请求带 cookie，跨域不带 */
+  private isSameOrigin(url: string): boolean {
+    if (url.startsWith('/') || url.startsWith(`${window.location.origin}/`)) return true;
+    return false;
+  }
+
   private async fetchText(url: string): Promise<string> {
+    const sameOrigin = this.isSameOrigin(url);
     const res = await fetch(url, {
-      credentials: 'same-origin',
+      mode: sameOrigin ? 'same-origin' : 'cors',
+      credentials: sameOrigin ? 'same-origin' : 'omit',
       redirect: 'follow',
+      cache: 'no-cache',
     });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} ${res.statusText}: ${url}`);
@@ -311,9 +320,12 @@ export class HlsBroadwayEngine {
   }
 
   private async fetchSegment(url: string): Promise<Uint8Array> {
+    const sameOrigin = this.isSameOrigin(url);
     const res = await fetch(url, {
-      credentials: 'same-origin',
+      mode: sameOrigin ? 'same-origin' : 'cors',
+      credentials: sameOrigin ? 'same-origin' : 'omit',
       redirect: 'follow',
+      cache: 'no-cache',
     });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} 分片下载失败: ${url}`);
@@ -326,9 +338,12 @@ export class HlsBroadwayEngine {
     if (this.keyCache.has(url)) {
       return this.keyCache.get(url)!;
     }
+    const sameOrigin = this.isSameOrigin(url);
     const res = await fetch(url, {
-      credentials: 'same-origin',
+      mode: sameOrigin ? 'same-origin' : 'cors',
+      credentials: sameOrigin ? 'same-origin' : 'omit',
       redirect: 'follow',
+      cache: 'no-cache',
     });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} key 下载失败: ${url}`);

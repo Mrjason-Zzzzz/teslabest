@@ -9,7 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { SearchResult } from '@/lib/types';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
-import { fetchTVDetail } from '@/components/tv/player/utils';
+import { fetchTVDetail, resolveTVEpisodeUrl } from '@/components/tv/player/utils';
 
 /**
  * /play/tesla
@@ -86,27 +86,33 @@ function TeslaPlayPageInner() {
       });
   }, [source, id, initialTitle]);
 
-  // 解析当前集 URL —— Tesla 版始终走 /api/proxy/vod/m3u8 代理，避免 CORS
+  // 解析当前集 URL（与原版 /play 逻辑一致：proxyMode 走代理，否则直连 CDN）
   useEffect(() => {
     if (!detail || !detail.episodes || currentEpisodeIndex >= detail.episodes.length) {
       setPlayUrl('');
       return;
     }
+    let disposed = false;
     const rawUrl = detail.episodes[currentEpisodeIndex];
-    // 始终走代理：内部源 → /api/proxy/vod/m3u8；directplay → /api/proxy-m3u8
-    let proxyUrl: string;
-    if (detail.source === 'directplay') {
-      proxyUrl = `/api/proxy-m3u8?url=${encodeURIComponent(rawUrl)}&source=directplay`;
-    } else {
-      proxyUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(rawUrl)}&source=${encodeURIComponent(detail.source)}`;
-    }
-    console.log('[TeslaPlay] build proxy url', {
-      rawUrl: rawUrl.slice(0, 100),
-      proxyUrl,
+    console.log('[TeslaPlay] resolveTVEpisodeUrl start', {
+      rawUrl: rawUrl.slice(0, 120),
       source: detail.source,
       proxyMode: detail.proxyMode,
     });
-    setPlayUrl(proxyUrl);
+    resolveTVEpisodeUrl(rawUrl, detail.source, detail.proxyMode)
+      .then((u) => {
+        if (disposed) return;
+        console.log('[TeslaPlay] resolveTVEpisodeUrl success', { resolvedUrl: u.slice(0, 120) });
+        setPlayUrl(u);
+      })
+      .catch((err) => {
+        if (disposed) return;
+        console.error('[TeslaPlay] resolveTVEpisodeUrl failed, fallback to raw', err);
+        setPlayUrl(rawUrl);
+      });
+    return () => {
+      disposed = true;
+    };
   }, [detail, currentEpisodeIndex]);
 
   const episodeTitle = useMemo(() => {
