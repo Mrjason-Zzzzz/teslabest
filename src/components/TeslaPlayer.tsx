@@ -76,6 +76,11 @@ export default function TeslaPlayer({
   const ensureBroadwayScripts = useCallback(async () => {
     if (scriptsLoadedRef.current) return;
     if (typeof window === 'undefined') return;
+    // Broadway 的 Decoder.js 是 Node 打包产物，会引用 `global` 变量，
+    // 浏览器没有该全局，需在脚本执行前 polyfill 为 window，否则抛 ReferenceError。
+    if (!(window as any).global) {
+      (window as any).global = window;
+    }
     const loadScript = (src: string) =>
       new Promise<void>((resolve, reject) => {
         const existing = document.querySelector<HTMLScriptElement>(
