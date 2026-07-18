@@ -1,6 +1,6 @@
 'use client';
 
-/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, no-console */
 
 import { ArrowLeft, ChevronDown, Loader2 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -9,6 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { SearchResult } from '@/lib/types';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
+import { fetchTVDetail, resolveTVEpisodeUrl } from '@/components/tv/player/utils';
 
 /**
  * /play/tesla
@@ -16,32 +17,11 @@ import TeslaPlayer from '@/components/TeslaPlayer';
  * 特斯拉车机适配版播放页。接收与 /play 完全相同的 query 参数：
  *   - source, id, title, year, episode, stitle, stype, ...
  *
- * 复用现有 /api/detail、/api/proxy/vod/m3u8、/api/proxy-m3u8 接口，
+ * 复用 fetchTVDetail / resolveTVEpisodeUrl（内部走 /api/source-detail），
  * 但底层播放器换成 TeslaPlayer（Broadway.js + Canvas，不依赖 <video>）。
  *
  * 仅保留核心播放与切集功能，不复制原页面的弹幕/字幕/历史进度/优选源等复杂逻辑。
  */
-
-function isM3u8Url(url: string): boolean {
-  const lower = url.toLowerCase();
-  if (lower.includes('.m3u8') || lower.includes('.m3u')) return true;
-  if (lower.match(/\.(mp4|flv|webm|mkv|avi|mov)(\?.*)?$/)) return false;
-  return true;
-}
-
-/** 与原 /play 一致的 URL 拼接策略：directplay 走 /api/proxy-m3u8，其他源走 /api/proxy/vod/m3u8 */
-function buildProxyUrl(rawUrl: string, source: string, token?: string): string {
-  if (!isM3u8Url(rawUrl)) {
-    // 非 m3u8（如 mp4 直链）暂不支持 Broadway 软解（Broadway 仅 H.264 流），
-    // 仍然返回原始 URL，由前端提示用户。
-    return rawUrl;
-  }
-  if (source === 'directplay') {
-    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
-    return `/api/proxy-m3u8?url=${encodeURIComponent(rawUrl)}&source=directplay${tokenParam}`;
-  }
-  return `/api/proxy/vod/m3u8?url=${encodeURIComponent(rawUrl)}&source=${encodeURIComponent(source)}`;
-}
 
 function TeslaPlayPageInner() {
   const router = useRouter();
@@ -59,27 +39,17 @@ function TeslaPlayPageInner() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(initialEpisode);
   const [showEpisodePanel, setShowEpisodePanel] = useState(false);
+  const [playUrl, setPlayUrl] = useState('');
   const detailSeqRef = useRef(0);
-
-  // 读取 proxyToken（与原 /play 一致）
-  const proxyToken = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    try {
-      const raw = localStorage.getItem('proxyToken');
-      return raw || '';
-    } catch {
-      return '';
-    }
-  }, []);
 
   useEffect(() => {
     document.title = initialTitle ? `${initialTitle} - Tesla 播放` : 'Tesla 播放';
   }, [initialTitle]);
 
-  // 拉取详情
+  // 拉取详情（复用 fetchTVDetail，与 TV 版保持一致）
   useEffect(() => {
-    if (!source || !id) {
-      setDetailError('缺少参数：source / id');
+    if (!source && !id && !initialTitle) {
+      setDetailError('缺少参数：source / id / title');
       setLoadingDetail(false);
       return;
     }
@@ -87,29 +57,21 @@ function TeslaPlayPageInner() {
     setLoadingDetail(true);
     setDetailError(null);
 
-    fetch(`/api/detail?id=${encodeURIComponent(id)}&source=${encodeURIComponent(source)}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: any) => {
+    console.log('[TeslaPlay] fetchTVDetail start', { source, id, title: initialTitle });
+
+    fetchTVDetail({ source: source || null, id: id || null, title: initialTitle || null })
+      .then(({ detail: d }) => {
         if (seq !== detailSeqRef.current) return;
-        if (!data || !data.list || !Array.isArray(data.list) || data.list.length === 0) {
-          setDetailError('未找到播放源');
-          setLoadingDetail(false);
-          return;
-        }
-        const sources: SearchResult[] = data.list;
-        // 优先匹配 url 中的 source；找不到就取第一个
-        const matched =
-          sources.find((s) => s.source === source) || sources[0];
-        setDetail(matched);
-        // 如果详情中的集数少于初始集，重置为 0
-        if (
-          !matched.episodes ||
-          matched.episodes.length === 0 ||
-          initialEpisode >= matched.episodes.length
-        ) {
+        console.log('[TeslaPlay] fetchTVDetail success', {
+          source: d.source,
+          id: d.id,
+          title: d.title,
+          episodesCount: d.episodes?.length || 0,
+          firstEpisode: d.episodes?.[0]?.slice(0, 100),
+          proxyMode: d.proxyMode,
+        });
+        setDetail(d);
+        if (!d.episodes || d.episodes.length === 0 || initialEpisode >= d.episodes.length) {
           setCurrentEpisodeIndex(0);
         } else {
           setCurrentEpisodeIndex(initialEpisode);
@@ -118,18 +80,40 @@ function TeslaPlayPageInner() {
       })
       .catch((e) => {
         if (seq !== detailSeqRef.current) return;
-        setDetailError(e?.message || '详情获取失败');
+        console.error('[TeslaPlay] fetchTVDetail failed', e);
+        setDetailError(e?.message || '未找到播放源');
         setLoadingDetail(false);
       });
-  }, [source, id]);
+  }, [source, id, initialTitle]);
 
-  // 当前集的播放 URL
-  const currentPlayUrl = useMemo(() => {
-    if (!detail || !detail.episodes || detail.episodes.length === 0) return '';
-    const raw = detail.episodes[currentEpisodeIndex];
-    if (!raw) return '';
-    return buildProxyUrl(raw, detail.source, proxyToken);
-  }, [detail, currentEpisodeIndex, proxyToken]);
+  // 解析当前集 URL（走 resolveTVEpisodeUrl，处理懒加载和代理）
+  useEffect(() => {
+    if (!detail || !detail.episodes || currentEpisodeIndex >= detail.episodes.length) {
+      setPlayUrl('');
+      return;
+    }
+    let disposed = false;
+    const rawUrl = detail.episodes[currentEpisodeIndex];
+    console.log('[TeslaPlay] resolveTVEpisodeUrl start', {
+      rawUrl: rawUrl.slice(0, 120),
+      source: detail.source,
+      proxyMode: detail.proxyMode,
+    });
+    resolveTVEpisodeUrl(rawUrl, detail.source, detail.proxyMode)
+      .then((u) => {
+        if (disposed) return;
+        console.log('[TeslaPlay] resolveTVEpisodeUrl success', { resolvedUrl: u.slice(0, 120) });
+        setPlayUrl(u);
+      })
+      .catch((err) => {
+        if (disposed) return;
+        console.error('[TeslaPlay] resolveTVEpisodeUrl failed, fallback to raw', err);
+        setPlayUrl(rawUrl);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [detail, currentEpisodeIndex]);
 
   const episodeTitle = useMemo(() => {
     if (!detail) return '';
@@ -145,14 +129,6 @@ function TeslaPlayPageInner() {
     return parts.join(' - ');
   }, [initialTitle, year, episodeTitle]);
 
-  // 非 m3u8 资源（如 mp4 直链）警告
-  const isUnsupportedFormat = useMemo(() => {
-    if (!detail || !detail.episodes) return false;
-    const raw = detail.episodes[currentEpisodeIndex];
-    if (!raw) return false;
-    return !isM3u8Url(raw);
-  }, [detail, currentEpisodeIndex]);
-
   const backToOriginal = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     router.push(`/play?${params.toString()}`);
@@ -161,7 +137,6 @@ function TeslaPlayPageInner() {
   const handleSelectEpisode = useCallback((index: number) => {
     setCurrentEpisodeIndex(index);
     setShowEpisodePanel(false);
-    // 同步 URL 中的 episode 参数（与原 /play 一致：1-based）
     const params = new URLSearchParams(window.location.search);
     params.set('episode', String(index + 1));
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
@@ -189,29 +164,15 @@ function TeslaPlayPageInner() {
             </button>
           </div>
         )}
-        {!loadingDetail && !detailError && currentPlayUrl && !isUnsupportedFormat && (
+        {!loadingDetail && !detailError && playUrl && (
           <TeslaPlayer
             key={`${detail?.source}-${currentEpisodeIndex}`}
-            url={currentPlayUrl}
+            url={playUrl}
             title={fullTitle}
             poster={detail?.poster}
             live={false}
             onBackToOriginal={backToOriginal}
           />
-        )}
-        {!loadingDetail && !detailError && isUnsupportedFormat && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-white/80">
-            <p className="text-amber-300">
-              当前资源为非 m3u8 格式（如 mp4 直链），Broadway.js 软解仅支持 H.264 TS 流。
-            </p>
-            <button
-              type="button"
-              onClick={backToOriginal}
-              className="rounded bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20"
-            >
-              切回原版播放器
-            </button>
-          </div>
         )}
       </div>
 
