@@ -11,18 +11,6 @@ import type { SearchResult } from '@/lib/types';
 import TeslaPlayer from '@/components/TeslaPlayer';
 import { fetchTVDetail, resolveTVEpisodeUrl } from '@/components/tv/player/utils';
 
-/**
- * /play/tesla
- *
- * 特斯拉车机适配版播放页。接收与 /play 完全相同的 query 参数：
- *   - source, id, title, year, episode, stitle, stype, ...
- *
- * 复用 fetchTVDetail / resolveTVEpisodeUrl（内部走 /api/source-detail），
- * 但底层播放器换成 TeslaPlayer（Broadway.js + Canvas，不依赖 <video>）。
- *
- * 仅保留核心播放与切集功能，不复制原页面的弹幕/字幕/历史进度/优选源等复杂逻辑。
- */
-
 function TeslaPlayPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -40,13 +28,13 @@ function TeslaPlayPageInner() {
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(initialEpisode);
   const [showEpisodePanel, setShowEpisodePanel] = useState(false);
   const [playUrl, setPlayUrl] = useState('');
+  const [isAutoPlayingNext, setIsAutoPlayingNext] = useState(false);
   const detailSeqRef = useRef(0);
 
   useEffect(() => {
     document.title = initialTitle ? `${initialTitle} - Tesla 播放` : 'Tesla 播放';
   }, [initialTitle]);
 
-  // 拉取详情（复用 fetchTVDetail，与 TV 版保持一致）
   useEffect(() => {
     if (!source && !id && !initialTitle) {
       setDetailError('缺少参数：source / id / title');
@@ -86,7 +74,6 @@ function TeslaPlayPageInner() {
       });
   }, [source, id, initialTitle]);
 
-  // 解析当前集 URL（与原版 /play 逻辑一致：proxyMode 走代理，否则直连 CDN）
   useEffect(() => {
     if (!detail || !detail.episodes || currentEpisodeIndex >= detail.episodes.length) {
       setPlayUrl('');
@@ -104,15 +91,35 @@ function TeslaPlayPageInner() {
         if (disposed) return;
         console.log('[TeslaPlay] resolveTVEpisodeUrl success', { resolvedUrl: u.slice(0, 120) });
         setPlayUrl(u);
+        setIsAutoPlayingNext(false);
       })
       .catch((err) => {
         if (disposed) return;
         console.error('[TeslaPlay] resolveTVEpisodeUrl failed, fallback to raw', err);
         setPlayUrl(rawUrl);
+        setIsAutoPlayingNext(false);
       });
     return () => {
       disposed = true;
     };
+  }, [detail, currentEpisodeIndex]);
+
+  const handlePlayEnded = useCallback(() => {
+    if (!detail || !detail.episodes) return;
+    if (currentEpisodeIndex < detail.episodes.length - 1) {
+      setIsAutoPlayingNext(true);
+      setTimeout(() => {
+        setCurrentEpisodeIndex(currentEpisodeIndex + 1);
+        const params = new URLSearchParams(window.location.search);
+        params.set('episode', String(currentEpisodeIndex + 2));
+        window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+      }, 1500);
+    }
+  }, [detail, currentEpisodeIndex]);
+
+  const playRecordKey = useMemo(() => {
+    if (!detail) return undefined;
+    return `${detail.source}_${detail.id}_ep${currentEpisodeIndex}`;
   }, [detail, currentEpisodeIndex]);
 
   const episodeTitle = useMemo(() => {
@@ -165,14 +172,25 @@ function TeslaPlayPageInner() {
           </div>
         )}
         {!loadingDetail && !detailError && playUrl && (
-          <TeslaPlayer
-            key={`${detail?.source}-${currentEpisodeIndex}`}
-            url={playUrl}
-            title={fullTitle}
-            poster={detail?.poster}
-            live={false}
-            onBackToOriginal={backToOriginal}
-          />
+          <>
+            <TeslaPlayer
+              key={`${detail?.source}-${currentEpisodeIndex}`}
+              url={playUrl}
+              title={fullTitle}
+              poster={detail?.poster}
+              live={false}
+              onBackToOriginal={backToOriginal}
+              onEnded={handlePlayEnded}
+              playRecordKey={playRecordKey}
+            />
+            {isAutoPlayingNext && (
+              <div className="absolute inset-x-0 bottom-24 flex justify-center">
+                <div className="rounded-full bg-black/80 px-4 py-2 backdrop-blur">
+                  <span className="text-sm text-white/80">播放完毕，正在跳转下一集…</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
