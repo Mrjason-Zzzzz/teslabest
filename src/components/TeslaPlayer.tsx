@@ -224,15 +224,35 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     }
 
     // 绘制视频帧到 canvas
-    if (video.readyState >= 2) {
+    let drawSuccess = false;
+    if (video.readyState >= 2 && video.videoWidth > 0) {
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        drawSuccess = true;
       } catch (e) {
-        // drawImage 可能因为 CORS 或其他原因失败，忽略
+        // drawImage 可能因为 CORS 或其他原因失败
       }
     }
 
-    rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+    // 调试：在画布左上角显示视频状态（方便排查问题）
+    if (!drawSuccess) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width || 640, 120);
+      ctx.fillStyle = '#0f0';
+      ctx.font = '16px monospace';
+      ctx.fillText(`[Debug] readyState: ${video.readyState}`, 20, 25);
+      ctx.fillText(`[Debug] videoWidth: ${video.videoWidth}`, 20, 50);
+      ctx.fillText(`[Debug] videoHeight: ${video.videoHeight}`, 20, 75);
+      ctx.fillText(`[Debug] paused: ${video.paused}, currentTime: ${video.currentTime.toFixed(2)}`, 20, 100);
+    }
+
+    // 优先使用 requestVideoFrameCallback（仅在有新帧时回调，性能更好）
+    const anyVideo = video as any;
+    if (typeof anyVideo.requestVideoFrameCallback === 'function') {
+      rafRef.current = anyVideo.requestVideoFrameCallback(drawVideoFrameToCanvas);
+    } else {
+      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+    }
   }, []);
 
   // ===== Web Audio API 音频初始化 =====
@@ -397,7 +417,12 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('error', onError);
       if (rafRef.current) {
-        window.cancelAnimationFrame(rafRef.current);
+        const anyVideo = video as any;
+        if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
+          anyVideo.cancelVideoFrameCallback(rafRef.current);
+        } else {
+          window.cancelAnimationFrame(rafRef.current);
+        }
         rafRef.current = null;
       }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
