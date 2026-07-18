@@ -1,3 +1,4 @@
+var global=global||self||this;
 /**
  * Minified by jsDelivr using Terser v5.37.0.
  * Original file: /npm/broadwayjs@0.0.2/Player/Decoder.js
