@@ -115,7 +115,7 @@ export class HlsBroadwayEngine {
     this.opts = {
       url: options.url,
       live: options.live ?? false,
-      workerFile: options.workerFile ?? '/assets/broadway/Decoder.js',
+      workerFile: options.workerFile ?? '/assets/broadway/decoder-worker-wrapper.js',
       useWorker: options.useWorker ?? true,
       webgl: options.webgl ?? 'auto',
       autoplay: options.autoplay ?? true,
