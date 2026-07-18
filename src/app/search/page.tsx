@@ -31,8 +31,8 @@ import {
   getSearchHistory,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { SearchResult } from '@/lib/types';
 import { appendSpecialSourceParam, isSpecialSourcesEnabledOnDevice } from '@/lib/special-source.client';
+import { SearchResult } from '@/lib/types';
 import { processImageUrl } from '@/lib/utils';
 
 import AcgSearch from '@/components/AcgSearch';
@@ -45,6 +45,7 @@ import SearchResultFilter, {
   SearchFilterCategory,
 } from '@/components/SearchResultFilter';
 import SearchSuggestions from '@/components/SearchSuggestions';
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 import VideoCard, { VideoCardHandle } from '@/components/VideoCard';
 import VirtualScrollableGrid from '@/components/VirtualScrollableGrid';
 
@@ -893,14 +894,22 @@ function SearchPageClient() {
     });
 
     return (
-      <button
+      <div
         key={item.key}
-        type='button'
+        role='button'
+        tabIndex={0}
         onClick={() => {
           savePartialCacheForPlayback();
           router.push(itemUrl);
         }}
-        className='group w-full rounded-2xl border border-gray-200/80 bg-white/90 p-3 text-left shadow-sm transition-all hover:border-green-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-900/70 dark:hover:border-green-700'
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            savePartialCacheForPlayback();
+            router.push(itemUrl);
+          }
+        }}
+        className='group w-full cursor-pointer rounded-2xl border border-gray-200/80 bg-white/90 p-3 text-left shadow-sm transition-all hover:border-green-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-900/70 dark:hover:border-green-700'
       >
         <div className='flex items-start gap-4'>
           <div className='relative h-32 w-24 shrink-0 overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800'>
@@ -997,7 +1006,22 @@ function SearchPageClient() {
             )}
           </div>
         )}
-      </button>
+
+        <div
+          className='mt-3 flex items-center justify-end'
+          onClick={(e) => e.stopPropagation()}
+        >
+          <TeslaEntryButton
+            kind='play'
+            params={{
+              source: item.source,
+              id: item.id,
+              title: item.title,
+              year: item.year,
+            }}
+          />
+        </div>
+      </div>
     );
   };
 

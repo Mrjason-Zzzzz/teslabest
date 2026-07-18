@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useWebLiveSync } from '@/hooks/useWebLiveSync';
 
 import PageLayout from '@/components/PageLayout';
-import { useWatchRoomContextSafe } from '@/components/WatchRoomProvider';
+import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 
 let Artplayer: any = null;
 let Hls: any = null;
@@ -426,8 +427,9 @@ export default function WebLivePage() {
 
   return (
     <PageLayout activePath='/web-live'>
+      <TeslaAutoRedirect to="/web-live/tesla" />
       <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
-        <div className='py-1'>
+        <div className='py-1 flex items-center justify-between gap-3'>
           <h1 className='text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 max-w-[80%]'>
             <Radio className='w-5 h-5 text-blue-500 flex-shrink-0' />
             <div className='min-w-0 flex-1'>
@@ -436,6 +438,13 @@ export default function WebLivePage() {
               </div>
             </div>
           </h1>
+          <TeslaEntryButton
+            kind='web-live'
+            params={{
+              platform: currentSource?.platform,
+              roomId: currentSource?.roomId,
+            }}
+          />
         </div>
 
         <div className='space-y-2'>

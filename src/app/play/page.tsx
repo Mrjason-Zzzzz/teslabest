@@ -48,20 +48,20 @@ import {
 } from '@/lib/db.client';
 import { getDoubanDetail } from '@/lib/douban.client';
 import { isEpisodeHiddenByFilter, normalizeEpisodeFilterConfig } from '@/lib/episode-filter';
-import { appendSpecialSourceParam, isSpecialSourcesEnabledOnDevice } from '@/lib/special-source.client';
 import {
   buildEpisodeProgressContentKey,
   loadLocalEpisodeProgress,
   pruneLocalEpisodeProgressStorage,
   saveLocalEpisodeProgress,
 } from '@/lib/episode-progress';
+import { getIndexedDBVideoPlaybackUrl } from '@/lib/indexeddb-video-cache';
 import { isNetdiskSource, normalizeNetdiskSource } from '@/lib/netdisk/source';
 import {
   getRecommendationCache,
   recommendationCacheKeys,
   setRecommendationCache,
 } from '@/lib/recommendations/cache';
-import { getIndexedDBVideoPlaybackUrl } from '@/lib/indexeddb-video-cache';
+import { appendSpecialSourceParam, isSpecialSourcesEnabledOnDevice } from '@/lib/special-source.client';
 import {
   convertSubtitleFileToVttObjectUrl,
   CUSTOM_SUBTITLE_ACCEPT,
@@ -87,6 +87,8 @@ import PansouSearch from '@/components/PansouSearch';
 import ProxyImage from '@/components/ProxyImage';
 import { useSite } from '@/components/SiteProvider';
 import SmartRecommendations from '@/components/SmartRecommendations';
+import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 import Toast, { ToastProps } from '@/components/Toast';
 import VideoCard from '@/components/VideoCard';
 
@@ -10228,6 +10230,18 @@ function PlayPageClient() {
                     >
                       <FavoriteIcon filled={favorited} />
                     </button>
+                    {/* Tesla Canvas 版本入口 */}
+                    <div className='flex-shrink-0 self-center'>
+                      <TeslaEntryButton
+                        kind='play'
+                        params={{
+                          source: currentSource,
+                          id: currentId,
+                          title: videoTitle,
+                          year: detail?.year,
+                        }}
+                      />
+                    </div>
                     {/* 网盘搜索按钮 */}
                     {netdiskSearchEnabled && (
                       <button
@@ -10851,6 +10865,7 @@ const FavoriteIcon = ({ filled }: { filled: boolean }) => {
 export default function PlayPage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
+      <TeslaAutoRedirect to="/play/tesla" />
       <PlayPageClient />
     </Suspense>
   );

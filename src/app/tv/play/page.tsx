@@ -55,6 +55,8 @@ import {
 import { loadTVPlayerUpDownAction } from '@/lib/tv-preferences';
 import { SearchResult } from '@/lib/types';
 
+import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 import TVNativeVideo from '@/components/tv/player/TVNativeVideo';
 import {
   fetchTVDetail,
@@ -1451,6 +1453,18 @@ function TVPlayClient() {
           <div className='mt-1 text-xl text-slate-300'>
             {episodeTitle} · {detail.source_name}
           </div>
+          <div className='mt-2 flex justify-end'>
+            <TeslaEntryButton
+              kind='tv'
+              params={{
+                source: source || undefined,
+                id: id || undefined,
+                title: title || undefined,
+                fileName: fileName || undefined,
+                index: episodeIndex,
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -1949,6 +1963,7 @@ function TVPlayClient() {
 export default function TVPlayPage() {
   return (
     <Suspense fallback={null}>
+      <TeslaAutoRedirect to="/tv/play/tesla" />
       <TVPlayClient />
     </Suspense>
   );
