@@ -27,6 +27,7 @@ export class WebCodecsPlayer {
   private currentSegIndex = 0;
   private durationSec = 0;
   private downloading = false;
+  private seekTarget: number | null = null;
 
   private packetStream: any = null;
   private parseStream: any = null;
@@ -131,6 +132,9 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
+      maxBufferLength: 60,
+      maxMaxBufferLength: 120,
+      backBufferLength: 60,
     });
 
     this.hls = hls;
@@ -166,8 +170,16 @@ export class WebCodecsPlayer {
 
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
       this.debugStats.fragLoaded++;
-      const payload = data.frag?.data || data.payload;
+      const frag = data.frag;
+      const payload = frag?.data || data.payload;
       if (payload && payload.byteLength) {
+        if (this.seekTarget !== null) {
+          const fragStart = frag?.start ?? 0;
+          const fragEnd = fragStart + (frag?.duration ?? 0);
+          if (fragEnd < this.seekTarget) {
+            return;
+          }
+        }
         this.debugStats.bytesLoaded += payload.byteLength;
         this.feedTsData(new Uint8Array(payload));
       }
@@ -401,7 +413,8 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const MAX_OUTSTANDING = 30;
+    const MAX_OUTSTANDING = 50;
+    const MIN_QUEUE_FOR_PAUSE_DEMUX = 80;
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
@@ -410,6 +423,9 @@ export class WebCodecsPlayer {
       if (this.needVideoKey) {
         if (!s.key) continue;
         this.needVideoKey = false;
+        if (this.seekTarget !== null) {
+          this.seekTarget = null;
+        }
       }
       try {
         dec.decode(
@@ -487,9 +503,10 @@ export class WebCodecsPlayer {
   private scheduleAudio() {
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > 4) return;
+    if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > 2) return;
 
-    while (this.decodedAudio.length) {
+    let scheduled = 0;
+    while (this.decodedAudio.length && scheduled < 10) {
       const head = this.decodedAudio[0];
       const rate = head.sampleRate;
       const channels = head.numberOfChannels;
@@ -510,15 +527,15 @@ export class WebCodecsPlayer {
       const idealWhen = this.ctxStartTime + (audibleTs - this.baseMediaTime);
       let when: number;
       if (this.nextAudioStartTime === 0) {
-        when = Math.max(idealWhen, now + 0.02);
+        when = Math.max(idealWhen, now + 0.05);
       } else {
         when = this.nextAudioStartTime;
-        if (when < now) {
+        if (when < now - 0.1) {
           when = now + 0.05;
         }
       }
 
-      if (when > now + 6) break;
+      if (when > now + 4) break;
 
       const frames = head.numberOfFrames;
       let buffer: AudioBuffer;
@@ -541,6 +558,7 @@ export class WebCodecsPlayer {
       this.activeSources.add(src);
       src.onended = () => this.activeSources.delete(src);
       this.nextAudioStartTime = when + (frames / rate - startOffsetSec);
+      scheduled++;
     }
   }
 
@@ -631,6 +649,9 @@ export class WebCodecsPlayer {
 
   async seek(seconds: number) {
     const t = Math.max(0, Math.min(seconds, this.durationSec));
+    console.log('[WebCodecsPlayer] seek to:', t);
+
+    this.seekTarget = t;
     this.encodedVideo = [];
     this.encodedAudio = [];
     this.vIdx = 0;
@@ -644,6 +665,10 @@ export class WebCodecsPlayer {
     this.frameQueue = [];
     for (const d of this.decodedAudio) d.close();
     this.decodedAudio = [];
+    for (const src of this.activeSources) {
+      try { src.stop(); } catch {}
+    }
+    this.activeSources.clear();
 
     try { this.videoDecoder?.reset(); } catch {}
     try { this.audioDecoder?.reset(); } catch {}
@@ -668,13 +693,16 @@ export class WebCodecsPlayer {
       } catch {}
     }
 
+    this.initDemuxPipeline();
+
     if (this.hls) {
       try {
-        this.hls.currentTime = t;
-      } catch {}
+        this.hls.startLoad(t);
+      } catch (e) {
+          console.warn('[WebCodecsPlayer] hls startLoad failed:', e);
+        }
     }
 
-    this.initDemuxPipeline();
     this.setState('buffering');
   }
 
