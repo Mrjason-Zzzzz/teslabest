@@ -392,14 +392,13 @@ export class WebCodecsPlayer {
     }
 
     let toDraw: VideoFrame | null = null;
-    let droppedThisTick = 0;
 
     if (!this.hasOffset && this.frameQueue.length > 0) {
       const firstFrame = this.frameQueue[0];
       const firstPts = firstFrame.timestamp / 1e6;
       this.videoTimeOffset = clock - firstPts;
       this.hasOffset = true;
-      console.log('[WebCodecsPlayer] initial sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
+      console.log('[WebCodecsPlayer] sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
     }
 
     while (this.frameQueue.length > 0) {
@@ -413,39 +412,16 @@ export class WebCodecsPlayer {
           this.droppedFrames++;
         }
         toDraw = this.frameQueue.shift()!;
-        droppedThisTick++;
       } else if (diff <= 0.034) {
         if (toDraw) {
           toDraw.close();
           this.droppedFrames++;
         }
         toDraw = this.frameQueue.shift()!;
-        droppedThisTick++;
         break;
       } else {
         break;
       }
-    }
-
-    if (!toDraw && this.frameQueue.length > 0 && this.hasOffset) {
-      const first = this.frameQueue[0];
-      const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
-      const diff = frameTime - clock;
-
-      if (Math.abs(diff) > 2.0 && this.videoEl && !this.videoEl.paused) {
-        const oldOffset = this.videoTimeOffset;
-        this.videoTimeOffset = clock - first.timestamp / 1e6;
-        console.log('[WebCodecsPlayer] resync: diff=' + diff.toFixed(2) + 's oldOffset=' + oldOffset.toFixed(2) + 's newOffset=' + this.videoTimeOffset.toFixed(2) + 's');
-        if (diff > 0) {
-          toDraw = this.frameQueue.shift()!;
-          droppedThisTick++;
-        }
-      }
-    }
-
-    if (!toDraw && this.frameQueue.length > 0 && !this.hasOffset) {
-      toDraw = this.frameQueue.shift()!;
-      droppedThisTick++;
     }
 
     if (toDraw) {

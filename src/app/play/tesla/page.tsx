@@ -338,11 +338,21 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className="mx-auto flex max-w-7xl gap-4 px-4 py-4 flex-col lg:flex-row">
-          {/* 左侧：播放器 + 详情 */}
-          <div className={`min-w-0 flex-1 transition-all duration-300 ${rightPanelCollapsed ? '' : ''}`}>
-            {/* 播放器容器 */}
-            <div className="relative w-full overflow-hidden rounded-xl bg-black shadow-lg" style={{ aspectRatio: '16 / 9' }}>
+        <div className="mx-auto max-w-7xl px-4 py-4">
+          <div
+            className={`grid gap-4 transition-all duration-300 ease-in-out ${rightPanelCollapsed
+              ? 'grid-cols-1'
+              : 'grid-cols-1 md:grid-cols-4'
+            }`}
+          >
+            {/* 左侧：播放器 + 详情 */}
+            <div
+              className={`transition-all duration-300 ease-in-out flex flex-col ${rightPanelCollapsed ? 'col-span-1' : 'md:col-span-3'
+                }`}
+            >
+              {/* 播放器容器 */}
+              <div className="relative w-full h-[300px]">
+                <div className="absolute inset-0 overflow-hidden rounded-xl bg-black shadow-lg">
               {isLoading && loadingStage !== 'error' && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900">
                   <Loader2 className="h-8 w-8 animate-spin text-green-500" />
@@ -403,7 +413,8 @@ function TeslaPlayPageInner() {
                   )}
                 </>
               )}
-            </div>
+                </div>
+              </div>
 
             {/* 视频详情 */}
             {currentDetail && (
@@ -454,13 +465,8 @@ function TeslaPlayPageInner() {
           </div>
 
           {/* 右侧面板（可折叠） */}
-          {currentDetail && currentDetail.episodes && currentDetail.episodes.length > 0 && (
-            <>
-              <div
-                className={`flex-shrink-0 transition-all duration-300 ${
-                  rightPanelCollapsed ? 'w-0 overflow-hidden opacity-0' : 'w-72'
-                }`}
-              >
+          {currentDetail && currentDetail.episodes && currentDetail.episodes.length > 0 && !rightPanelCollapsed && (
+            <div className="md:col-span-1">
                 <div className="overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur dark:bg-gray-900/80 dark:ring-gray-700/50">
                   <div className="flex border-b border-gray-100 dark:border-gray-800">
                     <button
@@ -585,22 +591,8 @@ function TeslaPlayPageInner() {
                   )}
                 </div>
               </div>
-
-              {/* 折叠/展开按钮 */}
-              <button
-                type="button"
-                onClick={() => setRightPanelCollapsed(!rightPanelCollapsed)}
-                className="sticky top-4 h-8 w-5 flex-shrink-0 self-start rounded-l-md bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur transition-colors hover:bg-gray-50 dark:bg-gray-900/80 dark:ring-gray-700/50 dark:hover:bg-gray-800"
-                title={rightPanelCollapsed ? '展开侧栏' : '收起侧栏'}
-              >
-                {rightPanelCollapsed ? (
-                  <ChevronLeft className="mx-auto h-4 w-4 text-gray-500 dark:text-gray-400" />
-                ) : (
-                  <ChevronRight className="mx-auto h-4 w-4 text-gray-500 dark:text-gray-400" />
-                )}
-              </button>
-            </>
           )}
+          </div>
         </div>
       </div>
     </PageLayout>
