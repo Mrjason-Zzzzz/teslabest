@@ -31,10 +31,8 @@ export class WebCodecsPlayer {
   private vIdx = 0;
 
   private frameQueue: VideoFrame[] = [];
-  private videoTimeOffset: number | null = null;
-  private currentFragStart: number | null = null;
-  private pendingFragStart: number | null = null;
-  private fragPtsFound = false;
+  private videoTimeOffset: number = 0;
+  private hasOffset = false;
 
   private state: PlayerState = 'idle';
   private destroyed = false;
@@ -190,8 +188,6 @@ export class WebCodecsPlayer {
       const payload = frag?.data || data.payload;
       if (payload && payload.byteLength) {
         this.debugStats.bytesLoaded += payload.byteLength;
-        this.pendingFragStart = frag?.start ?? null;
-        this.fragPtsFound = false;
         this.feedTsData(new Uint8Array(payload));
       }
     });
@@ -300,16 +296,6 @@ export class WebCodecsPlayer {
 
     if (frameNalus.length === 0) return;
 
-    if (!this.fragPtsFound && this.pendingFragStart !== null) {
-      const newOffset = this.pendingFragStart - pts;
-      if (this.videoTimeOffset === null || Math.abs(newOffset - this.videoTimeOffset) > 0.1) {
-        console.log('[WebCodecsPlayer] sync offset: fragStart=' + this.pendingFragStart.toFixed(2) + 's pts=' + pts.toFixed(2) + 's offset=' + newOffset.toFixed(2) + 's');
-      }
-      this.videoTimeOffset = newOffset;
-      this.fragPtsFound = true;
-      this.currentFragStart = this.pendingFragStart;
-    }
-
     const frameData = this.nalusToAvcc(frameNalus);
     this.encodedVideo.push({
       key: hasKeyFrame,
@@ -397,7 +383,6 @@ export class WebCodecsPlayer {
 
   private presentVideo(clock: number) {
     if (this.frameQueue.length === 0) return;
-    if (this.videoTimeOffset === null) return;
 
     const now = performance.now();
     const minFrameInterval = 1000 / 65;
@@ -406,37 +391,61 @@ export class WebCodecsPlayer {
       return;
     }
 
-    let framesConsumed = 0;
     let toDraw: VideoFrame | null = null;
+    let droppedThisTick = 0;
 
-    while (
-      this.frameQueue.length > 0
-    ) {
+    if (!this.hasOffset && this.frameQueue.length > 0) {
+      const firstFrame = this.frameQueue[0];
+      const firstPts = firstFrame.timestamp / 1e6;
+      this.videoTimeOffset = clock - firstPts;
+      this.hasOffset = true;
+      console.log('[WebCodecsPlayer] initial sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
+    }
+
+    while (this.frameQueue.length > 0) {
       const first = this.frameQueue[0];
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
+      const diff = frameTime - clock;
 
-      if (frameTime <= clock + 0.01) {
+      if (diff < -0.1) {
         if (toDraw) {
           toDraw.close();
           this.droppedFrames++;
-          framesConsumed++;
         }
         toDraw = this.frameQueue.shift()!;
-        framesConsumed++;
+        droppedThisTick++;
+      } else if (diff <= 0.034) {
+        if (toDraw) {
+          toDraw.close();
+          this.droppedFrames++;
+        }
+        toDraw = this.frameQueue.shift()!;
+        droppedThisTick++;
+        break;
       } else {
         break;
       }
     }
 
-    if (!toDraw && this.frameQueue.length > 0) {
+    if (!toDraw && this.frameQueue.length > 0 && this.hasOffset) {
       const first = this.frameQueue[0];
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
-      if (diff < 0.034) {
-        toDraw = this.frameQueue.shift()!;
-        framesConsumed++;
+      if (Math.abs(diff) > 2.0 && this.videoEl && !this.videoEl.paused) {
+        const oldOffset = this.videoTimeOffset;
+        this.videoTimeOffset = clock - first.timestamp / 1e6;
+        console.log('[WebCodecsPlayer] resync: diff=' + diff.toFixed(2) + 's oldOffset=' + oldOffset.toFixed(2) + 's newOffset=' + this.videoTimeOffset.toFixed(2) + 's');
+        if (diff > 0) {
+          toDraw = this.frameQueue.shift()!;
+          droppedThisTick++;
+        }
       }
+    }
+
+    if (!toDraw && this.frameQueue.length > 0 && !this.hasOffset) {
+      toDraw = this.frameQueue.shift()!;
+      droppedThisTick++;
     }
 
     if (toDraw) {
@@ -465,7 +474,7 @@ export class WebCodecsPlayer {
       `[WC] t=${stats.currentSec}s`,
       `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
       `[WC] vBuf: ${stats.demuxVideoQueue}`,
-      `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}`,
+      `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}  offset: ${this.hasOffset ? this.videoTimeOffset.toFixed(2) + 's' : 'pending'}`,
       `--- HLS ---`,
       `  state: ${ds.hlsState}  levels: ${ds.levelCount}  level: ${ds.currentLevel}`,
       `  frags: ${ds.fragLoaded}  bytes: ${(ds.bytesLoaded / 1024 / 1024).toFixed(2)}MB`,
@@ -519,10 +528,8 @@ export class WebCodecsPlayer {
     this.encodedVideo = [];
     this.vIdx = 0;
     this.needVideoKey = true;
-    this.videoTimeOffset = null;
-    this.currentFragStart = null;
-    this.pendingFragStart = null;
-    this.fragPtsFound = false;
+    this.videoTimeOffset = 0;
+    this.hasOffset = false;
 
     for (const f of this.frameQueue) f.close();
     this.frameQueue = [];
