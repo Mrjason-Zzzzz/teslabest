@@ -1,156 +1,194 @@
 'use client';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable no-console */
 
-import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Hls from 'hls.js';
+import { Play, Pause, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
-import TeslaPlayer from '@/components/TeslaPlayer';
-
-/**
- * /play/tesla-test
- *
- * 独立测试页，绕开 /api/source-detail，直接用一个公开的 H.264 + TS 测试 m3u8。
- * 用来排查「Tesla 播放器本身能不能用」vs「/api/source-detail 数据有没有问题」。
- *
- * 默认测试源（都是公开 H.264 TS 切片）：
- *   - Mux TS 测试流（推荐）
- *   - Apple bipbop TS（备用）
- *
- * 也可以通过 ?url= 自定义传入测试源。
- */
-
-const DEFAULT_TEST_STREAMS = [
-  {
-    name: 'Mux TS 2s',
-    url: 'https://test-streams.mux.dev/ts_2s/playlist.m3u8',
-  },
-  {
-    name: 'Apple bipbop TS',
-    url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8',
-  },
-];
-
-function TeslaTestPageInner() {
-  const searchParams = useSearchParams();
-  const customUrl = searchParams.get('url') || '';
-  const [currentUrl, setCurrentUrl] = useState(customUrl || DEFAULT_TEST_STREAMS[0].url);
-  const [logs, setLogs] = useState<string[]>([]);
-
-  useEffect(() => {
-    document.title = 'Tesla 播放器测试';
-  }, []);
-
-  // 监听全局错误和 console，方便用户复制给我排查
-  useEffect(() => {
-    const pushLog = (msg: string) => {
-      setLogs((prev) => [...prev.slice(-50), `${new Date().toISOString().slice(11, 19)} ${msg}`]);
-    };
-    const onError = (e: ErrorEvent) => {
-      pushLog(`[error] ${e.message} @ ${e.filename}:${e.lineno}`);
-    };
-    const onUnhandled = (e: PromiseRejectionEvent) => {
-      const reason = e.reason;
-      const msg = reason?.message || String(reason);
-      pushLog(`[unhandledrejection] ${msg}`);
-    };
-    window.addEventListener('error', onError);
-    window.addEventListener('unhandledrejection', onUnhandled);
-
-    // 拦截 console.error / console.warn
-    const origError = console.error.bind(console);
-    const origWarn = console.warn.bind(console);
-    console.error = (...args: any[]) => {
-      pushLog(`[console.error] ${args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')}`);
-      origError(...args);
-    };
-    console.warn = (...args: any[]) => {
-      pushLog(`[console.warn] ${args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')}`);
-      origWarn(...args);
-    };
-
-    return () => {
-      window.removeEventListener('error', onError);
-      window.removeEventListener('unhandledrejection', onUnhandled);
-      console.error = origError;
-      console.warn = origWarn;
-    };
-  }, []);
-
-  return (
-    <div className="fixed inset-0 flex flex-col bg-black text-white">
-      <div className="border-b border-white/10 bg-zinc-950 px-4 py-3">
-        <h1 className="text-base font-semibold">Tesla 播放器测试页</h1>
-        <p className="mt-1 text-xs text-white/60">
-          绕开 /api/source-detail，直接用公开 m3u8 测试 Broadway.js 播放器本身能否工作。
-        </p>
-      </div>
-
-      <div className="border-b border-white/10 bg-zinc-900 px-4 py-2 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-white/60">测试源：</span>
-          {DEFAULT_TEST_STREAMS.map((s) => (
-            <button
-              key={s.url}
-              type="button"
-              onClick={() => {
-                setCurrentUrl(s.url);
-              }}
-              className={`rounded px-2 py-1 ${
-                currentUrl === s.url ? 'bg-rose-600 text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'
-              }`}
-            >
-              {s.name}
-            </button>
-          ))}
-          {customUrl && (
-            <span className="rounded bg-amber-600/30 px-2 py-1 text-amber-200">自定义 URL</span>
-          )}
-        </div>
-        <div className="mt-2 break-all text-white/50">当前 URL：{currentUrl}</div>
-      </div>
-
-      <div className="relative flex-1">
-        <TeslaPlayer
-          key={currentUrl}
-          url={currentUrl}
-          title="Tesla 播放器测试"
-          live={false}
-          onBackToOriginal={() => {
-            window.history.back();
-          }}
-        />
-      </div>
-
-      {/* 日志面板：方便用户截图给我排查 */}
-      <div className="h-40 shrink-0 overflow-y-auto border-t border-white/10 bg-zinc-950 p-3 font-mono text-[11px] leading-relaxed text-white/70">
-        <div className="mb-1 text-white/40">
-          日志面板（出现错误时请截图发我）：共 {logs.length} 条
-        </div>
-        {logs.length === 0 ? (
-          <div className="text-white/30">暂无日志，正常情况下应该会看到 Broadway.js 的初始化日志</div>
-        ) : (
-          logs.map((line, i) => (
-            <div key={i} className={line.includes('error') ? 'text-red-400' : ''}>
-              {line}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
+function formatTime(s: number) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return `${h > 0 ? `${h}:` : ''}${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 export default function TeslaTestPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="fixed inset-0 flex items-center justify-center bg-black text-white">
-          加载中…
-        </div>
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // 测试源列表
+  const testSources = [
+    { name: '测试流 1', url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8' },
+    { name: '测试流 2', url: 'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8' },
+  ];
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const source = testSources[0];
+    console.log('[TestPlayer] 开始加载:', source.name, source.url);
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+      });
+      hlsRef.current = hls;
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('[TestPlayer] MANIFEST_PARSED');
+        console.log('[TestPlayer] levels:', hls.levels.map((l) => `${l.width}x${l.height}`));
+        setLoading(false);
+        video.play().catch((e) => {
+          console.error('[TestPlayer] 自动播放失败:', e);
+          setError('自动播放被浏览器阻止，请手动点击播放');
+        });
+      });
+
+      hls.on(Hls.Events.BUFFER_CREATED, () => console.log('[TestPlayer] BUFFER_CREATED'));
+      hls.on(Hls.Events.BUFFER_FLUSHED, () => console.log('[TestPlayer] BUFFER_FLUSHED'));
+      hls.on(Hls.Events.FRAG_LOADED, () => console.log('[TestPlayer] FRAG_LOADED'));
+      hls.on(Hls.Events.FRAG_DECODED, () => console.log('[TestPlayer] FRAG_DECODED'));
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        console.error('[TestPlayer] HLS ERROR:', data.type, data.details);
+        if (data.fatal) {
+          setError(`HLS 错误: ${data.details}`);
+          setLoading(false);
+        }
+      });
+
+      hls.loadSource(source.url);
+      hls.attachMedia(video);
+    } else {
+      setError('浏览器不支持 hls.js');
+      setLoading(false);
+    }
+
+    const onTimeUpdate = () => setCurrentTime(video.currentTime);
+    const onLoadedMetadata = () => setDuration(video.duration || 0);
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onEnded = () => setPlaying(false);
+    const onError = () => {
+      console.error('[TestPlayer] Video ERROR:', video.error);
+      setError(`视频错误 (code ${video.error?.code})`);
+    };
+
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('ended', onEnded);
+    video.addEventListener('error', onError);
+
+    return () => {
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onError);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
       }
-    >
-      <TeslaTestPageInner />
-    </Suspense>
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, []);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch((e) => {
+        console.error('[TestPlayer] 播放失败:', e);
+        setError('播放失败');
+      });
+    } else {
+      video.pause();
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black p-4">
+      <h1 className="text-xl font-bold text-white mb-4">Tesla 播放器测试页</h1>
+      <p className="text-sm text-white/60 mb-4">
+        使用纯 hls.js + &lt;video&gt; 播放，不加任何复杂逻辑。查看控制台日志。
+      </p>
+
+      <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+        <video
+          ref={videoRef}
+          className="w-full h-full"
+          playsInline
+        />
+
+        {/* 加载状态 */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-white" />
+              <span className="text-white">加载中...</span>
+            </div>
+          </div>
+        )}
+
+        {/* 错误状态 */}
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+            <div className="text-center px-4">
+              <p className="text-red-400 font-bold">{error}</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 rounded text-white"
+              >
+                重试
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 播放按钮 */}
+        {!loading && !error && (
+          <button
+            onClick={togglePlay}
+            className="absolute bottom-4 left-4 p-2 bg-white/20 hover:bg-white/30 rounded-full"
+          >
+            {playing ? <Pause className="h-6 w-6 text-white" /> : <Play className="h-6 w-6 text-white" />}
+          </button>
+        )}
+      </div>
+
+      {/* 时间显示 */}
+      <div className="mt-4 text-white/80 text-sm">
+        当前时间: {formatTime(currentTime)} / {formatTime(duration)}
+      </div>
+
+      {/* 测试源切换 */}
+      <div className="mt-4 flex gap-2">
+        {testSources.map((src, idx) => (
+          <button
+            key={idx}
+            onClick={() => window.location.reload()}
+            className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-white text-sm"
+          >
+            {src.name}
+          </button>
+        ))}
+      </div>
+
+      {/* 控制台日志显示 */}
+      <div className="mt-4 p-3 bg-zinc-900 rounded text-xs text-white/60 font-mono h-40 overflow-auto">
+        控制台日志会显示在这里...
+      </div>
+    </div>
   );
 }
