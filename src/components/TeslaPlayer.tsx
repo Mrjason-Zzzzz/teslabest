@@ -3,10 +3,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import Hls from 'hls.js';
-import { Loader2, Maximize, Minimize, Monitor, Pause, Play, RotateCcw, SkipForward, SkipBack, Tv } from 'lucide-react';
+import { Loader2, Maximize, Minimize, Pause, Play, RotateCcw, SkipForward, SkipBack } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { HlsBroadwayEngine } from '@/lib/tesla-player/hls-broadway-engine';
 import { setTeslaOptOut } from '@/components/TeslaAutoRedirect';
 
 interface TeslaPlayerProps {
@@ -20,7 +19,44 @@ interface TeslaPlayerProps {
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
-type PlayerMode = 'video' | 'canvas';
+
+/**
+ * 广告过滤：从 m3u8 内容中移除广告分片
+ * 参考 TVNativeVideo.tsx 的实现，过滤包含广告关键字的 EXTINF 分片
+ */
+function filterAdsFromM3U8(m3u8Content: string): string {
+  if (!m3u8Content) return '';
+  const adKeywords = ['sponsor', '/ad/', '/ads/', 'advert', 'advertisement', '/adjump', 'redtraffic'];
+  const lines = m3u8Content.split('\n');
+  const filteredLines: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 跳过 #EXT-X-DISCONTINUITY 标识（广告段常用）
+    if (line.includes('#EXT-X-DISCONTINUITY')) {
+      i++;
+      continue;
+    }
+
+    // 如果是 EXTINF 行，检查下一行 URL 是否包含广告关键字
+    if (line.includes('#EXTINF:') && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      const isAd = adKeywords.some((keyword) => nextLine.toLowerCase().includes(keyword));
+      if (isAd) {
+        // 跳过 EXTINF 行和 URL 行
+        i += 2;
+        continue;
+      }
+    }
+
+    filteredLines.push(line);
+    i++;
+  }
+
+  return filteredLines.join('\n');
+}
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
@@ -57,14 +93,10 @@ function saveProgress(key: string, time: number): void {
 export default function TeslaPlayer({ url, title, poster, live = false, onBackToOriginal, onEnded: onEndedCallback, playRecordKey }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasHostRef = useRef<HTMLDivElement | null>(null);
-  const engineRef = useRef<HlsBroadwayEngine | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const scriptsLoadedRef = useRef(false);
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
 
-  const [mode, setMode] = useState<PlayerMode>('video');
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -85,6 +117,12 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     return getSavedProgress(playRecordKey);
   }, [playRecordKey]);
 
+  const seek = useCallback((t: number) => {
+    const v = videoRef.current;
+    if (v) v.currentTime = t;
+    setCurrentTime(t);
+  }, []);
+
   useEffect(() => {
     if (savedProgress > 0 && duration > 0 && seekToTime === null) {
       const progressRatio = savedProgress / duration;
@@ -93,7 +131,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
         setSeekToTime(savedProgress);
       }
     }
-  }, [savedProgress, duration, seekToTime]);
+  }, [savedProgress, duration, seekToTime, seek]);
 
   useEffect(() => {
     if (progressSaveTimerRef.current) clearInterval(progressSaveTimerRef.current);
@@ -108,9 +146,9 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     };
   }, [playing, playRecordKey, currentTime]);
 
-  // ===== Video 模式 =====
+  // ===== Video 模式（统一使用 hls.js + 广告过滤）=====
   useEffect(() => {
-    if (mode !== 'video' || !url) return;
+    if (!url) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -156,11 +194,39 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     video.addEventListener('ended', onEnded);
     video.addEventListener('error', onError);
 
-    if (Hls.isSupported()) {
+    // 判断是否为 m3u8
+    const isM3u8 = url.toLowerCase().includes('.m3u') || url.toLowerCase().includes('/m3u8');
+
+    if (isM3u8 && Hls.isSupported()) {
+      // 自定义 loader：拦截 m3u8 响应做广告过滤
+      const AdFilterLoader = class extends Hls.DefaultConfig.loader {
+        constructor(config: any) {
+          super(config);
+          const load = this.load.bind(this);
+          this.load = (context: any, cfg: any, callbacks: any) => {
+            // 仅对 manifest/level 类型的请求（即 m3u8 文件）做过滤
+            if (context?.type === 'manifest' || context?.type === 'level') {
+              const onSuccess = callbacks.onSuccess;
+              callbacks.onSuccess = (response: any, stats: any, ctx: any, networkDetails: any) => {
+                if (typeof response?.data === 'string') {
+                  const filtered = filterAdsFromM3U8(response.data);
+                  console.log('[TeslaPlayer] 广告过滤: 原始长度', response.data.length, '过滤后', filtered.length);
+                  response.data = filtered;
+                }
+                return onSuccess(response, stats, ctx, networkDetails);
+              };
+            }
+            load(context, cfg, callbacks);
+          };
+        }
+      };
+
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: live,
-        backBufferLength: 90,
+        backBufferLength: live ? 10 : 30,
+        maxBufferLength: live ? 18 : 45,
+        loader: AdFilterLoader,
       });
       hlsRef.current = hls;
       hls.loadSource(url);
@@ -168,7 +234,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (destroyed) return;
-        console.log('[TeslaPlayer:video] manifest parsed, levels:', hls.levels.length);
+        console.log('[TeslaPlayer] manifest parsed, levels:', hls.levels.length);
         const qs = hls.levels.map((l, i) => ({
           label: l.width ? `${l.width}x${l.height}` : `清晰度 ${i + 1}`,
           value: String(i),
@@ -187,7 +253,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       });
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         if (destroyed) return;
-        console.warn('[TeslaPlayer:video] hls error:', data.type, data.details);
+        console.warn('[TeslaPlayer] hls error:', data.type, data.details);
         if (data.fatal) {
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             hls.startLoad();
@@ -199,8 +265,17 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
           }
         }
       });
+    } else if (isM3u8 && video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari 原生支持 HLS（无需 hls.js）
+      video.src = url;
+      video.play().catch(() => undefined);
+    } else if (!isM3u8) {
+      // 非 m3u8（如 mp4），直接用 video 元素
+      video.src = url;
+      setLoading(false);
+      video.play().catch(() => undefined);
     } else {
-      setError('浏览器不支持 HLS 播放，请切换到 Canvas 模式');
+      setError('浏览器不支持 HLS 播放');
       setLoading(false);
     }
 
@@ -218,97 +293,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       video.removeAttribute('src');
       video.load();
     };
-  }, [mode, url, live]);
-
-  // ===== Canvas 模式 =====
-  const ensureBroadwayScripts = useCallback(async () => {
-    if (scriptsLoadedRef.current) return;
-    if (typeof window === 'undefined') return;
-    if (!(window as any).global) { (window as any).global = window; }
-    const load = (src: string) => new Promise<void>((resolve, reject) => {
-      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
-      const s = document.createElement('script');
-      s.src = src; s.async = false;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error(`加载脚本失败: ${src}`));
-      document.head.appendChild(s);
-    });
-    await load('/assets/broadway/Decoder.js');
-    await load('/assets/broadway/YUVCanvas.js');
-    await load('/assets/broadway/Player.js');
-    if (!window.Player || !window.YUVCanvas || !window.Decoder) {
-      throw new Error('Broadway 脚本加载后全局变量缺失');
-    }
-    scriptsLoadedRef.current = true;
-  }, []);
-
-  useEffect(() => {
-    if (mode !== 'canvas' || !url) return;
-    let disposed = false;
-
-    (async () => {
-      try {
-        setLoading(true); setError(null);
-        await ensureBroadwayScripts();
-        if (disposed) return;
-        if (canvasHostRef.current) canvasHostRef.current.innerHTML = '';
-
-        const engine = new HlsBroadwayEngine({
-          url, live, autoplay: true, useWorker: true, webgl: 'auto',
-          size: { width: 1280, height: 720 }, debug: true,
-        });
-        engineRef.current = engine;
-
-        engine.on('manifestParsed', () => { if (!disposed) { setLoading(false); setDuration(engine.getDuration()); } });
-        engine.on('durationchange', (d: number) => { if (!disposed) setDuration(d); });
-        engine.on('playing', () => { if (!disposed) { setPlaying(true); setLoading(false); } });
-        engine.on('pause', () => { if (!disposed) setPlaying(false); });
-        engine.on('buffering', (b: boolean) => { if (!disposed) setBuffering(b); });
-        engine.on('timeupdate', (t: number) => { if (!disposed) setCurrentTime(t); });
-        engine.on('ended', () => {
-          if (!disposed) {
-            setPlaying(false);
-            setTimeout(() => onEndedCallback?.(), 500);
-          }
-        });
-        engine.on('error', (err: any) => {
-          if (!disposed) {
-            setError(`${err?.details || 'Canvas 播放出错'}${err?.type ? `（${err.type}）` : ''}`);
-            setLoading(false);
-          }
-        });
-
-        await engine.load();
-        if (disposed) return;
-
-        const canvas = engine.getCanvas();
-        if (canvas && canvasHostRef.current) {
-          if (canvas.parentElement !== canvasHostRef.current) {
-            if (canvas.parentElement) canvas.parentElement.removeChild(canvas);
-            canvasHostRef.current.appendChild(canvas);
-          }
-          Object.assign(canvas.style, { width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' });
-        }
-      } catch (e: any) {
-        if (!disposed) { setError(e?.message || 'Canvas 模式初始化失败'); setLoading(false); }
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      try { engineRef.current?.destroy(); } catch { /* ignore */ }
-      engineRef.current = null;
-    };
-  }, [mode, url, live, ensureBroadwayScripts, onEndedCallback]);
-
-  // ===== 模式切换 =====
-  const switchMode = useCallback((newMode: PlayerMode) => {
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    if (engineRef.current) { try { engineRef.current.destroy(); } catch { /* ignore */ } engineRef.current = null; }
-    if (videoRef.current) { videoRef.current.removeAttribute('src'); videoRef.current.load(); }
-    if (canvasHostRef.current) canvasHostRef.current.innerHTML = '';
-    setMode(newMode); setLoading(true); setError(null); setPlaying(false); setCurrentTime(0); setDuration(0); setQualities([]);
-  }, []);
+  }, [url, live]);
 
   // ===== 控制条自动隐藏 =====
   const showControlsTemporarily = useCallback(() => {
@@ -335,32 +320,21 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
 
   // ===== 播放/暂停 =====
   const togglePlay = useCallback(() => {
-    if (mode === 'video') {
-      const v = videoRef.current; if (!v) return;
-      v.paused ? v.play().catch(() => undefined) : v.pause();
-    } else {
-      const e = engineRef.current; if (!e) return;
-      e.getPaused() ? void e.play() : e.pause();
-    }
-  }, [mode]);
-
-  // ===== Seek =====
-  const seek = useCallback((t: number) => {
-    if (mode === 'video') { const v = videoRef.current; if (v) v.currentTime = t; }
-    else { const e = engineRef.current; if (e) e.seek(t); }
-    setCurrentTime(t);
-  }, [mode]);
+    const v = videoRef.current; if (!v) return;
+    if (v.paused) v.play().catch(() => undefined);
+    else v.pause();
+  }, []);
 
   // ===== 倍速 =====
   const setPlaybackRate = useCallback((r: number) => {
-    if (mode === 'video') { const v = videoRef.current; if (v) v.playbackRate = r; }
-    else { const e = engineRef.current; if (e) e.setPlaybackRate(r); }
-    setRate(r); setShowRateMenu(false);
-  }, [mode]);
+    const v = videoRef.current;
+    if (v) v.playbackRate = r;
+    setRate(r);
+    setShowRateMenu(false);
+  }, []);
 
   // ===== 清晰度 =====
   const switchQuality = useCallback((q: string) => {
-    if (mode !== 'video') return;
     const hls = hlsRef.current;
     if (!hls) return;
     if (q === 'auto') {
@@ -370,7 +344,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     }
     setQuality(q);
     setShowQualityMenu(false);
-  }, [mode]);
+  }, []);
 
   const onProgressInteraction = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const bar = e.currentTarget; const rect = bar.getBoundingClientRect();
@@ -409,22 +383,19 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       onTouchStart={showControlsTemporarily}
       onClick={(e) => { if ((e.target as HTMLElement).dataset?.role === 'stage') togglePlay(); }}
     >
-      {/* Video 模式 - 始终渲染，用 CSS 控制显示，避免切换时 ref 时序问题 */}
+      {/* 视频元素（统一使用 video + hls.js） */}
       <video
         ref={videoRef}
         data-role="stage"
-        className={`absolute inset-0 h-full w-full bg-black ${mode === 'video' ? '' : 'hidden'}`}
+        className="absolute inset-0 h-full w-full bg-black"
         style={{ objectFit: 'contain' }}
-        playsInline autoPlay poster={poster}
+        playsInline
+        autoPlay
+        poster={poster}
       />
 
-      {/* Canvas 模式 */}
-      <div ref={canvasHostRef} data-role="stage"
-        className={`absolute inset-0 flex items-center justify-center bg-black ${mode === 'canvas' ? '' : 'hidden'}`}
-      />
-
-      {/* 海报 */}
-      {loading && poster && mode === 'canvas' && (
+      {/* 海报占位 */}
+      {loading && poster && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={poster} alt={title || ''} className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-40" />
       )}
@@ -439,18 +410,8 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
           )}
           <h1 className="text-base font-semibold drop-shadow md:text-xl">
             {title || '播放中'}
-            <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${mode === 'canvas' ? 'bg-rose-600/80' : 'bg-blue-600/80'}`}>
-              {mode === 'canvas' ? 'Canvas' : 'Video'}
-            </span>
             {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
           </h1>
-        </div>
-        <div className="pointer-events-auto">
-          <button type="button" onClick={() => switchMode(mode === 'video' ? 'canvas' : 'video')}
-            className="flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium backdrop-blur hover:bg-white/20"
-            title={mode === 'video' ? '切换到 Canvas 软解模式' : '切换到视频模式'}>
-            {mode === 'video' ? (<><Tv className="h-4 w-4" /> Canvas</>) : (<><Monitor className="h-4 w-4" /> 视频</>)}
-          </button>
         </div>
       </div>
 
@@ -459,7 +420,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
         {loading && (
           <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/60 px-6 py-3 text-base backdrop-blur">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span>{mode === 'canvas' ? '正在加载 Broadway 解码器…' : '正在加载视频…'}</span>
+            <span>正在加载视频…</span>
           </div>
         )}
         {error && (
@@ -467,9 +428,6 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
             <p className="font-semibold text-red-200">播放失败</p>
             <p className="mt-1 text-red-100/80">{error}</p>
             <div className="mt-3 flex justify-center gap-2">
-              <button type="button" onClick={() => switchMode(mode === 'video' ? 'canvas' : 'video')} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">
-                切换到{mode === 'video' ? 'Canvas' : '视频'}模式
-              </button>
               <button type="button" onClick={() => window.location.reload()} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">重试</button>
               {onBackToOriginal && (
                 <button type="button" onClick={handleBackToOriginal} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">切回原版</button>
@@ -515,7 +473,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
             <span className="tabular-nums text-white/80">{formatTime(currentTime)}{duration !== Infinity && duration > 0 && <> / {formatTime(duration)}</>}</span>
           </div>
           <div className="flex items-center gap-2">
-            {qualities.length > 1 && mode === 'video' && (
+            {qualities.length > 1 && (
               <div className="relative">
                 <button type="button" onClick={() => setShowQualityMenu((v) => !v)} className="rounded px-2 py-1 hover:bg-white/10" aria-label="清晰度">
                   {qualities.find((q) => q.value === quality)?.label || quality}
