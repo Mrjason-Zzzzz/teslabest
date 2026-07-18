@@ -226,7 +226,7 @@ function TeslaPlayPageInner() {
           <ArrowLeft className="h-3.5 w-3.5" /> 返回
         </button>
         <span>
-          Broadway.js · YUVCanvas · Canvas 软解模式 · 不依赖 &lt;video&gt;
+          hls.js · Broadway.js · 双模式播放器
         </span>
       </div>
     </div>
