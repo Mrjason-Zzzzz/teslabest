@@ -20,10 +20,6 @@ interface TeslaPlayerProps {
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 
-/**
- * 广告过滤：从 m3u8 内容中移除广告分片
- * 参考 TVNativeVideo.tsx 的实现，过滤包含广告关键字的 EXTINF 分片
- */
 function filterAdsFromM3U8(m3u8Content: string): string {
   if (!m3u8Content) return '';
   const adKeywords = ['sponsor', '/ad/', '/ads/', 'advert', 'advertisement', '/adjump', 'redtraffic'];
@@ -34,18 +30,15 @@ function filterAdsFromM3U8(m3u8Content: string): string {
   while (i < lines.length) {
     const line = lines[i];
 
-    // 跳过 #EXT-X-DISCONTINUITY 标识（广告段常用）
     if (line.includes('#EXT-X-DISCONTINUITY')) {
       i++;
       continue;
     }
 
-    // 如果是 EXTINF 行，检查下一行 URL 是否包含广告关键字
     if (line.includes('#EXTINF:') && i + 1 < lines.length) {
       const nextLine = lines[i + 1];
       const isAd = adKeywords.some((keyword) => nextLine.toLowerCase().includes(keyword));
       if (isAd) {
-        // 跳过 EXTINF 行和 URL 行
         i += 2;
         continue;
       }
@@ -98,7 +91,10 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
-  const canvasModeDetectedRef = useRef(false);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -114,12 +110,27 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualities, setQualities] = useState<Array<{ label: string; value: string }>>([]);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
-  const [canvasMode, setCanvasMode] = useState(true);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
     return getSavedProgress(playRecordKey);
   }, [playRecordKey]);
+
+  useEffect(() => {
+    if (savedProgress > 0 && duration > 0 && seekToTime === null) {
+      const progressRatio = savedProgress / duration;
+      if (progressRatio > 0.05 && progressRatio < 0.95) {
+        setSeekToTime(savedProgress);
+      }
+    }
+  }, [savedProgress, duration, seekToTime]);
+
+  useEffect(() => {
+    if (seekToTime !== null && videoRef.current) {
+      videoRef.current.currentTime = seekToTime;
+      setSeekToTime(null);
+    }
+  }, [seekToTime]);
 
   const seek = useCallback((t: number) => {
     const v = videoRef.current;
@@ -127,116 +138,126 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     setCurrentTime(t);
   }, []);
 
-  // ===== Canvas 帧绘制循环（特斯拉行驶中 video 画面被禁用时使用）=====
-  const drawVideoFrameToCanvas = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) v.play();
+    else v.pause();
+  }, []);
 
-    // video.readyState >= 2 (HAVE_CURRENT_DATA) 表示有帧数据
-    if (video.readyState >= 2 && video.videoWidth > 0) {
-      // 如果 canvas 尺寸不匹配 video，重新设置
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        try {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        } catch (e) {
-          // drawImage 可能因为 CORS 或其他原因失败，忽略
-        }
-      }
-    }
-
-    // 使用 requestVideoFrameCallback（如果支持）或 requestAnimationFrame
-    const anyVideo = video as any;
-    if (typeof anyVideo.requestVideoFrameCallback === 'function') {
-      rafRef.current = anyVideo.requestVideoFrameCallback(drawVideoFrameToCanvas);
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => { });
     } else {
-      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+      document.exitFullscreen().catch(() => { });
     }
   }, []);
 
-  // 启用/关闭 Canvas 模式
-  const enableCanvasMode = useCallback(() => {
-    if (canvasModeDetectedRef.current) return;
-    canvasModeDetectedRef.current = true;
-    setCanvasMode(true);
-    console.log('[TeslaPlayer] 检测到视频画面无法显示，已自动启用 Canvas 渲染模式');
-    // 启动帧绘制循环
-    setTimeout(() => drawVideoFrameToCanvas(), 100);
-  }, [drawVideoFrameToCanvas]);
-
-  const disableCanvasMode = useCallback(() => {
-    setCanvasMode(false);
-    canvasModeDetectedRef.current = false;
-    if (rafRef.current !== null) {
-      const anyVideo = videoRef.current as any;
-      if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
-        anyVideo.cancelVideoFrameCallback(rafRef.current);
-      } else {
-        window.cancelAnimationFrame(rafRef.current);
-      }
-      rafRef.current = null;
-    }
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => { document.removeEventListener('fullscreenchange', onFullscreenChange); };
   }, []);
 
-  // 手动切换 Canvas 模式
-  const toggleCanvasMode = useCallback(() => {
-    if (canvasMode) {
-      disableCanvasMode();
-    } else {
-      canvasModeDetectedRef.current = true;
-      setCanvasMode(true);
-      setTimeout(() => drawVideoFrameToCanvas(), 100);
-      console.log('[TeslaPlayer] 启用 Canvas 渲染模式');
-    }
-  }, [canvasMode, disableCanvasMode, drawVideoFrameToCanvas]);
+  const setPlaybackRate = useCallback((r: number) => {
+    const v = videoRef.current;
+    if (v) v.playbackRate = r;
+    setRate(r);
+    setShowRateMenu(false);
+  }, []);
+
+  const switchQuality = useCallback((q: string) => {
+    if (!hlsRef.current) return;
+    const hls = hlsRef.current;
+    if (q === 'auto') hls.currentLevel = -1;
+    else hls.currentLevel = parseInt(q, 10);
+    setQuality(q);
+    setShowQualityMenu(false);
+  }, []);
+
+  const backToOriginal = useCallback(() => {
+    setTeslaOptOut();
+    onBackToOriginal?.();
+  }, [onBackToOriginal]);
+
+  const resetControlsTimer = useCallback(() => {
+    if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
+    setShowControls(true);
+    hideControlsTimerRef.current = window.setTimeout(() => {
+      if (playing && !showRateMenu && !showQualityMenu) setShowControls(false);
+    }, 3000);
+  }, [playing, showRateMenu, showQualityMenu]);
 
   useEffect(() => {
-    if (savedProgress > 0 && duration > 0 && seekToTime === null) {
-      const progressRatio = savedProgress / duration;
-      if (progressRatio < 0.95) {
-        seek(savedProgress);
-        setSeekToTime(savedProgress);
-      }
-    }
-  }, [savedProgress, duration, seekToTime, seek]);
-
-  useEffect(() => {
-    if (progressSaveTimerRef.current) clearInterval(progressSaveTimerRef.current);
-    if (playing && playRecordKey) {
+    if (playRecordKey) {
       progressSaveTimerRef.current = window.setInterval(() => {
-        saveProgress(playRecordKey, currentTime);
+        if (playing) saveProgress(playRecordKey, currentTime);
       }, PROGRESS_SAVE_INTERVAL);
     }
     return () => {
       if (progressSaveTimerRef.current) clearInterval(progressSaveTimerRef.current);
-      if (playRecordKey) saveProgress(playRecordKey, currentTime);
     };
-  }, [playing, playRecordKey, currentTime]);
+  }, [playRecordKey, playing, currentTime]);
 
-  // ===== Video 模式（统一使用 hls.js + 广告过滤）=====
+  // ===== Canvas 帧绘制循环（核心：绕过特斯拉 video 画面限制）=====
+  const drawVideoFrameToCanvas = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+      return;
+    }
+
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    if (!ctx) {
+      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+      return;
+    }
+
+    // 确保 canvas 尺寸匹配 video
+    if (video.readyState >= 2 && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+
+    // 绘制视频帧到 canvas
+    if (video.readyState >= 2) {
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      } catch (e) {
+        // drawImage 可能因为 CORS 或其他原因失败，忽略
+      }
+    }
+
+    rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+  }, []);
+
+  // ===== Web Audio API 音频初始化 =====
+  const initializeAudio = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || audioContextRef.current) return;
+
+    try {
+      audioContextRef.current = new AudioContext();
+      audioSourceRef.current = audioContextRef.current.createMediaElementSource(video);
+      gainNodeRef.current = audioContextRef.current.createGain();
+      gainNodeRef.current.gain.value = 1;
+      audioSourceRef.current.connect(gainNodeRef.current);
+      gainNodeRef.current.connect(audioContextRef.current.destination);
+      console.log('[TeslaPlayer] Web Audio API initialized');
+    } catch (e) {
+      console.error('[TeslaPlayer] Audio initialization failed:', e);
+    }
+  }, []);
+
+  // ===== 视频初始化 =====
   useEffect(() => {
-    if (!url) return;
+    let destroyed = false;
     const video = videoRef.current;
     if (!video) return;
-
-    setLoading(true);
-    setError(null);
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-    setQualities([]);
-
-    let destroyed = false;
-
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
 
     const onLoadedMetadata = () => { if (!destroyed) { setLoading(false); setDuration(video.duration || 0); } };
     const onTimeUpdate = () => { if (!destroyed) setCurrentTime(video.currentTime); };
@@ -247,14 +268,14 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       if (destroyed) return;
       setBuffering(false);
       setLoading(false);
-      // 启动 Canvas 帧绘制循环
-      if (!canvasModeDetectedRef.current && video.readyState >= 2) {
-        canvasModeDetectedRef.current = true;
-        setTimeout(() => drawVideoFrameToCanvas(), 100);
+      // 首次播放时初始化音频
+      if (!audioContextRef.current) {
+        initializeAudio();
       }
-    };
-    const onLoadedData = () => {
-      if (destroyed) return;
+      // 恢复音频上下文（需要用户交互后才能恢复）
+      if (audioContextRef.current?.state === 'suspended') {
+        audioContextRef.current.resume().catch(() => { });
+      }
     };
     const onEnded = () => {
       if (destroyed) return;
@@ -270,7 +291,6 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     };
 
     video.addEventListener('loadedmetadata', onLoadedMetadata);
-    video.addEventListener('loadeddata', onLoadedData);
     video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -283,13 +303,11 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     const isM3u8 = url.toLowerCase().includes('.m3u') || url.toLowerCase().includes('/m3u8');
 
     if (isM3u8 && Hls.isSupported()) {
-      // 自定义 loader：拦截 m3u8 响应做广告过滤
       const AdFilterLoader = class extends Hls.DefaultConfig.loader {
         constructor(config: any) {
           super(config);
           const load = this.load.bind(this);
           this.load = (context: any, cfg: any, callbacks: any) => {
-            // 仅对 manifest/level 类型的请求（即 m3u8 文件）做过滤
             if (context?.type === 'manifest' || context?.type === 'level') {
               const onSuccess = callbacks.onSuccess;
               callbacks.onSuccess = (response: any, stats: any, ctx: any, networkDetails: any) => {
@@ -310,64 +328,49 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
         enableWorker: true,
         lowLatencyMode: live,
         backBufferLength: live ? 10 : 30,
-        maxBufferLength: live ? 18 : 45,
         loader: AdFilterLoader,
       });
-      hlsRef.current = hls;
-      hls.loadSource(url);
-      hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (destroyed) return;
-        console.log('[TeslaPlayer] manifest parsed, levels:', hls.levels.length);
-        const qs = hls.levels.map((l, i) => ({
-          label: l.width ? `${l.width}x${l.height}` : `清晰度 ${i + 1}`,
-          value: String(i),
-        }));
-        setQualities([{ label: '自动', value: 'auto' }, ...qs]);
-        video.play().catch(() => undefined);
+        const levels = hls.levels || [];
+        const qs: Array<{ label: string; value: string }> = [{ label: '自动', value: 'auto' }];
+        levels.forEach((l, i) => {
+          const bw = l.bitrate ? `${Math.round(l.bitrate / 1000)}kbps` : '';
+          const res = l.width && l.height ? `${l.width}x${l.height}` : '';
+          qs.push({ label: `${res} ${bw}`.trim() || `清晰度 ${i + 1}`, value: String(i) });
+        });
+        setQualities(qs);
+        setLoading(false);
       });
-      hls.on(Hls.Events.LEVEL_SWITCHED, () => {
-        if (destroyed) return;
-        const level = hls.currentLevel;
-        if (level === -1) {
-          setQuality('auto');
-        } else {
-          setQuality(String(level));
-        }
-      });
+
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         if (destroyed) return;
-        console.warn('[TeslaPlayer] hls error:', data.type, data.details);
+        console.error('[TeslaPlayer] HLS ERROR:', data.type, data.details);
         if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            hls.startLoad();
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls.recoverMediaError();
-          } else {
-            setError(`HLS: ${data.details}`);
-            setLoading(false);
-          }
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else setError(`播放错误: ${data.details}`);
         }
       });
-    } else if (isM3u8 && video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari 原生支持 HLS（无需 hls.js）
-      video.src = url;
-      video.play().catch(() => undefined);
-    } else if (!isM3u8) {
-      // 非 m3u8（如 mp4），直接用 video 元素
-      video.src = url;
-      setLoading(false);
-      video.play().catch(() => undefined);
+
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hlsRef.current = hls;
+
+      if (!live) video.play().catch(() => { });
     } else {
-      setError('浏览器不支持 HLS 播放');
-      setLoading(false);
+      video.src = url;
+      video.load();
+      if (!live) video.play().catch(() => { });
     }
+
+    // 启动 Canvas 帧绘制循环（始终运行）
+    rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
 
     return () => {
       destroyed = true;
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      video.removeEventListener('loadeddata', onLoadedData);
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
@@ -375,144 +378,89 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       video.removeEventListener('playing', onPlaying);
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('error', onError);
-      if (rafRef.current !== null) {
-        const anyVideo = video as any;
-        if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
-          anyVideo.cancelVideoFrameCallback(rafRef.current);
-        } else {
-          window.cancelAnimationFrame(rafRef.current);
-        }
+      if (rafRef.current) {
+        window.cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, live]);
-
-  // ===== 控制条自动隐藏 =====
-  const showControlsTemporarily = useCallback(() => {
-    setShowControls(true);
-    if (hideControlsTimerRef.current) window.clearTimeout(hideControlsTimerRef.current);
-    if (playing) hideControlsTimerRef.current = window.setTimeout(() => { setShowControls(false); setShowRateMenu(false); setShowQualityMenu(false); }, 3000);
-  }, [playing]);
-
-  useEffect(() => { showControlsTemporarily(); return () => { if (hideControlsTimerRef.current) window.clearTimeout(hideControlsTimerRef.current); }; }, [showControlsTemporarily]);
-
-  // ===== 全屏 =====
-  const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current; if (!el) return;
-    if (!document.fullscreenElement) { el.requestFullscreen?.().catch(() => undefined); (el as any).webkitRequestFullscreen?.(); }
-    else { document.exitFullscreen?.().catch(() => undefined); (document as any).webkitExitFullscreen?.(); }
-  }, []);
-
-  useEffect(() => {
-    const h = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', h);
-    document.addEventListener('webkitfullscreenchange', h);
-    return () => { document.removeEventListener('fullscreenchange', h); document.removeEventListener('webkitfullscreenchange', h); };
-  }, []);
-
-  // ===== 播放/暂停 =====
-  const togglePlay = useCallback(() => {
-    const v = videoRef.current; if (!v) return;
-    if (v.paused) v.play().catch(() => undefined);
-    else v.pause();
-  }, []);
-
-  // ===== 倍速 =====
-  const setPlaybackRate = useCallback((r: number) => {
-    const v = videoRef.current;
-    if (v) v.playbackRate = r;
-    setRate(r);
-    setShowRateMenu(false);
-  }, []);
-
-  // ===== 清晰度 =====
-  const switchQuality = useCallback((q: string) => {
-    const hls = hlsRef.current;
-    if (!hls) return;
-    if (q === 'auto') {
-      hls.currentLevel = -1;
-    } else {
-      hls.currentLevel = parseInt(q, 10);
-    }
-    setQuality(q);
-    setShowQualityMenu(false);
-  }, []);
-
-  const onProgressInteraction = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    const bar = e.currentTarget; const rect = bar.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0]?.clientX ?? rect.left : (e as React.MouseEvent).clientX;
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    if (duration !== Infinity && duration > 0) seek(ratio * duration);
-  }, [duration, seek]);
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-      switch (e.key) {
-        case ' ': case 'k': e.preventDefault(); togglePlay(); break;
-        case 'ArrowLeft': seek(Math.max(0, currentTime - 10)); break;
-        case 'ArrowRight': seek(Math.min(duration, currentTime + 10)); break;
-        case 'f': toggleFullscreen(); break;
-      }
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [currentTime, duration, togglePlay, toggleFullscreen, seek]);
-
-  const handleBackToOriginal = useCallback(() => { setTeslaOptOut(); onBackToOriginal?.(); }, [onBackToOriginal]);
-
-  const progressPercent = useMemo(() => {
-    if (duration === Infinity || duration <= 0) return 0;
-    return Math.min(100, (currentTime / duration) * 100);
-  }, [currentTime, duration]);
+  }, [url, live, playRecordKey, onEndedCallback, initializeAudio, drawVideoFrameToCanvas]);
 
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full overflow-hidden bg-black text-white"
-      onMouseMove={showControlsTemporarily}
-      onTouchStart={showControlsTemporarily}
-      onClick={(e) => { if ((e.target as HTMLElement).dataset?.role === 'stage') togglePlay(); }}
+      className="relative w-full h-full bg-black"
+      onMouseMove={resetControlsTimer}
+      onClick={togglePlay}
     >
-      {/* 视频元素（统一使用 video + hls.js） */}
+      {/* 隐藏的 video 元素（负责解码，特斯拉允许） */}
       <video
         ref={videoRef}
-        data-role="stage"
-        className={`absolute inset-0 h-full w-full bg-black ${canvasMode ? 'opacity-0 pointer-events-none' : ''}`}
-        style={{ objectFit: 'contain' }}
+        className="hidden"
         playsInline
-        autoPlay
         poster={poster}
       />
 
-      {/* Canvas 元素（特斯拉行驶中 video 画面被禁用时显示） */}
-      {canvasMode && (
-        <canvas
-          ref={canvasRef}
-          data-role="stage"
-          className="absolute inset-0 h-full w-full bg-black"
-          style={{ objectFit: 'contain' }}
-        />
+      {/* 可见的 canvas 元素（负责显示画面，特斯拉不阻止） */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+
+      {/* 加载状态 */}
+      {loading && !error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+          <Loader2 className="h-8 w-8 animate-spin text-green-500" />
+        </div>
       )}
 
-      {/* 海报占位 */}
-      {loading && poster && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={poster} alt={title || ''} className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-40" />
+      {/* 缓冲状态 */}
+      {buffering && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <Loader2 className="h-6 w-6 animate-spin text-white/50" />
+        </div>
+      )}
+
+      {/* 错误提示 */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+          <div className="text-center">
+            <p className="text-red-400">{error}</p>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); window.location.reload(); }}
+              className="mt-2 rounded bg-green-500 px-4 py-1.5 text-sm text-white"
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 暂停时的播放按钮 */}
+      {!loading && !playing && !error && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+            className="pointer-events-auto rounded-full bg-black/40 p-4 backdrop-blur-sm hover:bg-black/60"
+          >
+            <Play className="h-8 w-8 text-white" />
+          </button>
+        </div>
       )}
 
       {/* 顶部条 */}
       <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent p-4 transition-opacity duration-200 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="pointer-events-auto flex items-center gap-3">
           {onBackToOriginal && (
-            <button type="button" onClick={handleBackToOriginal} className="rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium backdrop-blur hover:bg-white/20" title="返回原版播放器">
-              <RotateCcw className="inline h-4 w-4" /> 原版
-            </button>
-          )}
+              <button type="button" onClick={backToOriginal} className="rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium backdrop-blur hover:bg-white/20" title="返回原版播放器">
+                <RotateCcw className="inline h-4 w-4" /> 原版
+              </button>
+            )}
           <h1 className="text-base font-semibold drop-shadow md:text-xl">
             {title || '播放中'}
             {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
@@ -521,87 +469,87 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
         <div className="pointer-events-auto flex items-center gap-2">
           <button
             type="button"
-            onClick={toggleCanvasMode}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium backdrop-blur transition-colors ${
-              canvasMode
-                ? 'bg-green-500/30 text-green-300 ring-1 ring-green-400/50'
-                : 'bg-white/10 text-white/80 hover:bg-white/20'
-            }`}
-            title={canvasMode ? '当前：Canvas 模式（点击切回 Video）' : '当前：Video 模式（无画面时点击切到 Canvas）'}
+            onClick={(e) => { e.stopPropagation(); }}
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-green-500/30 text-green-300 ring-1 ring-green-400/50 backdrop-blur"
+            title="Canvas 渲染模式（绕过特斯拉限制）"
           >
             <MonitorPlay className="h-3.5 w-3.5" />
-            {canvasMode ? 'Canvas' : 'Video'}
+            Canvas
           </button>
         </div>
       </div>
 
-      {/* 中间状态 */}
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        {loading && (
-          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/60 px-6 py-3 text-base backdrop-blur">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            <span>正在加载视频…</span>
-          </div>
-        )}
-        {error && (
-          <div className="pointer-events-auto mx-6 max-w-md rounded-2xl border border-red-500/40 bg-red-950/80 px-6 py-4 text-center text-sm backdrop-blur">
-            <p className="font-semibold text-red-200">播放失败</p>
-            <p className="mt-1 text-red-100/80">{error}</p>
-            <div className="mt-3 flex justify-center gap-2">
-              <button type="button" onClick={() => window.location.reload()} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">重试</button>
-              {onBackToOriginal && (
-                <button type="button" onClick={handleBackToOriginal} className="rounded bg-white/10 px-3 py-1 hover:bg-white/20">切回原版</button>
-              )}
-            </div>
-          </div>
-        )}
-        {buffering && !loading && !error && (
-          <div className="flex items-center gap-2 text-sm text-white/70"><Loader2 className="h-4 w-4 animate-spin" /> 缓冲中…</div>
-        )}
-      </div>
-
       {/* 底部控制条 */}
-      <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-3 pt-12 transition-opacity duration-200 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 transition-opacity duration-200 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         {/* 进度条 */}
-        <div className="group relative h-1.5 w-full cursor-pointer rounded-full bg-white/20" onClick={onProgressInteraction} onTouchStart={onProgressInteraction}>
-          <div className="absolute left-0 top-0 h-full rounded-full bg-rose-500" style={{ width: `${progressPercent}%` }} />
-          <div className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white shadow opacity-0 transition-opacity group-hover:opacity-100" style={{ left: `calc(${progressPercent}% - 6px)` }} />
+        <div className="pointer-events-auto mb-3">
+          <div
+            className="relative h-1 cursor-pointer rounded-full bg-white/20 hover:h-1.5 transition-all"
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const percent = (e.clientX - rect.left) / rect.width;
+              seek(percent * (duration || 1));
+            }}
+          >
+            <div
+              className="h-full rounded-full bg-green-500"
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+          </div>
+          <div className="mt-1 flex justify-between text-xs text-white/70">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
         </div>
 
-        {/* 按钮行 */}
-        <div className="mt-2 flex items-center justify-between text-sm">
+        {/* 控制按钮 */}
+        <div className="pointer-events-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => seek(Math.max(0, currentTime - 10))} className="rounded p-1 hover:bg-white/10" aria-label="后退10秒">
-              <SkipBack className="h-5 w-5" />
+            <button type="button" onClick={(e) => { e.stopPropagation(); seek(Math.max(0, currentTime - 10)); }} className="rounded p-1.5 hover:bg-white/10">
+              <SkipBack className="h-4 w-4" />
             </button>
-            <button type="button" onClick={togglePlay} className="rounded p-2 hover:bg-white/10" aria-label={playing ? '暂停' : '播放'}>
-              {playing ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 fill-current" />}
+            <button type="button" onClick={(e) => { e.stopPropagation(); togglePlay(); }} className="rounded-full bg-white/10 p-2 hover:bg-white/20">
+              {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
             </button>
-            <button type="button" onClick={() => onEndedCallback?.()} className="rounded p-1 hover:bg-white/10" aria-label="下一集">
-              <SkipForward className="h-5 w-5" />
+            <button type="button" onClick={(e) => { e.stopPropagation(); seek(Math.min(duration || 1, currentTime + 10)); }} className="rounded p-1.5 hover:bg-white/10">
+              <SkipForward className="h-4 w-4" />
             </button>
-            <div className="relative">
-              <button type="button" onClick={() => setShowRateMenu((v) => !v)} className="rounded px-2 py-1 hover:bg-white/10" aria-label="倍速">{rate}x</button>
+            <div className="relative ml-2">
+              <button type="button" onClick={(e) => { e.stopPropagation(); setShowRateMenu(!showRateMenu); }} className="rounded px-2 py-1 text-xs font-medium hover:bg-white/10">
+                {rate}x
+              </button>
               {showRateMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-24 rounded-lg border border-white/10 bg-black/90 py-1 backdrop-blur">
+                <div className="absolute bottom-full left-0 mb-2 rounded-md bg-gray-900/95 p-1 backdrop-blur">
                   {PLAYBACK_RATES.map((r) => (
-                    <button key={r} type="button" onClick={() => setPlaybackRate(r)} className={`block w-full px-3 py-1 text-left hover:bg-white/10 ${r === rate ? 'text-rose-400' : ''}`}>{r}x</button>
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setPlaybackRate(r); }}
+                      className={`block w-full rounded px-3 py-1.5 text-sm ${rate === r ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                    >
+                      {r}x
+                    </button>
                   ))}
                 </div>
               )}
             </div>
-            <span className="tabular-nums text-white/80">{formatTime(currentTime)}{duration !== Infinity && duration > 0 && <> / {formatTime(duration)}</>}</span>
           </div>
+
           <div className="flex items-center gap-2">
             {qualities.length > 1 && (
               <div className="relative">
-                <button type="button" onClick={() => setShowQualityMenu((v) => !v)} className="rounded px-2 py-1 hover:bg-white/10" aria-label="清晰度">
-                  {qualities.find((q) => q.value === quality)?.label || quality}
+                <button type="button" onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }} className="rounded px-2 py-1 text-xs font-medium hover:bg-white/10">
+                  {qualities.find((q) => q.value === quality)?.label || '清晰度'}
                 </button>
                 {showQualityMenu && (
-                  <div className="absolute bottom-full right-0 mb-2 w-32 rounded-lg border border-white/10 bg-black/90 py-1 backdrop-blur">
+                  <div className="absolute bottom-full right-0 mb-2 rounded-md bg-gray-900/95 p-1 backdrop-blur">
                     {qualities.map((q) => (
-                      <button key={q.value} type="button" onClick={() => switchQuality(q.value)} className={`block w-full px-3 py-1 text-left hover:bg-white/10 ${q.value === quality ? 'text-rose-400' : ''}`}>
+                      <button
+                        key={q.value}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); switchQuality(q.value); }}
+                        className={`block w-full rounded px-3 py-1.5 text-sm ${quality === q.value ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                      >
                         {q.label}
                       </button>
                     ))}
@@ -609,12 +557,17 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
                 )}
               </div>
             )}
-            <button type="button" onClick={toggleFullscreen} className="rounded p-1 hover:bg-white/10" aria-label={isFullscreen ? '退出全屏' : '全屏'}>
-              {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
+            <button type="button" onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }} className="rounded p-1.5 hover:bg-white/10">
+              {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
             </button>
           </div>
         </div>
       </div>
+
+      {/* 样式覆盖 */}
+      <style>{`
+        canvas { display: block; }
+      `}</style>
     </div>
   );
 }
