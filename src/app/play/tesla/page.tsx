@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, no-console */
 
-import { ArrowLeft, ChevronDown, Loader2, Search, Zap, Sparkles, Film, MonitorPlay, Heart, Star } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Loader2, Search, Zap, Sparkles, Film, MonitorPlay, Heart, Star, ArrowUpDown, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -32,9 +32,7 @@ function TeslaPlayPageInner() {
   const episodeParam = searchParams.get('episode');
   const initialEpisode = episodeParam ? Math.max(0, parseInt(episodeParam, 10) - 1) : 0;
 
-  const [loadingStage, setLoadingStage] = useState<LoadingStage>(
-    source && id ? 'fetching' : 'searching'
-  );
+  const [loadingStage, setLoadingStage] = useState<LoadingStage>('searching');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [allSources, setAllSources] = useState<SearchResult[]>([]);
@@ -45,6 +43,7 @@ function TeslaPlayPageInner() {
 
   const [rightTab, setRightTab] = useState<'episodes' | 'sources'>('episodes');
   const [episodePage, setEpisodePage] = useState(0);
+  const [episodeOrderAsc, setEpisodeOrderAsc] = useState(true);
   const EPISODES_PER_PAGE = 50;
 
   const detailSeqRef = useRef(0);
@@ -99,56 +98,41 @@ function TeslaPlayPageInner() {
       setErrorMsg(null);
 
       try {
-        let sources: SearchResult[] = [];
+        if (!initialTitle) {
+          throw new Error('缺少必要参数：title');
+        }
+
+        const sources = await searchSources(initialTitle);
+        if (sources.length === 0) {
+          throw new Error('未找到匹配的播放源');
+        }
+        setAllSources(sources);
+
         let selected: SearchResult | null = null;
-
         if (source && id) {
-          setLoadingStage('fetching');
-          try {
-            selected = await fetchDetail(source, id, initialTitle);
-            sources = [selected];
-          } catch (e) {
-            console.warn('[TeslaPlay] direct detail failed, falling back to search');
-          }
+          selected = sources.find((s) => s.source === source && s.id === id) || null;
+        }
 
-          if (!selected && initialTitle) {
-            sources = await searchSources(initialTitle);
-            if (sources.length > 0) {
-              setLoadingStage('preferring');
-              await new Promise((r) => setTimeout(r, 400));
-              selected = preferBestSource(sources);
-            }
-          }
-        } else if (initialTitle) {
-          sources = await searchSources(initialTitle);
-          if (sources.length === 0) {
-            throw new Error('未找到匹配的播放源');
-          }
-          setAllSources(sources);
-
+        if (!selected) {
           if (sources.length > 1) {
             setLoadingStage('preferring');
-            await new Promise((r) => setTimeout(r, 600));
+            await new Promise((r) => setTimeout(r, 500));
           }
-
           selected = preferBestSource(sources);
-          setLoadingStage('fetching');
-          selected = await fetchDetail(selected.source, selected.id, initialTitle);
-        } else {
-          throw new Error('缺少必要参数：title 或 source/id');
         }
 
         if (!selected) {
           throw new Error('未找到可用的播放源');
         }
 
+        setLoadingStage('fetching');
+        const detail = await fetchDetail(selected.source, selected.id, initialTitle);
+
         if (cancelled) return;
 
-        if (sources.length === 0) sources = [selected];
-        setAllSources(sources);
-        setCurrentDetail(selected);
+        setCurrentDetail(detail);
 
-        const epIdx = initialEpisode < (selected.episodes?.length || 0) ? initialEpisode : 0;
+        const epIdx = initialEpisode < (detail.episodes?.length || 0) ? initialEpisode : 0;
         setCurrentEpisodeIndex(epIdx);
 
         setLoadingStage('ready');
@@ -188,16 +172,18 @@ function TeslaPlayPageInner() {
 
   const handlePlayEnded = useCallback(() => {
     if (!currentDetail || !currentDetail.episodes) return;
-    if (currentEpisodeIndex < currentDetail.episodes.length - 1) {
+    const nextIndex = episodeOrderAsc ? currentEpisodeIndex + 1 : currentEpisodeIndex - 1;
+    const episodes = currentDetail.episodes;
+    if (nextIndex >= 0 && nextIndex < episodes.length) {
       setIsAutoPlayingNext(true);
       setTimeout(() => {
-        setCurrentEpisodeIndex(currentEpisodeIndex + 1);
+        setCurrentEpisodeIndex(nextIndex);
         const params = new URLSearchParams(window.location.search);
-        params.set('episode', String(currentEpisodeIndex + 2));
+        params.set('episode', String(nextIndex + 1));
         window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
       }, 1500);
     }
-  }, [currentDetail, currentEpisodeIndex]);
+  }, [currentDetail, currentEpisodeIndex, episodeOrderAsc]);
 
   const handleSelectEpisode = useCallback((index: number) => {
     setCurrentEpisodeIndex(index);
@@ -257,15 +243,19 @@ function TeslaPlayPageInner() {
 
   const currentPageEpisodes = useMemo(() => {
     if (!currentDetail?.episodes) return [] as { idx: number; label: string }[];
+    const episodes = currentDetail.episodes;
+    const titles = currentDetail.episodes_titles || [];
+    const total = episodes.length;
     const start = episodePage * EPISODES_PER_PAGE;
-    const end = Math.min(start + EPISODES_PER_PAGE, currentDetail.episodes.length);
+    const end = Math.min(start + EPISODES_PER_PAGE, total);
     const result: { idx: number; label: string }[] = [];
     for (let i = start; i < end; i++) {
-      const label = currentDetail.episodes_titles?.[i] || `第 ${i + 1} 集`;
-      result.push({ idx: i, label });
+      const realIndex = episodeOrderAsc ? i : total - 1 - i;
+      const label = titles[realIndex] || `第 ${realIndex + 1} 集`;
+      result.push({ idx: realIndex, label });
     }
     return result;
-  }, [currentDetail, episodePage]);
+  }, [currentDetail, episodePage, episodeOrderAsc]);
 
   const isLoading = !currentDetail || !playUrl;
   const currentStageIndex = LOADING_STAGES.findIndex((s) => s.key === loadingStage);
@@ -487,25 +477,40 @@ function TeslaPlayPageInner() {
                 {rightTab === 'episodes' && (
                   <div className="flex flex-col overflow-hidden">
                     {totalPages > 1 && (
-                      <div className="flex flex-wrap gap-1 border-b border-gray-100 px-3 py-2">
-                        {Array.from({ length: totalPages }, (_, i) => {
-                          const start = i * EPISODES_PER_PAGE + 1;
-                          const end = Math.min((i + 1) * EPISODES_PER_PAGE, currentDetail.episodes!.length);
-                          return (
-                            <button
-                              key={i}
-                              type="button"
-                              onClick={() => setEpisodePage(i)}
-                              className={`rounded px-2 py-0.5 text-xs transition-colors ${
-                                i === episodePage
-                                  ? 'bg-green-500/10 text-green-600'
-                                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                              }`}
-                            >
-                              {start}-{end}
-                            </button>
-                          );
-                        })}
+                      <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {Array.from({ length: totalPages }, (_, i) => {
+                            const start = episodeOrderAsc ? i * EPISODES_PER_PAGE + 1 : (totalPages - i - 1) * EPISODES_PER_PAGE + 1;
+                            const end = episodeOrderAsc
+                              ? Math.min((i + 1) * EPISODES_PER_PAGE, currentDetail.episodes!.length)
+                              : Math.min(totalPages * EPISODES_PER_PAGE - i * EPISODES_PER_PAGE, currentDetail.episodes!.length);
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => setEpisodePage(i)}
+                                className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                                  i === episodePage
+                                    ? 'bg-green-500/10 text-green-600'
+                                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                                }`}
+                              >
+                                {start}-{end}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEpisodeOrderAsc(!episodeOrderAsc);
+                            setEpisodePage(0);
+                          }}
+                          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100"
+                        >
+                          <ArrowUpDown className="h-3 w-3" />
+                          {episodeOrderAsc ? '倒序' : '正序'}
+                        </button>
                       </div>
                     )}
                     <div className="max-h-[500px] overflow-y-auto p-3">
