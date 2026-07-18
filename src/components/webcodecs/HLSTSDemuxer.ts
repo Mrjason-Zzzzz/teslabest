@@ -56,7 +56,10 @@ export class HLSTSDemuxer {
   private gen = 0;
   private resumeResolve: (() => void) | null = null;
 
-  private transportStream: any = null;
+  private packetStream: any = null;
+  private parseStream: any = null;
+  private elementaryStream: any = null;
+
   private spsNalu: Uint8Array | null = null;
   private ppsNalu: Uint8Array | null = null;
   private videoConfigSent = false;
@@ -110,7 +113,7 @@ export class HLSTSDemuxer {
 
       this.opts.onDuration(this.durationSec);
       this.currentSegmentIndex = this.findSegmentIndex(startSec);
-      this.initTransportStream();
+      this.initStreams();
 
       void this.downloadLoop(g);
     } catch (e) {
@@ -121,38 +124,44 @@ export class HLSTSDemuxer {
     }
   }
 
-  private initTransportStream() {
-    this.transportStream = new muxjs.mp2t.TransportStream();
+  private initStreams() {
+    const mp2t = muxjs.mp2t;
 
-    this.transportStream.on('data', (data: any) => {
+    this.packetStream = new mp2t.TransportPacketStream();
+    this.parseStream = new mp2t.TransportParseStream();
+    this.elementaryStream = new mp2t.ElementaryStream();
+
+    this.packetStream.pipe(this.parseStream);
+    this.parseStream.pipe(this.elementaryStream);
+
+    this.elementaryStream.on('data', (data: any) => {
       if (this.aborted) return;
 
-      if (data.video) {
-        this.handleVideoData(data.video);
-      }
-      if (data.audio) {
-        this.handleAudioData(data.audio);
+      if (data.type === 'video') {
+        this.handleVideoData(data);
+      } else if (data.type === 'audio') {
+        this.handleAudioData(data);
       }
     });
 
-    this.transportStream.on('error', (err: any) => {
-      console.warn('[HLSTSDemuxer] TS parse error:', err);
+    this.elementaryStream.on('error', (err: any) => {
+      console.warn('[HLSTSDemuxer] elementary stream error:', err);
     });
   }
 
   private handleVideoData(videoData: any) {
-    const units = videoData.units || videoData.nalus || videoData.data || [];
-    const pts = videoData.pts != null ? videoData.pts : (this.lastVideoPts + this.videoFrameDuration);
+    const pesData = videoData.data;
+    const pts = videoData.pts != null ? videoData.pts / 90000 : (this.lastVideoPts + this.videoFrameDuration);
 
-    if (!units || units.length === 0) return;
+    if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
+
+    const nalus = this.splitNalus(pesData);
+    if (nalus.length === 0) return;
 
     let hasKeyFrame = false;
     const frameNalus: Uint8Array[] = [];
 
-    for (const unit of units) {
-      const naluData = unit.data || unit;
-      if (!(naluData instanceof Uint8Array)) continue;
-
+    for (const naluData of nalus) {
       const naluType = this.getNaluType(naluData);
       if (naluType === 7) {
         this.spsNalu = naluData;
@@ -167,7 +176,20 @@ export class HLSTSDemuxer {
       }
     }
 
-    if (frameNalus.length === 0) return;
+    if (frameNalus.length === 0) {
+      if (this.spsNalu && this.ppsNalu && !this.videoConfigSent) {
+        const description = this.buildAvccDescription(this.spsNalu, this.ppsNalu);
+        this.opts.onVideoConfig({
+          kind: 'video',
+          codec: this.videoCodec || 'avc1.4d401f',
+          codedWidth: this.videoWidth || 1920,
+          codedHeight: this.videoHeight || 1080,
+          description,
+        });
+        this.videoConfigSent = true;
+      }
+      return;
+    }
 
     if (!this.videoConfigSent && this.spsNalu && this.ppsNalu) {
       const description = this.buildAvccDescription(this.spsNalu, this.ppsNalu);
@@ -182,7 +204,7 @@ export class HLSTSDemuxer {
     }
 
     const frameData = this.concatNalusWithStartCodes(frameNalus);
-    const duration = videoData.duration || this.videoFrameDuration || 33;
+    const duration = this.videoFrameDuration || 0.033;
 
     this.opts.onVideoSample({
       key: hasKeyFrame,
@@ -193,15 +215,48 @@ export class HLSTSDemuxer {
 
     this.stats.videoSamples++;
     this.lastVideoPts = pts;
-    if (videoData.duration) this.videoFrameDuration = videoData.duration;
+  }
+
+  private splitNalus(data: Uint8Array): Uint8Array[] {
+    const nalus: Uint8Array[] = [];
+    let i = 0;
+    const len = data.length;
+
+    while (i < len - 4) {
+      if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1) {
+        const start = i;
+        i += 4;
+        while (i < len - 4) {
+          if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1) {
+            break;
+          }
+          i++;
+        }
+        nalus.push(data.subarray(start, i));
+      } else if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
+        const start = i;
+        i += 3;
+        while (i < len - 3) {
+          if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
+            break;
+          }
+          i++;
+        }
+        nalus.push(data.subarray(start, i));
+      } else {
+        i++;
+      }
+    }
+
+    return nalus;
   }
 
   private handleAudioData(audioData: any) {
     const frame = audioData.data || audioData.frame || audioData;
     if (!frame) return;
 
-    const pts = audioData.pts != null ? audioData.pts : (this.lastAudioPts + this.audioFrameDuration);
-    const duration = audioData.duration || this.audioFrameDuration || 23;
+    const pts = audioData.pts != null ? audioData.pts / 90000 : (this.lastAudioPts + this.audioFrameDuration);
+    const duration = audioData.duration ? audioData.duration / 90000 : (this.audioFrameDuration || 0.023);
 
     let aacData: Uint8Array;
     if (frame instanceof Uint8Array) {
@@ -246,7 +301,7 @@ export class HLSTSDemuxer {
 
     this.stats.audioSamples++;
     this.lastAudioPts = pts;
-    if (audioData.duration) this.audioFrameDuration = audioData.duration;
+    if (audioData.duration) this.audioFrameDuration = audioData.duration / 90000;
   }
 
   private getNaluType(nalu: Uint8Array): number {
@@ -384,8 +439,8 @@ export class HLSTSDemuxer {
         this.stats.segmentsDownloaded++;
         this.stats.bytesDownloaded += data.byteLength;
         try {
-          this.transportStream.push(new Uint8Array(data));
-          this.transportStream.flush();
+          this.packetStream.push(new Uint8Array(data));
+          this.packetStream.flush();
         } catch (e) {
           console.warn('[HLSTSDemuxer] TS parse error:', e);
         }
@@ -500,28 +555,16 @@ export class HLSTSDemuxer {
     this.audioConfigSent = false;
     this.lastVideoPts = 0;
     this.lastAudioPts = 0;
-    if (this.transportStream) {
-      try {
-        this.transportStream.reset?.();
-      } catch {
-        // ignore
-      }
-    }
-    this.initTransportStream();
+    this.initStreams();
   }
 
   destroy(): void {
     this.aborted = true;
     this.gen++;
     this.resume();
-    if (this.transportStream) {
-      try {
-        this.transportStream.reset?.();
-      } catch {
-        // ignore
-      }
-      this.transportStream = null;
-    }
+    this.packetStream = null;
+    this.parseStream = null;
+    this.elementaryStream = null;
   }
 
   getDuration(): number {
