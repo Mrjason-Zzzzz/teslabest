@@ -359,7 +359,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
   }, [mode]);
 
   // ===== 清晰度 =====
-  const setQuality = useCallback((q: string) => {
+  const switchQuality = useCallback((q: string) => {
     if (mode !== 'video') return;
     const hls = hlsRef.current;
     if (!hls) return;
@@ -525,7 +525,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
                 {showQualityMenu && (
                   <div className="absolute bottom-full right-0 mb-2 w-32 rounded-lg border border-white/10 bg-black/90 py-1 backdrop-blur">
                     {qualities.map((q) => (
-                      <button key={q.value} type="button" onClick={() => setQuality(q.value)} className={`block w-full px-3 py-1 text-left hover:bg-white/10 ${q.value === quality ? 'text-rose-400' : ''}`}>
+                      <button key={q.value} type="button" onClick={() => switchQuality(q.value)} className={`block w-full px-3 py-1 text-left hover:bg-white/10 ${q.value === quality ? 'text-rose-400' : ''}`}>
                         {q.label}
                       </button>
                     ))}
