@@ -72,6 +72,18 @@ export class HLSTSDemuxer {
   private initSegmentAppended = false;
   private mp4ByteOffset = 0;
 
+  private stats = {
+    m3u8Loaded: false,
+    segmentCount: 0,
+    currentSegment: 0,
+    segmentsDownloaded: 0,
+    bytesDownloaded: 0,
+    transmuxBytesIn: 0,
+    mp4Ready: false,
+    samplesOutput: 0,
+    error: '',
+  };
+
   constructor(opts: DemuxerOptions) {
     this.opts = opts;
     this.url = opts.url;
@@ -90,8 +102,11 @@ export class HLSTSDemuxer {
 
       this.segments = this.parseSegments(m3u8Content, this.url);
       this.durationSec = this.segments.reduce((sum, s) => sum + s.duration, 0);
+      this.stats.m3u8Loaded = true;
+      this.stats.segmentCount = this.segments.length;
 
       if (this.segments.length === 0) {
+        this.stats.error = 'No segments found in m3u8';
         this.opts.onError(new Error('No segments found in m3u8'));
         return;
       }
@@ -119,10 +134,12 @@ export class HLSTSDemuxer {
 
       if (segment.initSegment && !this.initSegmentAppended) {
         this.initSegmentAppended = true;
+        this.stats.transmuxBytesIn += segment.initSegment.byteLength || 0;
         this.appendToMP4Box(segment.initSegment);
       }
 
       if (segment.data) {
+        this.stats.transmuxBytesIn += segment.data.byteLength || 0;
         this.appendToMP4Box(segment.data);
       }
     });
@@ -151,8 +168,10 @@ export class HLSTSDemuxer {
   }
 
   private onReady(info: MP4Info) {
+    this.stats.mp4Ready = true;
     const track = this.kind === 'video' ? info.videoTracks[0] : info.audioTracks[0];
     if (!track) {
+      this.stats.error = `no ${this.kind} track in stream`;
       this.opts.onError(new Error(`no ${this.kind} track in stream`));
       return;
     }
@@ -183,6 +202,7 @@ export class HLSTSDemuxer {
   }
 
   private onSamples(samples: MP4Sample[]) {
+    this.stats.samplesOutput += samples.length;
     for (const s of samples) {
       this.opts.onSample({
         key: s.is_sync,
@@ -239,21 +259,33 @@ export class HLSTSDemuxer {
 
       const seg = this.segments[this.currentSegmentIndex];
       if (!seg) break;
+      this.stats.currentSegment = this.currentSegmentIndex;
 
       let data: ArrayBuffer | null = null;
       try {
         data = await this.fetchSegment(seg.url);
       } catch (err) {
         if (this.aborted || g !== this.gen) break;
+        this.stats.error = String(err);
         this.opts.onError(err);
         return;
       }
       if (this.aborted || g !== this.gen) break;
 
       if (data) {
+        this.stats.segmentsDownloaded++;
+        this.stats.bytesDownloaded += data.byteLength;
         try {
           this.transmuxer.push(new Uint8Array(data));
           this.transmuxer.flush();
+          // 每个分片转封装完成后，flush mp4box 强制解析
+          if (this.mp4 && this.initSegmentAppended) {
+            try {
+              this.mp4.flush();
+            } catch (e) {
+              console.warn('[HLSTSDemuxer] mp4 flush error:', e);
+            }
+          }
         } catch (e) {
           console.warn('[HLSTSDemuxer] transmux error:', e);
         }
@@ -417,6 +449,10 @@ export class HLSTSDemuxer {
 
   getDuration(): number {
     return this.durationSec;
+  }
+
+  getStats() {
+    return { ...this.stats };
   }
 
   getSegments(): Segment[] {

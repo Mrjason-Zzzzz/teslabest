@@ -558,22 +558,36 @@ export class WebCodecsPlayer {
     const ctx = this.ctx;
     const w = this.canvas.width || 640;
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(0, 0, w, 160);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, w, 360);
     ctx.fillStyle = '#0f0';
-    ctx.font = '14px monospace';
+    ctx.font = '13px monospace';
+    const vd = stats.vDemux || {};
+    const ad = stats.aDemux || {};
     const lines = [
       `[WC] state: ${stats.state}`,
       `[WC] render: ${stats.renderFps} fps  decode: ${stats.decodeFps} fps`,
-      `[WC] queue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
+      `[WC] frameQueue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
       `[WC] buffer v${stats.bufferedVideoSec}s · a${stats.bufferedAudioSec}s`,
       `[WC] ${stats.resolution} ${stats.codec}`,
       `[WC] t=${stats.currentSec}s`,
-      `[WC] videoFrames: decoded=${this.decodedFrames} rendered=${this.renderedFrames}`,
-      `[WC] demux queued: v${this.encodedVideo.length - this.vIdx} a${this.encodedAudio.length - this.aIdx}`,
-    ];
+      `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
+      `[WC] demux queue v${stats.demuxVideoQueue} a${stats.demuxAudioQueue}`,
+      `--- V Demux ---`,
+      `  m3u8: ${vd.m3u8Loaded ? 'OK' : 'pending'}  segs: ${vd.segmentCount || 0}`,
+      `  dl: ${vd.segmentsDownloaded || 0}/${vd.segmentCount || 0}  ${Math.round((vd.bytesDownloaded || 0) / 1024)} KB`,
+      `  transmux: ${Math.round((vd.transmuxBytesIn || 0) / 1024)} KB  mp4Ready: ${vd.mp4Ready ? 'YES' : 'no'}`,
+      `  samples: ${vd.samplesOutput || 0}`,
+      vd.error ? `  ERROR: ${vd.error}` : '',
+      `--- A Demux ---`,
+      `  m3u8: ${ad.m3u8Loaded ? 'OK' : 'pending'}  segs: ${ad.segmentCount || 0}`,
+      `  dl: ${ad.segmentsDownloaded || 0}/${ad.segmentCount || 0}  ${Math.round((ad.bytesDownloaded || 0) / 1024)} KB`,
+      `  transmux: ${Math.round((ad.transmuxBytesIn || 0) / 1024)} KB  mp4Ready: ${ad.mp4Ready ? 'YES' : 'no'}`,
+      `  samples: ${ad.samplesOutput || 0}`,
+      ad.error ? `  ERROR: ${ad.error}` : '',
+    ].filter(Boolean);
     lines.forEach((line, i) => {
-      ctx.fillText(line, 12, 20 + i * 18);
+      ctx.fillText(line, 10, 18 + i * 16);
     });
     ctx.restore();
   }
@@ -815,6 +829,8 @@ export class WebCodecsPlayer {
 
     const clock = this.getMediaTime();
     const lastV = this.encodedVideo[this.encodedVideo.length - 1];
+    const vStats = this.videoDemuxer?.getStats?.();
+    const aStats = this.audioDemuxer?.getStats?.();
     return {
       state: this.state,
       renderFps: Math.round(renderFps),
@@ -827,6 +843,12 @@ export class WebCodecsPlayer {
       resolution: this.videoConfig ? `${this.videoConfig.codedWidth}x${this.videoConfig.codedHeight}` : '',
       codec: this.videoConfig?.codec ?? '',
       currentSec: +clock.toFixed(1),
+      decodedFrames: this.decodedFrames,
+      renderedFrames: this.renderedFrames,
+      demuxVideoQueue: this.encodedVideo.length - this.vIdx,
+      demuxAudioQueue: this.encodedAudio.length - this.aIdx,
+      vDemux: vStats,
+      aDemux: aStats,
     };
   }
 
