@@ -395,6 +395,19 @@ export default function TeslaPlayer({
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
         backBufferLength: 60,
+        xhrSetup: (xhr: XMLHttpRequest, xhrUrl: string) => {
+          if (xhrUrl.includes('.m3u8')) {
+            xhr.addEventListener('load', () => {
+              if (xhr.readyState === 4 && xhr.status === 200) {
+                const original = xhr.responseText;
+                const filtered = filterAdsFromM3U8(original);
+                if (filtered !== original) {
+                  Object.defineProperty(xhr, 'responseText', { value: filtered, writable: false });
+                }
+              }
+            });
+          }
+        },
       });
       hlsRef.current = hls;
 

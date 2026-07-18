@@ -56,6 +56,12 @@ export class WebCodecsPlayer {
   private lastDecodedFrameCount = 0;
   private lastDecodedCheckTime = 0;
 
+  private syncCheckTimer = 0;
+  private lastSyncVideoPts = 0;
+  private lastSyncAudioTime = 0;
+  private syncDriftAccum = 0;
+  private syncDriftCount = 0;
+
   private debugStats = {
     hlsState: 'init',
     levelCount: 0,
@@ -179,6 +185,20 @@ export class WebCodecsPlayer {
       maxBufferLength: 60,
       maxMaxBufferLength: 120,
       backBufferLength: 60,
+      xhrSetup: (xhr: XMLHttpRequest, url: string) => {
+        if (url.includes('.m3u8') || url.includes('.m3u8?')) {
+          xhr.addEventListener('load', () => {
+            if (xhr.readyState === 4 && xhr.status === 200) {
+              const original = xhr.responseText;
+              const filtered = this.filterAdsFromM3U8(original);
+              if (filtered !== original) {
+                console.log('[WebCodecsPlayer] ad filter: m3u8 filtered');
+                Object.defineProperty(xhr, 'responseText', { value: filtered, writable: false });
+              }
+            }
+          });
+        }
+      },
     });
 
     this.hls = hls;
@@ -222,6 +242,7 @@ export class WebCodecsPlayer {
     hls.loadSource(url);
 
     this.startDecoderStallCheck();
+    this.startSyncCheck();
     this.loop();
   }
 
@@ -400,6 +421,69 @@ export class WebCodecsPlayer {
     this.decoderStallCheckTimer = window.setTimeout(check, 3000);
   }
 
+  private startSyncCheck() {
+    this.syncDriftAccum = 0;
+    this.syncDriftCount = 0;
+
+    const check = () => {
+      if (this.destroyed) return;
+
+      if (this.state === 'playing' && this.hasOffset && this.frameQueue.length > 0 && this.videoEl) {
+        const clock = this.videoEl.currentTime;
+        const midFrameIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
+        const midFrame = this.frameQueue[midFrameIdx];
+        const midFrameTime = midFrame.timestamp / 1e6 + this.videoTimeOffset;
+        const drift = midFrameTime - clock;
+
+        this.syncDriftAccum += drift;
+        this.syncDriftCount++;
+
+        if (this.syncDriftCount >= 3) {
+          const avgDrift = this.syncDriftAccum / this.syncDriftCount;
+
+          if (Math.abs(avgDrift) > 0.15) {
+            console.log('[WebCodecsPlayer] sync drift detected: avg=' + (avgDrift * 1000).toFixed(0) + 'ms, correcting offset');
+            this.videoTimeOffset -= avgDrift * 0.5;
+          }
+
+          this.syncDriftAccum = 0;
+          this.syncDriftCount = 0;
+        }
+      }
+
+      this.syncCheckTimer = window.setTimeout(check, 2000);
+    };
+
+    this.syncCheckTimer = window.setTimeout(check, 3000);
+  }
+
+  private filterAdsFromM3U8(m3u8Content: string): string {
+    if (!m3u8Content) return '';
+    const adKeywords = ['sponsor', '/ad/', '/ads/', 'advert', 'advertisement', '/adjump', 'redtraffic', 'pre-roll', 'midroll', 'postroll'];
+    const lines = m3u8Content.split('\n');
+    const filteredLines: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.includes('#EXT-X-DISCONTINUITY')) {
+        i++;
+        continue;
+      }
+      if (line.includes('#EXTINF:') && i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        const isAd = adKeywords.some((keyword) => nextLine.toLowerCase().includes(keyword));
+        if (isAd) {
+          i += 2;
+          continue;
+        }
+      }
+      filteredLines.push(line);
+      i++;
+    }
+    return filteredLines.join('\n');
+  }
+
   private onVideoFrame(frame: VideoFrame) {
     this.decodedFrames++;
     if (!this.canvasSized) {
@@ -409,7 +493,7 @@ export class WebCodecsPlayer {
     }
 
     this.frameQueue.push(frame);
-    const maxQueue = Math.max(30, Math.floor(60 * this.playbackRate));
+    const maxQueue = Math.max(15, Math.floor(30 * this.playbackRate));
     while (this.frameQueue.length > maxQueue) {
       const old = this.frameQueue.shift()!;
       old.close();
@@ -442,7 +526,7 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const maxOutstanding = Math.max(30, Math.floor(50 * this.playbackRate));
+    const maxOutstanding = Math.max(20, Math.floor(30 * this.playbackRate));
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < maxOutstanding
@@ -528,19 +612,29 @@ export class WebCodecsPlayer {
     const w = this.canvas.width || 640;
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(0, 0, w, 480);
+    ctx.fillRect(0, 0, w, 500);
     ctx.fillStyle = '#0f0';
     ctx.font = '13px monospace';
     const ds = this.debugStats;
+
+    let driftStr = 'n/a';
+    if (this.hasOffset && this.frameQueue.length > 0 && this.videoEl) {
+      const midIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
+      const midFrame = this.frameQueue[midIdx];
+      const midTime = midFrame.timestamp / 1e6 + this.videoTimeOffset;
+      const drift = midTime - this.videoEl.currentTime;
+      driftStr = (drift * 1000).toFixed(0) + 'ms';
+    }
+
     const lines = [
       `[WC] state: ${stats.state}`,
       `[WC] render: ${stats.renderFps} fps  decode: ${stats.decodeFps} fps`,
       `[WC] frameQueue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
       `[WC] ${stats.resolution} ${stats.codec}`,
       `[WC] t=${stats.currentSec}s  rate=${this.playbackRate.toFixed(2)}x`,
+      `[WC] drift: ${driftStr}  offset: ${this.hasOffset ? this.videoTimeOffset.toFixed(3) + 's' : 'pending'}`,
       `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
       `[WC] vBuf: ${stats.demuxVideoQueue}`,
-      `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}  offset: ${this.hasOffset ? this.videoTimeOffset.toFixed(2) + 's' : 'pending'}`,
       `[WC] errCount: ${this.decoderErrorCount}`,
       `--- HLS ---`,
       `  state: ${ds.hlsState}  levels: ${ds.levelCount}  level: ${ds.currentLevel}`,
@@ -630,6 +724,11 @@ export class WebCodecsPlayer {
     if (this.decoderStallCheckTimer) {
       clearTimeout(this.decoderStallCheckTimer);
       this.decoderStallCheckTimer = 0;
+    }
+
+    if (this.syncCheckTimer) {
+      clearTimeout(this.syncCheckTimer);
+      this.syncCheckTimer = 0;
     }
 
     if (this.hls) {
