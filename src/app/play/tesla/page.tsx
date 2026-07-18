@@ -269,9 +269,9 @@ function TeslaPlayPageInner() {
     return result;
   }, [currentDetail, episodePage]);
 
-  const isLoading = loadingStage !== 'error' && (!currentDetail || !playUrl || loadingStage === 'ready');
+  const isLoading = !currentDetail || !playUrl || loadingStage === 'ready';
   const currentStageIndex = LOADING_STAGES.findIndex((s) => s.key === loadingStage);
-  const progressPercent = loadingStage === 'error' ? 0 : ((currentStageIndex + 1) / LOADING_STAGES.length) * 100;
+  const progressPercent = currentStageIndex < 0 ? 0 : ((currentStageIndex + 1) / LOADING_STAGES.length) * 100;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-neutral-950 text-white">
@@ -326,13 +326,13 @@ function TeslaPlayPageInner() {
         <div className="flex min-w-0 flex-1 flex-col">
           {/* 播放器容器 */}
           <div className="relative aspect-video w-full bg-black">
-            {isLoading && loadingStage !== 'error' && (
+            {isLoading && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4">
                 <div className="relative">
                   <div className="relative h-20 w-20">
                     <div className="absolute inset-0 animate-pulse rounded-2xl bg-gradient-to-br from-green-500/30 to-emerald-500/20" />
                     <div className="absolute inset-2 flex items-center justify-center rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 shadow-lg shadow-green-500/30">
-                      {loadingStage !== 'error' && currentStageIndex >= 0 && (() => {
+                      {currentStageIndex >= 0 && (() => {
                         const Icon = LOADING_STAGES[currentStageIndex]?.icon || Search;
                         return <Icon className="h-8 w-8 text-white" />;
                       })()}
@@ -347,7 +347,7 @@ function TeslaPlayPageInner() {
                   <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-white/5">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
-                        loadingStage !== 'error' && currentStageIndex >= 0
+                        currentStageIndex >= 0
                           ? LOADING_STAGES[currentStageIndex]?.bg
                           : 'bg-green-500'
                       }`}
@@ -367,11 +367,11 @@ function TeslaPlayPageInner() {
                 </div>
 
                 <p className={`text-sm font-medium ${
-                  loadingStage !== 'error' && currentStageIndex >= 0
+                  currentStageIndex >= 0
                     ? LOADING_STAGES[currentStageIndex]?.color
                     : 'text-white/60'
                 }`}>
-                  {loadingStage !== 'error' && currentStageIndex >= 0
+                  {currentStageIndex >= 0
                     ? LOADING_STAGES[currentStageIndex]?.label
                     : '加载中...'}
                 </p>
@@ -400,7 +400,7 @@ function TeslaPlayPageInner() {
               </div>
             )}
 
-            {!isLoading && loadingStage !== 'error' && playUrl && currentDetail && (
+            {!isLoading && playUrl && currentDetail && (
               <>
                 <TeslaPlayer
                   key={`${currentDetail.source}-${currentEpisodeIndex}`}

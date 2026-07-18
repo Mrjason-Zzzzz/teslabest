@@ -54,7 +54,7 @@ function saveProgress(key: string, time: number): void {
   }
 }
 
-export default function TeslaPlayer({ url, title, poster, live = false, onBackToOriginal, onEnded, playRecordKey }: TeslaPlayerProps) {
+export default function TeslaPlayer({ url, title, poster, live = false, onBackToOriginal, onEnded: onEndedCallback, playRecordKey }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
@@ -138,7 +138,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       if (destroyed) return;
       setPlaying(false);
       if (playRecordKey) saveProgress(playRecordKey, video.duration || 0);
-      setTimeout(() => window.onEnded?.(), 500);
+      setTimeout(() => onEndedCallback?.(), 500);
     };
     const onError = () => {
       if (destroyed) return;
@@ -268,7 +268,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
         engine.on('ended', () => {
           if (!disposed) {
             setPlaying(false);
-            setTimeout(() => onEnded?.(), 500);
+            setTimeout(() => onEndedCallback?.(), 500);
           }
         });
         engine.on('error', (err: any) => {
@@ -299,7 +299,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       try { engineRef.current?.destroy(); } catch { /* ignore */ }
       engineRef.current = null;
     };
-  }, [mode, url, live, ensureBroadwayScripts, onEnded]);
+  }, [mode, url, live, ensureBroadwayScripts, onEndedCallback]);
 
   // ===== 模式切换 =====
   const switchMode = useCallback((newMode: PlayerMode) => {
@@ -499,7 +499,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
             <button type="button" onClick={togglePlay} className="rounded p-2 hover:bg-white/10" aria-label={playing ? '暂停' : '播放'}>
               {playing ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 fill-current" />}
             </button>
-            <button type="button" onClick={onEnded} className="rounded p-1 hover:bg-white/10" aria-label="下一集">
+            <button type="button" onClick={() => onEndedCallback?.()} className="rounded p-1 hover:bg-white/10" aria-label="下一集">
               <SkipForward className="h-5 w-5" />
             </button>
             <div className="relative">
