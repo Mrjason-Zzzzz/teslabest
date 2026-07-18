@@ -302,6 +302,14 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     // 判断是否为 m3u8
     const isM3u8 = url.toLowerCase().includes('.m3u') || url.toLowerCase().includes('/m3u8');
 
+    // 5秒超时兜底
+    const loadTimeout = window.setTimeout(() => {
+      if (!destroyed) {
+        console.warn('[TeslaPlayer] manifest load timeout, forcing loading=false');
+        setLoading(false);
+      }
+    }, 5000);
+
     if (isM3u8 && Hls.isSupported()) {
       const AdFilterLoader = class extends Hls.DefaultConfig.loader {
         constructor(config: any) {
@@ -341,7 +349,17 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
           qs.push({ label: `${res} ${bw}`.trim() || `清晰度 ${i + 1}`, value: String(i) });
         });
         setQualities(qs);
+        console.log('[TeslaPlayer] manifest parsed, levels:', levels.length);
+        // 清掉 loading 状态（元数据已加载）
         setLoading(false);
+      });
+
+      hls.on(Hls.Events.LEVEL_LOADED, (_evt, data: any) => {
+        if (destroyed) return;
+        console.log('[TeslaPlayer] level loaded, duration:', data?.details?.duration);
+        if (data?.details?.duration) {
+          setDuration(data.details.duration);
+        }
       });
 
       hls.on(Hls.Events.ERROR, (_evt, data) => {
@@ -355,10 +373,10 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       });
 
       hls.loadSource(url);
-      hls.attachMedia(video);
-      hlsRef.current = hls;
+    hls.attachMedia(video);
+    hlsRef.current = hls;
 
-      if (!live) video.play().catch(() => { });
+    if (!live) video.play().catch(() => { });
     } else {
       video.src = url;
       video.load();
@@ -384,6 +402,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+      clearTimeout(loadTimeout);
       video.removeAttribute('src');
       video.load();
     };
@@ -396,10 +415,10 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       onMouseMove={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* 隐藏的 video 元素（负责解码，特斯拉允许） */}
+      {/* 隐藏的 video 元素（负责解码，特斯拉允许 - 视觉隐藏但仍在渲染树中） */}
       <video
         ref={videoRef}
-        className="hidden"
+        className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
         playsInline
         poster={poster}
       />
