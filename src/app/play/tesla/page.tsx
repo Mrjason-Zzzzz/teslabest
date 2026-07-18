@@ -20,6 +20,69 @@ const LOADING_STAGES = [
   { key: 'ready', icon: Sparkles, label: '准备就绪，即将开始播放...' },
 ];
 
+/**
+ * 标题归一化：去空格、括号、特殊符号，用于精确匹配同一作品的不同源
+ * 参考 /play 页面的 normalizeTitle 实现
+ */
+function normalizeTitle(title: string): string {
+  return title
+    .replace(/[\s\u3000]/g, '') // 去除空格和全角空格
+    .replace(/[()（）[\]【】{}「」『』<>《》]/g, '') // 去除各种括号
+    .replace(/[^\w\u4e00-\u9fa5]/g, '') // 去除特殊符号，保留字母、数字、下划线和中文
+    .toLowerCase();
+}
+
+/**
+ * 获取视频类型：电影 或 电视剧
+ */
+function getVideoType(item: SearchResult): 'movie' | 'tv' {
+  if (item.source === 'emby' || item.source?.startsWith('emby_') || item.source === 'openlist') {
+    return item.type_name === '电影' ? 'movie' : 'tv';
+  }
+  const typeName = item.type_name?.toLowerCase() || '';
+  if (typeName.includes('电影') || typeName.includes('movie')) return 'movie';
+  return 'tv';
+}
+
+/**
+ * 过滤出与当前视频相同的源（同一作品的不同采集站）
+ * 规则：标题归一化后完全匹配 + 年份匹配（空年份视为匹配）+ 类型匹配
+ */
+function filterSourcesForCurrentVideo(
+  items: SearchResult[],
+  currentTitle: string,
+  currentYear: string,
+  currentType?: string
+): SearchResult[] {
+  const normalizedCurrent = normalizeTitle(currentTitle);
+  const currentVideoType = currentType === 'movie' ? 'movie' : 'tv';
+
+  return items.filter((item) => {
+    // 1. 标题归一化后必须完全匹配
+    if (normalizeTitle(item.title) !== normalizedCurrent) return false;
+
+    // 2. 年份匹配：当前视频有年份时，源年份必须匹配或为空
+    if (currentYear && /^\d{4}$/.test(currentYear)) {
+      const itemYear = item.year || '';
+      const yearMatch =
+        itemYear === currentYear ||
+        !itemYear ||
+        itemYear.trim() === '' ||
+        itemYear === 'unknown' ||
+        !/^\d{4}$/.test(itemYear);
+      if (!yearMatch) return false;
+    }
+
+    // 3. 类型匹配
+    if (currentType) {
+      const itemType = getVideoType(item);
+      if (itemType !== currentVideoType) return false;
+    }
+
+    return true;
+  });
+}
+
 function TeslaPlayPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -102,23 +165,47 @@ function TeslaPlayPageInner() {
           throw new Error('缺少必要参数：title');
         }
 
-        const sources = await searchSources(initialTitle);
-        if (sources.length === 0) {
+        const allResults = await searchSources(initialTitle);
+        if (allResults.length === 0) {
           throw new Error('未找到匹配的播放源');
         }
-        setAllSources(sources);
+
+        // 过滤出与当前视频相同的源（同一作品的不同采集站）
+        // 参考 /play 页面的 filterSourcesForCurrentVideo 逻辑
+        const stypeParam = stype || (year ? 'tv' : undefined);
+        let filtered = filterSourcesForCurrentVideo(allResults, initialTitle, year, stypeParam);
+
+        // 如果过滤后为空（可能年份/类型不匹配），回退到标题精确匹配
+        if (filtered.length === 0) {
+          const normalizedCurrent = normalizeTitle(initialTitle);
+          filtered = allResults.filter((s) => normalizeTitle(s.title) === normalizedCurrent);
+        }
+
+        // 如果仍然为空，使用当前 source/id 对应的源
+        if (filtered.length === 0 && source && id) {
+          const current = allResults.find((s) => s.source === source && s.id === id);
+          if (current) filtered = [current];
+        }
+
+        // 最终兜底：如果还是空，用所有结果（避免完全不可用）
+        if (filtered.length === 0) {
+          console.warn('[TeslaPlay] 未找到匹配的源，使用所有搜索结果');
+          filtered = allResults;
+        }
+
+        setAllSources(filtered);
 
         let selected: SearchResult | null = null;
         if (source && id) {
-          selected = sources.find((s) => s.source === source && s.id === id) || null;
+          selected = filtered.find((s) => s.source === source && s.id === id) || null;
         }
 
         if (!selected) {
-          if (sources.length > 1) {
+          if (filtered.length > 1) {
             setLoadingStage('preferring');
             await new Promise((r) => setTimeout(r, 500));
           }
-          selected = preferBestSource(sources);
+          selected = preferBestSource(filtered);
         }
 
         if (!selected) {
@@ -146,7 +233,7 @@ function TeslaPlayPageInner() {
 
     init();
     return () => { cancelled = true; };
-  }, [source, id, initialTitle, initialEpisode, fetchDetail, searchSources, preferBestSource]);
+  }, [source, id, initialTitle, initialEpisode, year, stype, fetchDetail, searchSources, preferBestSource]);
 
   useEffect(() => {
     if (!currentDetail || !currentDetail.episodes || currentEpisodeIndex >= currentDetail.episodes.length) {
