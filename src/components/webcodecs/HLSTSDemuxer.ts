@@ -1,18 +1,12 @@
 // @ts-nocheck
 import * as muxjs from 'mux.js';
-import {
-  createFile,
-  DataStream,
-} from 'mp4box';
-
-export type TrackKind = 'video' | 'audio';
 
 export interface VideoConfig {
   kind: 'video';
   codec: string;
   codedWidth: number;
   codedHeight: number;
-  description?: Uint8Array;
+  description: Uint8Array;
 }
 
 export interface AudioConfig {
@@ -20,10 +14,8 @@ export interface AudioConfig {
   codec: string;
   sampleRate: number;
   numberOfChannels: number;
-  description?: Uint8Array;
+  description: Uint8Array;
 }
-
-export type StreamConfig = VideoConfig | AudioConfig;
 
 export interface EncodedSample {
   key: boolean;
@@ -34,12 +26,12 @@ export interface EncodedSample {
 
 interface DemuxerOptions {
   url: string;
-  kind: TrackKind;
-  onConfig: (config: StreamConfig) => void;
-  onSample: (sample: EncodedSample) => void;
-  onDone: () => void;
+  onVideoConfig: (config: VideoConfig) => void;
+  onAudioConfig: (config: AudioConfig) => void;
+  onVideoSample: (sample: EncodedSample) => void;
+  onAudioSample: (sample: EncodedSample) => void;
+  onDuration: (durationSec: number) => void;
   onError: (e: unknown) => void;
-  onEvent?: (msg: string) => void;
 }
 
 const FETCH_TIMEOUT_MS = 15000;
@@ -54,7 +46,6 @@ interface Segment {
 
 export class HLSTSDemuxer {
   private url: string;
-  private kind: TrackKind;
   private opts: DemuxerOptions;
 
   private segments: Segment[] = [];
@@ -62,15 +53,24 @@ export class HLSTSDemuxer {
   private currentSegmentIndex = 0;
   private paused = false;
   private aborted = false;
-  private eofSignaled = false;
   private gen = 0;
   private resumeResolve: (() => void) | null = null;
 
-  private mp4: MP4File | null = null;
-  private trackId = -1;
-  private transmuxer: any = null;
-  private initSegmentAppended = false;
-  private mp4ByteOffset = 0;
+  private transportStream: any = null;
+  private spsNalu: Uint8Array | null = null;
+  private ppsNalu: Uint8Array | null = null;
+  private videoConfigSent = false;
+  private audioConfigSent = false;
+  private lastVideoPts = 0;
+  private lastAudioPts = 0;
+  private videoFrameDuration = 0;
+  private audioFrameDuration = 0;
+
+  private videoCodec = '';
+  private videoWidth = 0;
+  private videoHeight = 0;
+  private audioSampleRate = 0;
+  private audioChannels = 0;
 
   private stats = {
     m3u8Loaded: false,
@@ -78,23 +78,20 @@ export class HLSTSDemuxer {
     currentSegment: 0,
     segmentsDownloaded: 0,
     bytesDownloaded: 0,
-    transmuxBytesIn: 0,
-    mp4Ready: false,
-    samplesOutput: 0,
+    videoSamples: 0,
+    audioSamples: 0,
     error: '',
   };
 
   constructor(opts: DemuxerOptions) {
     this.opts = opts;
     this.url = opts.url;
-    this.kind = opts.kind;
   }
 
   async start(startSec = 0): Promise<void> {
     this.gen++;
     const g = this.gen;
     this.aborted = false;
-    this.eofSignaled = false;
 
     try {
       const m3u8Content = await this.fetchM3U8(this.url);
@@ -111,145 +108,256 @@ export class HLSTSDemuxer {
         return;
       }
 
+      this.opts.onDuration(this.durationSec);
       this.currentSegmentIndex = this.findSegmentIndex(startSec);
-      this.initTransmuxer();
-      this.initMP4Box();
+      this.initTransportStream();
 
       void this.downloadLoop(g);
     } catch (e) {
       if (!this.aborted && g === this.gen) {
+        this.stats.error = String(e);
         this.opts.onError(e);
       }
     }
   }
 
-  private initTransmuxer() {
-    this.transmuxer = new muxjs.mp4.Transmuxer({
-      keepOriginalTimestamps: true,
-      remux: true,
-    });
+  private initTransportStream() {
+    this.transportStream = new muxjs.mp2t.TransportStream();
 
-    this.transmuxer.on('data', (segment: any) => {
+    this.transportStream.on('data', (data: any) => {
       if (this.aborted) return;
 
-      if (segment.initSegment && !this.initSegmentAppended) {
-        this.initSegmentAppended = true;
-        this.stats.transmuxBytesIn += segment.initSegment.byteLength || 0;
-        this.appendToMP4Box(segment.initSegment);
+      if (data.video) {
+        this.handleVideoData(data.video);
       }
-
-      if (segment.data) {
-        this.stats.transmuxBytesIn += segment.data.byteLength || 0;
-        this.appendToMP4Box(segment.data);
+      if (data.audio) {
+        this.handleAudioData(data.audio);
       }
     });
 
-    this.transmuxer.on('done', () => {
-      // segment transmux done
+    this.transportStream.on('error', (err: any) => {
+      console.warn('[HLSTSDemuxer] TS parse error:', err);
     });
   }
 
-  private initMP4Box() {
-    this.mp4 = createFile();
-    this.mp4ByteOffset = 0;
-    this.mp4.onError = (e: any) => this.opts.onError(e);
-    this.mp4.onReady = (info: MP4Info) => this.onReady(info);
-    this.mp4.onSamples = (_id: number, _user: any, samples: MP4Sample[]) =>
-      this.onSamples(samples);
+  private handleVideoData(videoData: any) {
+    const units = videoData.units || videoData.nalus || videoData.data || [];
+    const pts = videoData.pts != null ? videoData.pts : (this.lastVideoPts + this.videoFrameDuration);
+
+    if (!units || units.length === 0) return;
+
+    let hasKeyFrame = false;
+    const frameNalus: Uint8Array[] = [];
+
+    for (const unit of units) {
+      const naluData = unit.data || unit;
+      if (!(naluData instanceof Uint8Array)) continue;
+
+      const naluType = this.getNaluType(naluData);
+      if (naluType === 7) {
+        this.spsNalu = naluData;
+        this.parseSPS(naluData);
+      } else if (naluType === 8) {
+        this.ppsNalu = naluData;
+      } else if (naluType === 5) {
+        hasKeyFrame = true;
+        frameNalus.push(naluData);
+      } else if (naluType === 1 || naluType === 2 || naluType === 3 || naluType === 4) {
+        frameNalus.push(naluData);
+      }
+    }
+
+    if (frameNalus.length === 0) return;
+
+    if (!this.videoConfigSent && this.spsNalu && this.ppsNalu) {
+      const description = this.buildAvccDescription(this.spsNalu, this.ppsNalu);
+      this.opts.onVideoConfig({
+        kind: 'video',
+        codec: this.videoCodec || 'avc1.4d401f',
+        codedWidth: this.videoWidth || 1920,
+        codedHeight: this.videoHeight || 1080,
+        description,
+      });
+      this.videoConfigSent = true;
+    }
+
+    const frameData = this.concatNalusWithStartCodes(frameNalus);
+    const duration = videoData.duration || this.videoFrameDuration || 33;
+
+    this.opts.onVideoSample({
+      key: hasKeyFrame,
+      timestamp: Math.round(pts * 1e6),
+      duration: Math.round(duration * 1e6),
+      data: frameData,
+    });
+
+    this.stats.videoSamples++;
+    this.lastVideoPts = pts;
+    if (videoData.duration) this.videoFrameDuration = videoData.duration;
   }
 
-  private appendToMP4Box(data: Uint8Array | ArrayBuffer) {
-    if (!this.mp4) return;
-    const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
-    const ab = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as MP4ArrayBuffer;
-    ab.fileStart = this.mp4ByteOffset;
-    this.mp4ByteOffset += ab.byteLength;
-    this.mp4.appendBuffer(ab);
-  }
+  private handleAudioData(audioData: any) {
+    const frame = audioData.data || audioData.frame || audioData;
+    if (!frame) return;
 
-  private onReady(info: MP4Info) {
-    this.stats.mp4Ready = true;
-    const track = this.kind === 'video' ? info.videoTracks[0] : info.audioTracks[0];
-    if (!track) {
-      this.stats.error = `no ${this.kind} track in stream`;
-      this.opts.onError(new Error(`no ${this.kind} track in stream`));
+    const pts = audioData.pts != null ? audioData.pts : (this.lastAudioPts + this.audioFrameDuration);
+    const duration = audioData.duration || this.audioFrameDuration || 23;
+
+    let aacData: Uint8Array;
+    if (frame instanceof Uint8Array) {
+      aacData = frame;
+    } else if (frame.data instanceof Uint8Array) {
+      aacData = frame.data;
+    } else {
       return;
     }
-    this.trackId = track.id;
 
-    if (this.kind === 'video') {
-      const v = info.videoTracks[0];
-      this.opts.onConfig({
-        kind: 'video',
-        codec: v.codec,
-        codedWidth: v.video.width,
-        codedHeight: v.video.height,
-        description: this.videoDescription(v.id),
-      });
-    } else {
-      const a = info.audioTracks[0];
-      this.opts.onConfig({
-        kind: 'audio',
-        codec: a.codec,
-        sampleRate: a.audio.sample_rate,
-        numberOfChannels: a.audio.channel_count,
-        description: this.audioDescription(a.id),
-      });
-    }
-
-    this.mp4?.setExtractionOptions(this.trackId, null, { nbSamples: 100 });
-    this.mp4?.start();
-  }
-
-  private onSamples(samples: MP4Sample[]) {
-    this.stats.samplesOutput += samples.length;
-    for (const s of samples) {
-      this.opts.onSample({
-        key: s.is_sync,
-        timestamp: (s.cts / s.timescale) * 1e6,
-        duration: (s.duration / s.timescale) * 1e6,
-        data: s.data,
-      });
-    }
-    const last = samples[samples.length - 1];
-    if (last && this.mp4) {
-      this.mp4.releaseUsedSamples(this.trackId, last.number);
-    }
-  }
-
-  private videoDescription(trackId: number): Uint8Array | undefined {
-    if (!this.mp4) return undefined;
-    const trak = this.mp4.getTrackById(trackId);
-    for (const entry of trak?.mdia?.minf?.stbl?.stsd?.entries ?? []) {
-      const box = (entry as any).avcC || (entry as any).hvcC || (entry as any).av1C || (entry as any).vpcC;
-      if (box) {
-        const ds = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
-        box.write(ds);
-        return new Uint8Array(ds.buffer, 8);
+    if (!this.audioConfigSent && aacData.length > 7) {
+      const config = this.parseAdtsHeader(aacData);
+      if (config) {
+        const description = this.buildAacDescription(config.sampleRate, config.channels, config.profile);
+        this.opts.onAudioConfig({
+          kind: 'audio',
+          codec: 'mp4a.40.2',
+          sampleRate: config.sampleRate,
+          numberOfChannels: config.channels,
+          description,
+        });
+        this.audioConfigSent = true;
+        this.audioSampleRate = config.sampleRate;
+        this.audioChannels = config.channels;
       }
     }
-    return undefined;
+
+    let rawAac: Uint8Array;
+    if (this.isAdts(aacData)) {
+      const headerLen = 7;
+      rawAac = aacData.subarray(headerLen);
+    } else {
+      rawAac = aacData;
+    }
+
+    this.opts.onAudioSample({
+      key: true,
+      timestamp: Math.round(pts * 1e6),
+      duration: Math.round(duration * 1e6),
+      data: rawAac,
+    });
+
+    this.stats.audioSamples++;
+    this.lastAudioPts = pts;
+    if (audioData.duration) this.audioFrameDuration = audioData.duration;
   }
 
-  private audioDescription(trackId: number): Uint8Array | undefined {
-    if (!this.mp4) return undefined;
-    const trak = this.mp4.getTrackById(trackId);
-    for (const entry of trak?.mdia?.minf?.stbl?.stsd?.entries ?? []) {
-      const esds = (entry as any).esds;
-      if (!esds) continue;
-      const findData = (node: unknown): Uint8Array | undefined => {
-        const n = node as { data?: Uint8Array; descs?: unknown[] };
-        if (n?.data) return n.data;
-        for (const child of n?.descs ?? []) {
-          const found = findData(child);
-          if (found) return found;
-        }
-        return undefined;
-      };
-      const asc = findData(esds.esd);
-      if (asc) return asc;
+  private getNaluType(nalu: Uint8Array): number {
+    let startCodeLen = 0;
+    if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 0 && nalu[3] === 1) {
+      startCodeLen = 4;
+    } else if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 1) {
+      startCodeLen = 3;
     }
-    return undefined;
+    if (nalu.length <= startCodeLen) return 0;
+    return nalu[startCodeLen] & 0x1f;
+  }
+
+  private parseSPS(sps: Uint8Array) {
+    try {
+      let startOffset = 0;
+      if (sps[0] === 0 && sps[1] === 0 && sps[2] === 0 && sps[3] === 1) startOffset = 4;
+      else if (sps[0] === 0 && sps[1] === 0 && sps[2] === 1) startOffset = 3;
+
+      const profileIdc = sps[startOffset + 1];
+      const constraintSet = sps[startOffset + 2];
+      const levelIdc = sps[startOffset + 3];
+      this.videoCodec = `avc1.${this.toHex(profileIdc)}${this.toHex(constraintSet)}${this.toHex(levelIdc)}`;
+    } catch {
+      // ignore
+    }
+  }
+
+  private toHex(b: number): string {
+    return b.toString(16).padStart(2, '0').toUpperCase();
+  }
+
+  private isAdts(data: Uint8Array): boolean {
+    return data.length >= 2 && data[0] === 0xff && (data[1] & 0xf0) === 0xf0;
+  }
+
+  private parseAdtsHeader(data: Uint8Array): { sampleRate: number; channels: number; profile: number } | null {
+    if (!this.isAdts(data)) return null;
+    const sampleRates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+    const profile = ((data[2] & 0xc0) >> 6) + 1;
+    const sampleRateIdx = (data[2] & 0x3c) >> 2;
+    const channels = ((data[2] & 0x01) << 2) | ((data[3] & 0xc0) >> 6);
+    const sampleRate = sampleRates[sampleRateIdx] || 44100;
+    return { sampleRate, channels, profile };
+  }
+
+  private buildAvccDescription(sps: Uint8Array, pps: Uint8Array): Uint8Array {
+    const spsRaw = this.stripStartCode(sps);
+    const ppsRaw = this.stripStartCode(pps);
+
+    let spsOffset = 0;
+    if (sps[0] === 0 && sps[1] === 0 && sps[2] === 0 && sps[3] === 1) spsOffset = 4;
+    else if (sps[0] === 0 && sps[1] === 0 && sps[2] === 1) spsOffset = 3;
+
+    const profileIdc = sps[spsOffset + 1];
+    const profileCompat = sps[spsOffset + 2];
+    const levelIdc = sps[spsOffset + 3];
+
+    const config = new Uint8Array(11 + spsRaw.length + ppsRaw.length);
+    let i = 0;
+    config[i++] = 1;
+    config[i++] = profileIdc;
+    config[i++] = profileCompat;
+    config[i++] = levelIdc;
+    config[i++] = 0xff;
+    config[i++] = 0xe1;
+    config[i++] = (spsRaw.length >> 8) & 0xff;
+    config[i++] = spsRaw.length & 0xff;
+    config.set(spsRaw, i);
+    i += spsRaw.length;
+    config[i++] = 1;
+    config[i++] = (ppsRaw.length >> 8) & 0xff;
+    config[i++] = ppsRaw.length & 0xff;
+    config.set(ppsRaw, i);
+
+    return config;
+  }
+
+  private buildAacDescription(sampleRate: number, channels: number, profile: number): Uint8Array {
+    const sampleRates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+    let sampleRateIdx = sampleRates.indexOf(sampleRate);
+    if (sampleRateIdx < 0) sampleRateIdx = 4;
+
+    const audioObjectType = profile || 2;
+
+    const asc = new Uint8Array(2);
+    asc[0] = (audioObjectType << 3) | (sampleRateIdx >> 1);
+    asc[1] = ((sampleRateIdx & 0x01) << 7) | (channels << 3);
+
+    return asc;
+  }
+
+  private stripStartCode(nalu: Uint8Array): Uint8Array {
+    if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 0 && nalu[3] === 1) {
+      return nalu.subarray(4);
+    } else if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 1) {
+      return nalu.subarray(3);
+    }
+    return nalu;
+  }
+
+  private concatNalusWithStartCodes(nalus: Uint8Array[]): Uint8Array {
+    let totalLen = 0;
+    for (const n of nalus) totalLen += n.length;
+    const result = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const n of nalus) {
+      result.set(n, offset);
+      offset += n.length;
+    }
+    return result;
   }
 
   private async downloadLoop(g: number) {
@@ -276,27 +384,14 @@ export class HLSTSDemuxer {
         this.stats.segmentsDownloaded++;
         this.stats.bytesDownloaded += data.byteLength;
         try {
-          this.transmuxer.push(new Uint8Array(data));
-          this.transmuxer.flush();
-          // 每个分片转封装完成后，flush mp4box 强制解析
-          if (this.mp4 && this.initSegmentAppended) {
-            try {
-              this.mp4.flush();
-            } catch (e) {
-              console.warn('[HLSTSDemuxer] mp4 flush error:', e);
-            }
-          }
+          this.transportStream.push(new Uint8Array(data));
+          this.transportStream.flush();
         } catch (e) {
-          console.warn('[HLSTSDemuxer] transmux error:', e);
+          console.warn('[HLSTSDemuxer] TS parse error:', e);
         }
       }
 
       this.currentSegmentIndex++;
-    }
-
-    if (!this.aborted && g === this.gen && !this.eofSignaled) {
-      this.eofSignaled = true;
-      this.opts.onDone();
     }
   }
 
@@ -389,34 +484,6 @@ export class HLSTSDemuxer {
     this.paused = true;
   }
 
-  pauseAndIdle(): Promise<void> {
-    this.paused = true;
-    return Promise.resolve();
-  }
-
-  seekTo(seconds: number): void {
-    this.currentSegmentIndex = this.findSegmentIndex(seconds);
-    this.eofSignaled = false;
-
-    this.initSegmentAppended = false;
-    if (this.mp4) {
-      try {
-        this.mp4.stop();
-      } catch {
-        // ignore
-      }
-      this.mp4 = null;
-    }
-    this.initMP4Box();
-    if (this.transmuxer) {
-      try {
-        this.transmuxer.reset?.();
-      } catch {
-        // ignore
-      }
-    }
-  }
-
   resume(): void {
     this.paused = false;
     if (this.resumeResolve) {
@@ -425,25 +492,35 @@ export class HLSTSDemuxer {
     }
   }
 
+  seekTo(seconds: number): void {
+    this.currentSegmentIndex = this.findSegmentIndex(seconds);
+    this.spsNalu = null;
+    this.ppsNalu = null;
+    this.videoConfigSent = false;
+    this.audioConfigSent = false;
+    this.lastVideoPts = 0;
+    this.lastAudioPts = 0;
+    if (this.transportStream) {
+      try {
+        this.transportStream.reset?.();
+      } catch {
+        // ignore
+      }
+    }
+    this.initTransportStream();
+  }
+
   destroy(): void {
     this.aborted = true;
     this.gen++;
     this.resume();
-    if (this.transmuxer) {
+    if (this.transportStream) {
       try {
-        this.transmuxer.reset?.();
+        this.transportStream.reset?.();
       } catch {
         // ignore
       }
-      this.transmuxer = null;
-    }
-    if (this.mp4) {
-      try {
-        this.mp4.stop();
-      } catch {
-        // ignore
-      }
-      this.mp4 = null;
+      this.transportStream = null;
     }
   }
 
@@ -452,7 +529,7 @@ export class HLSTSDemuxer {
   }
 
   getStats() {
-    return { ...this.stats };
+    return { ...this.stats, duration: this.durationSec };
   }
 
   getSegments(): Segment[] {
