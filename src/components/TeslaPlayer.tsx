@@ -114,7 +114,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualities, setQualities] = useState<Array<{ label: string; value: string }>>([]);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
-  const [canvasMode, setCanvasMode] = useState(false);
+  const [canvasMode, setCanvasMode] = useState(true);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -183,7 +183,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     }
   }, []);
 
-  // 手动切换 Canvas 模式（用户主动点击）
+  // 手动切换 Canvas 模式
   const toggleCanvasMode = useCallback(() => {
     if (canvasMode) {
       disableCanvasMode();
@@ -191,7 +191,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       canvasModeDetectedRef.current = true;
       setCanvasMode(true);
       setTimeout(() => drawVideoFrameToCanvas(), 100);
-      console.log('[TeslaPlayer] 手动启用 Canvas 渲染模式');
+      console.log('[TeslaPlayer] 启用 Canvas 渲染模式');
     }
   }, [canvasMode, disableCanvasMode, drawVideoFrameToCanvas]);
 
@@ -247,21 +247,14 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       if (destroyed) return;
       setBuffering(false);
       setLoading(false);
-      // 特斯拉行驶中场景检测：
-      // video 在播放（有声音），但 videoWidth 为 0 或 readyState 异常，说明画面被系统禁用
-      // 此时自动启用 Canvas 模式，用 drawImage 把帧绘制到 canvas 显示
-      if (!canvasModeDetectedRef.current && video.videoWidth === 0) {
-        console.warn('[TeslaPlayer] 检测到 video.videoWidth === 0，可能是特斯拉行驶中场景');
-        enableCanvasMode();
+      // 启动 Canvas 帧绘制循环
+      if (!canvasModeDetectedRef.current && video.readyState >= 2) {
+        canvasModeDetectedRef.current = true;
+        setTimeout(() => drawVideoFrameToCanvas(), 100);
       }
     };
     const onLoadedData = () => {
       if (destroyed) return;
-      // loadeddata 事件时如果 videoWidth 为 0，说明画面确实无法渲染
-      if (!canvasModeDetectedRef.current && video.videoWidth === 0 && video.readyState >= 2) {
-        console.warn('[TeslaPlayer] loadeddata 时 videoWidth === 0，启用 Canvas 模式');
-        enableCanvasMode();
-      }
     };
     const onEnded = () => {
       if (destroyed) return;
