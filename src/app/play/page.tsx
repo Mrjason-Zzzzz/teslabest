@@ -87,7 +87,6 @@ import PansouSearch from '@/components/PansouSearch';
 import ProxyImage from '@/components/ProxyImage';
 import { useSite } from '@/components/SiteProvider';
 import SmartRecommendations from '@/components/SmartRecommendations';
-import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
 import TeslaEntryButton from '@/components/TeslaEntryButton';
 import Toast, { ToastProps } from '@/components/Toast';
 import VideoCard from '@/components/VideoCard';
@@ -10865,7 +10864,6 @@ const FavoriteIcon = ({ filled }: { filled: boolean }) => {
 export default function PlayPage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <TeslaAutoRedirect to="/play/tesla" />
       <PlayPageClient />
     </Suspense>
   );

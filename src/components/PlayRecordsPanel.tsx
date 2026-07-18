@@ -12,6 +12,7 @@ import {
   subscribeToDataUpdates,
 } from '@/lib/db.client';
 
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 import VideoCard from '@/components/VideoCard';
 
 type PlayRecordItem = PlayRecord & {
@@ -278,6 +279,21 @@ export default function PlayRecordsPanel({
                       playTime={record.play_time}
                       totalTime={record.total_time}
                     />
+                    {/* Tesla 版入口（编辑模式下隐藏，避免误触） */}
+                    {!editMode && (
+                      <div className='absolute left-1 top-1 z-30'>
+                        <TeslaEntryButton
+                          kind='play'
+                          params={{
+                            source,
+                            id,
+                            title: record.title,
+                            year: record.year,
+                          }}
+                          label='Tesla'
+                        />
+                      </div>
+                    )}
                     {editMode && (
                       <button
                         type='button'

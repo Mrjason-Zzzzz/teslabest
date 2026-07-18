@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useWebLiveSync } from '@/hooks/useWebLiveSync';
 
 import PageLayout from '@/components/PageLayout';
-import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
 import TeslaEntryButton from '@/components/TeslaEntryButton';
 
 let Artplayer: any = null;
@@ -427,7 +426,6 @@ export default function WebLivePage() {
 
   return (
     <PageLayout activePath='/web-live'>
-      <TeslaAutoRedirect to="/web-live/tesla" />
       <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
         <div className='py-1 flex items-center justify-between gap-3'>
           <h1 className='text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 max-w-[80%]'>

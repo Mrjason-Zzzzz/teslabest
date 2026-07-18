@@ -55,7 +55,6 @@ import {
 import { loadTVPlayerUpDownAction } from '@/lib/tv-preferences';
 import { SearchResult } from '@/lib/types';
 
-import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
 import TeslaEntryButton from '@/components/TeslaEntryButton';
 import TVNativeVideo from '@/components/tv/player/TVNativeVideo';
 import {
@@ -1963,7 +1962,6 @@ function TVPlayClient() {
 export default function TVPlayPage() {
   return (
     <Suspense fallback={null}>
-      <TeslaAutoRedirect to="/tv/play/tesla" />
       <TVPlayClient />
     </Suspense>
   );

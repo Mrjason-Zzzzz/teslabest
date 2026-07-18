@@ -4,14 +4,12 @@
 
 import { useMemo } from 'react';
 
-import { isTeslaBrowser } from '@/lib/tesla-player/hls-broadway-engine';
-
 /**
  * Tesla 版入口按钮
  *
  * 行为：
- *   - 在特斯拉车机浏览器中：始终展示，点击跳到对应 /xxx/tesla 路由
- *   - 在普通浏览器中：默认不展示，传入 forceShow 时展示
+ *   - 全端展示（PC / 手机 / 特斯拉车机 都可见），点击跳到对应 /xxx/tesla 路由
+ *   - SSR 期间不展示，hydration 后立即可见（避免水合不一致）
  *
  * 用法：
  *   <TeslaEntryButton kind="play" params={{ source, id, title }} />
@@ -23,7 +21,6 @@ import { isTeslaBrowser } from '@/lib/tesla-player/hls-broadway-engine';
 interface TeslaEntryButtonProps {
   kind: 'play' | 'live' | 'web-live' | 'tv';
   params?: Record<string, string | number | undefined | null>;
-  forceShow?: boolean;
   label?: string;
   className?: string;
 }
@@ -38,7 +35,6 @@ const ROUTE_MAP: Record<TeslaEntryButtonProps['kind'], string> = {
 export default function TeslaEntryButton({
   kind,
   params = {},
-  forceShow = false,
   label = 'Tesla 版',
   className = '',
 }: TeslaEntryButtonProps) {
@@ -50,9 +46,8 @@ export default function TeslaEntryButton({
     return url.pathname + url.search;
   }, [kind, params]);
 
-  // SSR 期间不展示，避免误判
+  // SSR 期间不展示，避免水合不一致
   if (typeof window === 'undefined') return null;
-  if (!forceShow && !isTeslaBrowser()) return null;
 
   return (
     <a

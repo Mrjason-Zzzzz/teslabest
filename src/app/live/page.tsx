@@ -19,7 +19,6 @@ import { useLiveSync } from '@/hooks/useLiveSync';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
 import PageLayout from '@/components/PageLayout';
-import TeslaAutoRedirect from '@/components/TeslaAutoRedirect';
 import TeslaEntryButton from '@/components/TeslaEntryButton';
 
 // 扩展 HTMLVideoElement 类型以支持 hls 和 flv 属性
@@ -3159,7 +3158,6 @@ const FavoriteIcon = ({ filled }: { filled: boolean }) => {
 export default function LivePage() {
   return (
     <Suspense fallback={null}>
-      <TeslaAutoRedirect to="/live/tesla" />
       <LivePageClient />
     </Suspense>
   );

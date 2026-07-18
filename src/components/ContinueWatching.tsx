@@ -14,6 +14,7 @@ import {
 } from '@/lib/db.client';
 
 import PlayRecordsPanel from '@/components/PlayRecordsPanel';
+import TeslaEntryButton from '@/components/TeslaEntryButton';
 import VideoCard from '@/components/VideoCard';
 import VirtualScrollableRow from '@/components/VirtualScrollableRow';
 
@@ -179,6 +180,19 @@ export default function ContinueWatching({ className }: ContinueWatchingProps) {
                       playTime={record.play_time}
                       totalTime={record.total_time}
                     />
+                    {/* Tesla 版入口（点击进入 Canvas 软解播放页） */}
+                    <div className='absolute left-1 top-1 z-30'>
+                      <TeslaEntryButton
+                        kind='play'
+                        params={{
+                          source,
+                          id,
+                          title: record.title,
+                          year: record.year,
+                        }}
+                        label='Tesla'
+                      />
+                    </div>
                     {record.new_episodes && record.new_episodes > 0 && (
                       <div
                         style={{
