@@ -338,11 +338,11 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className="mx-auto flex max-w-7xl gap-4 px-4 py-4">
+        <div className="mx-auto flex max-w-7xl gap-4 px-4 py-4 flex-col lg:flex-row">
           {/* 左侧：播放器 + 详情 */}
           <div className={`min-w-0 flex-1 transition-all duration-300 ${rightPanelCollapsed ? '' : ''}`}>
             {/* 播放器容器 */}
-            <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black shadow-lg">
+            <div className="relative w-full overflow-hidden rounded-xl bg-black shadow-lg" style={{ aspectRatio: '16 / 9' }}>
               {isLoading && loadingStage !== 'error' && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900">
                   <Loader2 className="h-8 w-8 animate-spin text-green-500" />

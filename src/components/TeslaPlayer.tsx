@@ -458,8 +458,9 @@ export default function TeslaPlayer({
       {mode === 'xgplayer' && (
         <div
           ref={xgContainerRef}
-          className="absolute inset-0 h-full w-full"
+          className="absolute inset-0 h-full w-full overflow-hidden"
           onClick={(e) => e.stopPropagation()}
+          style={{ minWidth: 0, minHeight: 0 }}
         />
       )}
 
