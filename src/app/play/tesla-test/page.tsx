@@ -53,9 +53,7 @@ export default function TeslaTestPage() {
       });
 
       hls.on(Hls.Events.BUFFER_CREATED, () => console.log('[TestPlayer] BUFFER_CREATED'));
-      hls.on(Hls.Events.BUFFER_FLUSHED, () => console.log('[TestPlayer] BUFFER_FLUSHED'));
       hls.on(Hls.Events.FRAG_LOADED, () => console.log('[TestPlayer] FRAG_LOADED'));
-      hls.on(Hls.Events.FRAG_DECODED, () => console.log('[TestPlayer] FRAG_DECODED'));
       hls.on(Hls.Events.ERROR, (_evt, data) => {
         console.error('[TestPlayer] HLS ERROR:', data.type, data.details);
         if (data.fatal) {
