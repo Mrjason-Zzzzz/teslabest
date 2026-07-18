@@ -2,7 +2,6 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { Loader2 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
@@ -37,7 +36,6 @@ function TeslaTestPageInner() {
   const customUrl = searchParams.get('url') || '';
   const [currentUrl, setCurrentUrl] = useState(customUrl || DEFAULT_TEST_STREAMS[0].url);
   const [logs, setLogs] = useState<string[]>([]);
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     document.title = 'Tesla 播放器测试';
@@ -96,7 +94,6 @@ function TeslaTestPageInner() {
               key={s.url}
               type="button"
               onClick={() => {
-                setReady(false);
                 setCurrentUrl(s.url);
               }}
               className={`rounded px-2 py-1 ${
@@ -114,12 +111,6 @@ function TeslaTestPageInner() {
       </div>
 
       <div className="relative flex-1">
-        {!ready && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70">
-            <Loader2 className="h-8 w-8 animate-spin" />
-            <span>正在加载 Broadway.js + 解码首帧…</span>
-          </div>
-        )}
         <TeslaPlayer
           key={currentUrl}
           url={currentUrl}
@@ -129,16 +120,6 @@ function TeslaTestPageInner() {
             window.history.back();
           }}
         />
-        {/* TeslaPlayer ready 后会渲染 canvas，这里叠一层占位触发器 */}
-        <div className="pointer-events-none absolute bottom-4 left-4 z-50">
-          <button
-            type="button"
-            onClick={() => setReady(true)}
-            className="pointer-events-auto rounded bg-white/10 px-2 py-1 text-[10px] text-white/60"
-          >
-            隐藏加载提示
-          </button>
-        </div>
       </div>
 
       {/* 日志面板：方便用户截图给我排查 */}
@@ -165,7 +146,7 @@ export default function TeslaTestPage() {
     <Suspense
       fallback={
         <div className="fixed inset-0 flex items-center justify-center bg-black text-white">
-          <Loader2 className="h-6 w-6 animate-spin" />
+          加载中…
         </div>
       }
     >

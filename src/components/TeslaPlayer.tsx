@@ -87,14 +87,33 @@ export default function TeslaPlayer({
         }
         const s = document.createElement('script');
         s.src = src;
-        s.async = true;
-        s.onload = () => resolve();
+        s.async = false; // 严格按顺序加载，避免依赖顺序问题
+        s.onload = () => {
+          // eslint-disable-next-line no-console
+          console.log(`[TeslaPlayer] script loaded: ${src}`);
+          resolve();
+        };
         s.onerror = () => reject(new Error(`加载脚本失败: ${src}`));
         document.head.appendChild(s);
       });
+    // eslint-disable-next-line no-console
+    console.log('[TeslaPlayer] loading broadway scripts...');
     await loadScript('/assets/broadway/Decoder.js');
     await loadScript('/assets/broadway/YUVCanvas.js');
     await loadScript('/assets/broadway/Player.js');
+
+    // 验证全局变量挂载成功
+    if (!window.Player || !window.YUVCanvas || !window.Decoder) {
+      throw new Error(
+        `Broadway 脚本加载后全局变量缺失: Player=${!!window.Player} YUVCanvas=${!!window.YUVCanvas} Decoder=${!!window.Decoder}`
+      );
+    }
+    // eslint-disable-next-line no-console
+    console.log('[TeslaPlayer] broadway scripts ready', {
+      Player: typeof window.Player,
+      YUVCanvas: typeof window.YUVCanvas,
+      Decoder: typeof window.Decoder,
+    });
     scriptsLoadedRef.current = true;
   }, []);
 

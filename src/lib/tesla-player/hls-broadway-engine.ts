@@ -65,7 +65,7 @@ interface HlsBroadwayOptions {
   canvas?: HTMLCanvasElement;
   /** 是否直播 */
   live?: boolean;
-  /** Broadway worker 文件路径 */
+  /** Broadway worker 文件路径（绝对路径，默认 /assets/broadway/Decoder.js） */
   workerFile?: string;
   /** 是否启用 worker 解码（默认 true） */
   useWorker?: boolean;

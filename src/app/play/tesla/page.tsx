@@ -9,7 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { SearchResult } from '@/lib/types';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
-import { fetchTVDetail, resolveTVEpisodeUrl } from '@/components/tv/player/utils';
+import { fetchTVDetail } from '@/components/tv/player/utils';
 
 /**
  * /play/tesla
@@ -86,33 +86,27 @@ function TeslaPlayPageInner() {
       });
   }, [source, id, initialTitle]);
 
-  // 解析当前集 URL（走 resolveTVEpisodeUrl，处理懒加载和代理）
+  // 解析当前集 URL —— Tesla 版始终走 /api/proxy/vod/m3u8 代理，避免 CORS
   useEffect(() => {
     if (!detail || !detail.episodes || currentEpisodeIndex >= detail.episodes.length) {
       setPlayUrl('');
       return;
     }
-    let disposed = false;
     const rawUrl = detail.episodes[currentEpisodeIndex];
-    console.log('[TeslaPlay] resolveTVEpisodeUrl start', {
-      rawUrl: rawUrl.slice(0, 120),
+    // 始终走代理：内部源 → /api/proxy/vod/m3u8；directplay → /api/proxy-m3u8
+    let proxyUrl: string;
+    if (detail.source === 'directplay') {
+      proxyUrl = `/api/proxy-m3u8?url=${encodeURIComponent(rawUrl)}&source=directplay`;
+    } else {
+      proxyUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(rawUrl)}&source=${encodeURIComponent(detail.source)}`;
+    }
+    console.log('[TeslaPlay] build proxy url', {
+      rawUrl: rawUrl.slice(0, 100),
+      proxyUrl,
       source: detail.source,
       proxyMode: detail.proxyMode,
     });
-    resolveTVEpisodeUrl(rawUrl, detail.source, detail.proxyMode)
-      .then((u) => {
-        if (disposed) return;
-        console.log('[TeslaPlay] resolveTVEpisodeUrl success', { resolvedUrl: u.slice(0, 120) });
-        setPlayUrl(u);
-      })
-      .catch((err) => {
-        if (disposed) return;
-        console.error('[TeslaPlay] resolveTVEpisodeUrl failed, fallback to raw', err);
-        setPlayUrl(rawUrl);
-      });
-    return () => {
-      disposed = true;
-    };
+    setPlayUrl(proxyUrl);
   }, [detail, currentEpisodeIndex]);
 
   const episodeTitle = useMemo(() => {
