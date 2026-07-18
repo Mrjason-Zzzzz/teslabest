@@ -276,7 +276,7 @@ export class WebCodecsPlayer {
 
     if (frameNalus.length === 0) return;
 
-    const frameData = this.concatNalus(frameNalus);
+    const frameData = this.nalusToAvcc(frameNalus);
     this.encodedVideo.push({
       key: hasKeyFrame,
       timestamp: Math.round(pts * 1e6),
@@ -830,14 +830,23 @@ export class WebCodecsPlayer {
     return nalu[startCodeLen] & 0x1f;
   }
 
-  private concatNalus(nalus: Uint8Array[]): Uint8Array {
+  private nalusToAvcc(nalus: Uint8Array[]): Uint8Array {
     let totalLen = 0;
-    for (const n of nalus) totalLen += n.length;
+    const raws: Uint8Array[] = [];
+    for (const nalu of nalus) {
+      const raw = this.stripStartCode(nalu);
+      raws.push(raw);
+      totalLen += 4 + raw.length;
+    }
     const result = new Uint8Array(totalLen);
     let offset = 0;
-    for (const n of nalus) {
-      result.set(n, offset);
-      offset += n.length;
+    for (const raw of raws) {
+      result[offset] = (raw.length >> 24) & 0xff;
+      result[offset + 1] = (raw.length >> 16) & 0xff;
+      result[offset + 2] = (raw.length >> 8) & 0xff;
+      result[offset + 3] = raw.length & 0xff;
+      result.set(raw, offset + 4);
+      offset += 4 + raw.length;
     }
     return result;
   }

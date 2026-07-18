@@ -2,6 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import 'xgplayer/dist/index.min.css';
 import Hls from 'hls.js';
 import {
   Loader2,
@@ -21,7 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { setTeslaOptOut } from '@/components/TeslaAutoRedirect';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
-type PlayMode = 'video' | 'canvas' | 'webcodecs';
+type PlayMode = 'xgplayer' | 'webcodecs';
 
 interface TeslaPlayerProps {
   url: string;
@@ -96,10 +97,10 @@ function saveProgress(key: string, time: number): void {
 }
 
 function getInitialMode(): PlayMode {
-  if (typeof window === 'undefined') return 'webcodecs';
+  if (typeof window === 'undefined') return 'xgplayer';
   const saved = localStorage.getItem('tesla_player_mode') as PlayMode | null;
-  if (saved && ['video', 'canvas', 'webcodecs'].includes(saved)) return saved;
-  return 'webcodecs';
+  if (saved && ['xgplayer', 'webcodecs'].includes(saved)) return saved;
+  return 'xgplayer';
 }
 
 export default function TeslaPlayer({
@@ -113,9 +114,9 @@ export default function TeslaPlayer({
   defaultMode,
 }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const xgContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
+  const xgPlayerRef = useRef<any>(null);
   const wcPlayerRef = useRef<WebCodecsPlayer | null>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
@@ -166,9 +167,8 @@ export default function TeslaPlayer({
     if (mode === 'webcodecs' && wcPlayerRef.current) {
       wcPlayerRef.current.seek(t);
       setCurrentTime(t);
-    } else {
-      const v = videoRef.current;
-      if (v) v.currentTime = t;
+    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
+      xgPlayerRef.current.currentTime = t;
       setCurrentTime(t);
     }
   }, [mode]);
@@ -176,11 +176,10 @@ export default function TeslaPlayer({
   const togglePlay = useCallback(() => {
     if (mode === 'webcodecs' && wcPlayerRef.current) {
       wcPlayerRef.current.togglePlay();
-    } else {
-      const v = videoRef.current;
-      if (!v) return;
-      if (v.paused) v.play();
-      else v.pause();
+    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
+      const p = xgPlayerRef.current;
+      if (p.paused) p.play();
+      else p.pause();
     }
   }, [mode]);
 
@@ -205,21 +204,15 @@ export default function TeslaPlayer({
 
   const setPlaybackRate = useCallback((r: number) => {
     if (mode === 'webcodecs') {
-      // WebCodecs 模式暂不支持倍速，只记状态
       setRate(r);
-    } else {
-      const v = videoRef.current;
-      if (v) v.playbackRate = r;
+    } else if (mode === 'xgplayer' && xgPlayerRef.current) {
+      xgPlayerRef.current.playbackRate = r;
       setRate(r);
     }
     setShowRateMenu(false);
   }, [mode]);
 
   const switchQuality = useCallback((q: string) => {
-    if (!hlsRef.current) return;
-    const hls = hlsRef.current;
-    if (q === 'auto') hls.currentLevel = -1;
-    else hls.currentLevel = parseInt(q, 10);
     setQuality(q);
     setShowQualityMenu(false);
   }, []);
@@ -349,217 +342,110 @@ export default function TeslaPlayer({
     if (p) p.setShowDebug(showDebug);
   }, [mode, showDebug]);
 
-  // ===== Video / Canvas 模式初始化 =====
+  // ===== Xgplayer 模式初始化 =====
   useEffect(() => {
-    if (mode === 'webcodecs') return;
+    if (mode !== 'xgplayer') return;
+    if (!xgContainerRef.current) return;
 
     let destroyed = false;
-    const video = videoRef.current;
-    if (!video) return;
+    setLoading(true);
+    setError(null);
 
-    const onLoadedMetadata = () => {
-      if (!destroyed) {
-        setLoading(false);
-        setDuration(video.duration || 0);
-      }
-    };
-    const onTimeUpdate = () => {
-      if (!destroyed) setCurrentTime(video.currentTime);
-    };
-    const onPlay = () => {
-      if (!destroyed) {
-        setPlaying(true);
-        setLoading(false);
-      }
-    };
-    const onPause = () => {
-      if (!destroyed) setPlaying(false);
-    };
-    const onWaiting = () => {
-      if (!destroyed) setBuffering(true);
-    };
-    const onPlaying = () => {
+    import('xgplayer').then(({ default: Player }) => {
       if (destroyed) return;
-      setBuffering(false);
-      setLoading(false);
-    };
-    const onEnded = () => {
-      if (destroyed) return;
-      setPlaying(false);
-      if (playRecordKey) saveProgress(playRecordKey, video.duration || 0);
-      setTimeout(() => onEndedCallback?.(), 500);
-    };
-    const onError = () => {
-      if (destroyed) return;
-      const code = video.error?.code;
-      setError(`视频错误 (code ${code ?? 'unknown'})`);
-      setLoading(false);
-    };
 
-    video.addEventListener('loadedmetadata', onLoadedMetadata);
-    video.addEventListener('timeupdate', onTimeUpdate);
-    video.addEventListener('play', onPlay);
-    video.addEventListener('pause', onPause);
-    video.addEventListener('waiting', onWaiting);
-    video.addEventListener('playing', onPlaying);
-    video.addEventListener('ended', onEnded);
-    video.addEventListener('error', onError);
+      const startPos = seekToTime !== null ? seekToTime : savedProgress;
 
-    const isM3u8 = url.toLowerCase().includes('.m3u') || url.toLowerCase().includes('/m3u8');
+      const player = new Player({
+        el: xgContainerRef.current!,
+        url,
+        poster,
+        autoplay: false,
+        playsinline: true,
+        volume: 1,
+        startAt: startPos > 0 ? startPos : undefined,
+        controls: true,
+        screenShot: false,
+        pip: false,
+        mini: false,
+        playbackRate: [0.5, 0.75, 1, 1.25, 1.5, 2],
+        defaultPlaybackRate: 1,
+      });
 
-    const loadTimeout = window.setTimeout(() => {
-      if (!destroyed) {
+      xgPlayerRef.current = player;
+
+      player.on('ready', () => {
+        if (destroyed) return;
         setLoading(false);
-      }
-    }, 8000);
+        setDuration(player.duration || 0);
+      });
 
-    if (isM3u8 && Hls.isSupported()) {
-      const AdFilterLoader = class extends Hls.DefaultConfig.loader {
-        constructor(config: any) {
-          super(config);
-          const load = this.load.bind(this);
-          this.load = (context: any, cfg: any, callbacks: any) => {
-            if (context?.type === 'manifest' || context?.type === 'level') {
-              const onSuccess = callbacks.onSuccess;
-              callbacks.onSuccess = (response: any, stats: any, ctx: any, networkDetails: any) => {
-                if (typeof response?.data === 'string') {
-                  const filtered = filterAdsFromM3U8(response.data);
-                  response.data = filtered;
-                }
-                return onSuccess(response, stats, ctx, networkDetails);
-              };
-            }
-            load(context, cfg, callbacks);
-          };
+      player.on('timeupdate', () => {
+        if (!destroyed) setCurrentTime(player.currentTime);
+      });
+
+      player.on('play', () => {
+        if (!destroyed) {
+          setPlaying(true);
+          setLoading(false);
+          setBuffering(false);
         }
+      });
+
+      player.on('pause', () => {
+        if (!destroyed) setPlaying(false);
+      });
+
+      player.on('waiting', () => {
+        if (!destroyed) setBuffering(true);
+      });
+
+      player.on('playing', () => {
+        if (destroyed) return;
+        setBuffering(false);
+        setLoading(false);
+      });
+
+      player.on('ended', () => {
+        if (destroyed) return;
+        setPlaying(false);
+        if (playRecordKey) saveProgress(playRecordKey, player.duration || 0);
+        setTimeout(() => onEndedCallback?.(), 500);
+      });
+
+      player.on('error', (err: any) => {
+        if (destroyed) return;
+        setError('播放错误: ' + (err?.message || String(err)));
+        setLoading(false);
+      });
+
+      player.on('ratechange', () => {
+        if (!destroyed) setRate(player.playbackRate);
+      });
+
+      const loadTimeout = window.setTimeout(() => {
+        if (!destroyed) setLoading(false);
+      }, 8000);
+
+      return () => {
+        destroyed = true;
+        clearTimeout(loadTimeout);
+        try { player.destroy(); } catch {}
+        xgPlayerRef.current = null;
       };
-
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: live,
-        backBufferLength: live ? 10 : 30,
-        loader: AdFilterLoader,
-      });
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (destroyed) return;
-        const levels = hls.levels || [];
-        const qs: Array<{ label: string; value: string }> = [{ label: '自动', value: 'auto' }];
-        levels.forEach((l, i) => {
-          const bw = l.bitrate ? `${Math.round(l.bitrate / 1000)}kbps` : '';
-          const res = l.width && l.height ? `${l.width}x${l.height}` : '';
-          qs.push({ label: `${res} ${bw}`.trim() || `清晰度 ${i + 1}`, value: String(i) });
-        });
-        setQualities(qs);
+    }).catch((e) => {
+      if (!destroyed) {
+        setError('播放器加载失败: ' + (e?.message || String(e)));
         setLoading(false);
-      });
-
-      hls.on(Hls.Events.LEVEL_LOADED, (_evt, data: any) => {
-        if (destroyed) return;
-        if (data?.details?.duration) {
-          setDuration(data.details.duration);
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (destroyed) return;
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-          else setError(`播放错误: ${data.details}`);
-        }
-      });
-
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hlsRef.current = hls;
-    } else {
-      video.src = url;
-      video.load();
-    }
-
-    // Canvas 模式：启动绘制循环
-    if (mode === 'canvas') {
-      const drawVideoFrameToCanvas = () => {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        if (!video || !canvas) {
-          rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
-          return;
-        }
-
-        const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-        if (!ctx) {
-          rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
-          return;
-        }
-
-        if (video.readyState >= 2 && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-
-        let drawSuccess = false;
-        if (video.readyState >= 2 && video.videoWidth > 0) {
-          try {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            drawSuccess = true;
-          } catch (e) {
-            // ignore
-          }
-        }
-
-        if (!drawSuccess && showDebug) {
-          ctx.fillStyle = '#000';
-          ctx.fillRect(0, 0, canvas.width || 640, 120);
-          ctx.fillStyle = '#0f0';
-          ctx.font = '16px monospace';
-          ctx.fillText(`[Debug] readyState: ${video.readyState}`, 20, 25);
-          ctx.fillText(`[Debug] videoWidth: ${video.videoWidth}`, 20, 50);
-          ctx.fillText(`[Debug] videoHeight: ${video.videoHeight}`, 20, 75);
-          ctx.fillText(`[Debug] paused: ${video.paused}`, 20, 100);
-        }
-
-        const anyVideo = video as any;
-        if (typeof anyVideo.requestVideoFrameCallback === 'function') {
-          rafRef.current = anyVideo.requestVideoFrameCallback(drawVideoFrameToCanvas);
-        } else {
-          rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
-        }
-      };
-      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
-    }
+      }
+    });
 
     return () => {
       destroyed = true;
-      video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      video.removeEventListener('timeupdate', onTimeUpdate);
-      video.removeEventListener('play', onPlay);
-      video.removeEventListener('pause', onPause);
-      video.removeEventListener('waiting', onWaiting);
-      video.removeEventListener('playing', onPlaying);
-      video.removeEventListener('ended', onEnded);
-      video.removeEventListener('error', onError);
-      if (rafRef.current) {
-        const anyVideo = video as any;
-        if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
-          anyVideo.cancelVideoFrameCallback(rafRef.current);
-        } else {
-          window.cancelAnimationFrame(rafRef.current);
-        }
-        rafRef.current = null;
-      }
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      clearTimeout(loadTimeout);
-      video.removeAttribute('src');
-      video.load();
     };
-  }, [mode, url, live, playRecordKey, onEndedCallback, showDebug]);
+  }, [mode, url, poster, playRecordKey, onEndedCallback, savedProgress, seekToTime]);
 
-  const modeLabel = mode === 'webcodecs' ? 'WebCodecs' : mode === 'canvas' ? 'Canvas' : 'Video';
+  const modeLabel = mode === 'webcodecs' ? 'WebCodecs' : 'Xgplayer';
 
   return (
     <div
@@ -568,18 +454,17 @@ export default function TeslaPlayer({
       onMouseMove={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* video 元素（video/canvas 模式用，webcodecs 模式隐藏） */}
-      {mode !== 'webcodecs' && (
-        <video
-          ref={videoRef}
-          className={`absolute inset-0 h-full w-full ${mode === 'canvas' ? 'opacity-0 pointer-events-none' : ''}`}
-          playsInline
-          poster={poster}
+      {/* xgplayer 容器 */}
+      {mode === 'xgplayer' && (
+        <div
+          ref={xgContainerRef}
+          className="absolute inset-0 h-full w-full"
+          onClick={(e) => e.stopPropagation()}
         />
       )}
 
-      {/* canvas 元素（canvas/webcodecs 模式都用） */}
-      {mode !== 'video' && (
+      {/* canvas 元素（webcodecs 模式用） */}
+      {mode === 'webcodecs' && (
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full object-contain"
@@ -628,10 +513,19 @@ export default function TeslaPlayer({
               {mode === 'webcodecs' && wcSupported && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
+                  onClick={(e) => { e.stopPropagation(); switchMode('xgplayer'); }}
                   className="rounded bg-gray-600 px-4 py-1.5 text-sm text-white"
                 >
-                  切换 Video 模式
+                  切换 Xgplayer 模式
+                </button>
+              )}
+              {mode === 'xgplayer' && wcSupported && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
+                  className="rounded bg-purple-600 px-4 py-1.5 text-sm text-white"
+                >
+                  切换 WebCodecs 模式
                 </button>
               )}
             </div>
@@ -639,8 +533,8 @@ export default function TeslaPlayer({
         </div>
       )}
 
-      {/* 暂停时的播放按钮 */}
-      {!loading && !playing && !error && (
+      {/* 暂停时的播放按钮（仅 webcodecs 模式） */}
+      {mode === 'webcodecs' && !loading && !playing && !error && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <button
             type="button"
@@ -679,9 +573,7 @@ export default function TeslaPlayer({
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium backdrop-blur ${
                 mode === 'webcodecs'
                   ? 'bg-purple-500/30 text-purple-300 ring-1 ring-purple-400/50'
-                  : mode === 'canvas'
-                  ? 'bg-green-500/30 text-green-300 ring-1 ring-green-400/50'
-                  : 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-400/50'
+                  : 'bg-orange-500/30 text-orange-300 ring-1 ring-orange-400/50'
               }`}
               title="播放模式"
             >
@@ -689,20 +581,13 @@ export default function TeslaPlayer({
               {modeLabel}
             </button>
             {showModeMenu && (
-              <div className="absolute top-full right-0 mt-1 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20 min-w-[120px]">
+              <div className="absolute top-full right-0 mt-1 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20 min-w-[160px]">
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
-                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                  onClick={(e) => { e.stopPropagation(); switchMode('xgplayer'); }}
+                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'xgplayer' ? 'bg-orange-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                 >
-                  Video 模式
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('canvas'); }}
-                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'canvas' ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                >
-                  Canvas 模式
+                  Xgplayer 模式（推荐）
                 </button>
                 {wcSupported && (
                   <button
@@ -710,7 +595,7 @@ export default function TeslaPlayer({
                     onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
                     className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                   >
-                    WebCodecs 模式
+                    WebCodecs 模式（行驶用）
                   </button>
                 )}
               </div>
@@ -731,8 +616,9 @@ export default function TeslaPlayer({
         </div>
       </div>
 
-      {/* 底部控制条 */}
-      <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+      {/* 底部控制条（仅 webcodecs 模式，xgplayer 自带控制条） */}
+      {mode === 'webcodecs' && (
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         {/* 进度条 */}
         <div className="pointer-events-auto mb-3">
           <div
@@ -838,7 +724,8 @@ export default function TeslaPlayer({
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
       <style>{`
         canvas { display: block; }
