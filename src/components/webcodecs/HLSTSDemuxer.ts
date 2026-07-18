@@ -77,13 +77,20 @@ export class HLSTSDemuxer {
 
   private stats = {
     m3u8Loaded: false,
+    isMasterPlaylist: false,
+    masterRedirects: 0,
+    m3u8Preview: '',
     segmentCount: 0,
     currentSegment: 0,
     segmentsDownloaded: 0,
     bytesDownloaded: 0,
     videoSamples: 0,
     audioSamples: 0,
+    videoPesCount: 0,
+    audioPesCount: 0,
+    pmtFound: false,
     error: '',
+    lastError: '',
   };
 
   constructor(opts: DemuxerOptions) {
@@ -97,10 +104,26 @@ export class HLSTSDemuxer {
     this.aborted = false;
 
     try {
-      const m3u8Content = await this.fetchM3U8(this.url);
+      let m3u8Content = await this.fetchM3U8(this.url);
       if (this.aborted || g !== this.gen) return;
+      this.stats.m3u8Preview = m3u8Content.slice(0, 200).replace(/\n/g, ' | ');
 
-      this.segments = this.parseSegments(m3u8Content, this.url);
+      let currentUrl = this.url;
+      if (this.isMasterPlaylist(m3u8Content)) {
+        this.stats.isMasterPlaylist = true;
+        const firstMedia = this.parseFirstMediaPlaylist(m3u8Content, currentUrl);
+        if (!firstMedia) {
+          this.stats.error = 'Master playlist: no media playlist found';
+          this.opts.onError(new Error('No media playlist in master m3u8'));
+          return;
+        }
+        this.stats.masterRedirects = 1;
+        currentUrl = firstMedia;
+        m3u8Content = await this.fetchM3U8(currentUrl);
+        if (this.aborted || g !== this.gen) return;
+      }
+
+      this.segments = this.parseSegments(m3u8Content, currentUrl);
       this.durationSec = this.segments.reduce((sum, s) => sum + s.duration, 0);
       this.stats.m3u8Loaded = true;
       this.stats.segmentCount = this.segments.length;
@@ -119,9 +142,30 @@ export class HLSTSDemuxer {
     } catch (e) {
       if (!this.aborted && g === this.gen) {
         this.stats.error = String(e);
+        this.stats.lastError = String(e);
         this.opts.onError(e);
       }
     }
+  }
+
+  private isMasterPlaylist(content: string): boolean {
+    return /#EXT-X-STREAM-INF/i.test(content);
+  }
+
+  private parseFirstMediaPlaylist(content: string, baseUrl: string): string | null {
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#EXT-X-STREAM-INF:')) {
+        for (let j = i + 1; j < lines.length; j++) {
+          const next = lines[j].trim();
+          if (next && !next.startsWith('#')) {
+            return this.resolveUrl(next, baseUrl);
+          }
+        }
+      }
+    }
+    return null;
   }
 
   private initStreams() {
@@ -134,18 +178,29 @@ export class HLSTSDemuxer {
     this.packetStream.pipe(this.parseStream);
     this.parseStream.pipe(this.elementaryStream);
 
+    this.parseStream.on('data', (data: any) => {
+      if (data.type === 'pmt') {
+        this.stats.pmtFound = true;
+      }
+    });
+
     this.elementaryStream.on('data', (data: any) => {
       if (this.aborted) return;
 
       if (data.type === 'video') {
+        this.stats.videoPesCount++;
         this.handleVideoData(data);
       } else if (data.type === 'audio') {
+        this.stats.audioPesCount++;
         this.handleAudioData(data);
+      } else if (data.type === 'metadata') {
+        // PMT metadata, ignore
       }
     });
 
     this.elementaryStream.on('error', (err: any) => {
       console.warn('[HLSTSDemuxer] elementary stream error:', err);
+      this.stats.lastError = String(err);
     });
   }
 

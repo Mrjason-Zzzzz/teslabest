@@ -426,8 +426,8 @@ export class WebCodecsPlayer {
     const ctx = this.ctx;
     const w = this.canvas.width || 640;
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-    ctx.fillRect(0, 0, w, 380);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, w, 520);
     ctx.fillStyle = '#0f0';
     ctx.font = '13px monospace';
     const ds = this.demuxerStats;
@@ -441,11 +441,15 @@ export class WebCodecsPlayer {
       `[WC] demux vQ: ${stats.demuxVideoQueue}  aQ: ${stats.demuxAudioQueue}`,
       `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}  aCfg: ${this.audioConfig ? 'OK' : 'no'}`,
       `--- Demuxer ---`,
-      `  m3u8: ${ds.m3u8Loaded ? 'OK' : 'pending'}  segs: ${ds.segmentCount}`,
-      `  downloaded: ${ds.segmentsDownloaded}  bytes: ${(ds.bytesDownloaded / 1024 / 1024).toFixed(2)}MB`,
+      `  m3u8: ${ds.m3u8Loaded ? 'OK' : 'pending'}  master: ${ds.isMasterPlaylist ? 'yes' : 'no'}`,
+      `  segs: ${ds.segmentCount}  downloaded: ${ds.segmentsDownloaded}`,
+      `  bytes: ${(ds.bytesDownloaded / 1024 / 1024).toFixed(2)}MB`,
+      `  pmt: ${ds.pmtFound ? 'found' : 'waiting'}  vPES: ${ds.videoPesCount}  aPES: ${ds.audioPesCount}`,
       `  video samples: ${ds.videoSamples}  audio samples: ${ds.audioSamples}`,
       `  audioCtx: ${this.audioCtx?.state || 'none'}`,
       ds.error ? `  ERROR: ${ds.error}` : '',
+      ds.lastError && ds.lastError !== ds.error ? `  lastErr: ${ds.lastError}` : '',
+      ds.m3u8Preview ? `  m3u8: ${ds.m3u8Preview.slice(0, 80)}` : '',
     ].filter(Boolean);
     lines.forEach((line, i) => {
       ctx.fillText(line, 10, 18 + i * 16);
