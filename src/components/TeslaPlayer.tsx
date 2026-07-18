@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import Hls from 'hls.js';
-import { Loader2, Maximize, Minimize, Pause, Play, RotateCcw, SkipForward, SkipBack } from 'lucide-react';
+import { Loader2, Maximize, Minimize, Pause, Play, RotateCcw, SkipForward, SkipBack, MonitorPlay } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { setTeslaOptOut } from '@/components/TeslaAutoRedirect';
@@ -93,9 +93,12 @@ function saveProgress(key: string, time: number): void {
 export default function TeslaPlayer({ url, title, poster, live = false, onBackToOriginal, onEnded: onEndedCallback, playRecordKey }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const canvasModeDetectedRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -111,6 +114,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualities, setQualities] = useState<Array<{ label: string; value: string }>>([]);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
+  const [canvasMode, setCanvasMode] = useState(false);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -122,6 +126,74 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     if (v) v.currentTime = t;
     setCurrentTime(t);
   }, []);
+
+  // ===== Canvas 帧绘制循环（特斯拉行驶中 video 画面被禁用时使用）=====
+  const drawVideoFrameToCanvas = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    // video.readyState >= 2 (HAVE_CURRENT_DATA) 表示有帧数据
+    if (video.readyState >= 2 && video.videoWidth > 0) {
+      // 如果 canvas 尺寸不匹配 video，重新设置
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        try {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        } catch (e) {
+          // drawImage 可能因为 CORS 或其他原因失败，忽略
+        }
+      }
+    }
+
+    // 使用 requestVideoFrameCallback（如果支持）或 requestAnimationFrame
+    const anyVideo = video as any;
+    if (typeof anyVideo.requestVideoFrameCallback === 'function') {
+      rafRef.current = anyVideo.requestVideoFrameCallback(drawVideoFrameToCanvas);
+    } else {
+      rafRef.current = window.requestAnimationFrame(drawVideoFrameToCanvas);
+    }
+  }, []);
+
+  // 启用/关闭 Canvas 模式
+  const enableCanvasMode = useCallback(() => {
+    if (canvasModeDetectedRef.current) return;
+    canvasModeDetectedRef.current = true;
+    setCanvasMode(true);
+    console.log('[TeslaPlayer] 检测到视频画面无法显示，已自动启用 Canvas 渲染模式');
+    // 启动帧绘制循环
+    setTimeout(() => drawVideoFrameToCanvas(), 100);
+  }, [drawVideoFrameToCanvas]);
+
+  const disableCanvasMode = useCallback(() => {
+    setCanvasMode(false);
+    canvasModeDetectedRef.current = false;
+    if (rafRef.current !== null) {
+      const anyVideo = videoRef.current as any;
+      if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
+        anyVideo.cancelVideoFrameCallback(rafRef.current);
+      } else {
+        window.cancelAnimationFrame(rafRef.current);
+      }
+      rafRef.current = null;
+    }
+  }, []);
+
+  // 手动切换 Canvas 模式（用户主动点击）
+  const toggleCanvasMode = useCallback(() => {
+    if (canvasMode) {
+      disableCanvasMode();
+    } else {
+      canvasModeDetectedRef.current = true;
+      setCanvasMode(true);
+      setTimeout(() => drawVideoFrameToCanvas(), 100);
+      console.log('[TeslaPlayer] 手动启用 Canvas 渲染模式');
+    }
+  }, [canvasMode, disableCanvasMode, drawVideoFrameToCanvas]);
 
   useEffect(() => {
     if (savedProgress > 0 && duration > 0 && seekToTime === null) {
@@ -171,7 +243,26 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     const onPlay = () => { if (!destroyed) { setPlaying(true); setLoading(false); } };
     const onPause = () => { if (!destroyed) setPlaying(false); };
     const onWaiting = () => { if (!destroyed) setBuffering(true); };
-    const onPlaying = () => { if (!destroyed) { setBuffering(false); setLoading(false); } };
+    const onPlaying = () => {
+      if (destroyed) return;
+      setBuffering(false);
+      setLoading(false);
+      // 特斯拉行驶中场景检测：
+      // video 在播放（有声音），但 videoWidth 为 0 或 readyState 异常，说明画面被系统禁用
+      // 此时自动启用 Canvas 模式，用 drawImage 把帧绘制到 canvas 显示
+      if (!canvasModeDetectedRef.current && video.videoWidth === 0) {
+        console.warn('[TeslaPlayer] 检测到 video.videoWidth === 0，可能是特斯拉行驶中场景');
+        enableCanvasMode();
+      }
+    };
+    const onLoadedData = () => {
+      if (destroyed) return;
+      // loadeddata 事件时如果 videoWidth 为 0，说明画面确实无法渲染
+      if (!canvasModeDetectedRef.current && video.videoWidth === 0 && video.readyState >= 2) {
+        console.warn('[TeslaPlayer] loadeddata 时 videoWidth === 0，启用 Canvas 模式');
+        enableCanvasMode();
+      }
+    };
     const onEnded = () => {
       if (destroyed) return;
       setPlaying(false);
@@ -186,6 +277,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     };
 
     video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('loadeddata', onLoadedData);
     video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -282,6 +374,7 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
     return () => {
       destroyed = true;
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('loadeddata', onLoadedData);
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
@@ -289,6 +382,15 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       video.removeEventListener('playing', onPlaying);
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('error', onError);
+      if (rafRef.current !== null) {
+        const anyVideo = video as any;
+        if (anyVideo && typeof anyVideo.cancelVideoFrameCallback === 'function') {
+          anyVideo.cancelVideoFrameCallback(rafRef.current);
+        } else {
+          window.cancelAnimationFrame(rafRef.current);
+        }
+        rafRef.current = null;
+      }
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       video.removeAttribute('src');
       video.load();
@@ -387,12 +489,22 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
       <video
         ref={videoRef}
         data-role="stage"
-        className="absolute inset-0 h-full w-full bg-black"
+        className={`absolute inset-0 h-full w-full bg-black ${canvasMode ? 'opacity-0 pointer-events-none' : ''}`}
         style={{ objectFit: 'contain' }}
         playsInline
         autoPlay
         poster={poster}
       />
+
+      {/* Canvas 元素（特斯拉行驶中 video 画面被禁用时显示） */}
+      {canvasMode && (
+        <canvas
+          ref={canvasRef}
+          data-role="stage"
+          className="absolute inset-0 h-full w-full bg-black"
+          style={{ objectFit: 'contain' }}
+        />
+      )}
 
       {/* 海报占位 */}
       {loading && poster && (
@@ -412,6 +524,21 @@ export default function TeslaPlayer({ url, title, poster, live = false, onBackTo
             {title || '播放中'}
             {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
           </h1>
+        </div>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleCanvasMode}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium backdrop-blur transition-colors ${
+              canvasMode
+                ? 'bg-green-500/30 text-green-300 ring-1 ring-green-400/50'
+                : 'bg-white/10 text-white/80 hover:bg-white/20'
+            }`}
+            title={canvasMode ? '当前：Canvas 模式（点击切回 Video）' : '当前：Video 模式（无画面时点击切到 Canvas）'}
+          >
+            <MonitorPlay className="h-3.5 w-3.5" />
+            {canvasMode ? 'Canvas' : 'Video'}
+          </button>
         </div>
       </div>
 
