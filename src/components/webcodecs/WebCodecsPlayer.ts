@@ -18,10 +18,6 @@ export class WebCodecsPlayer {
 
   private hls: any = null;
   private videoEl: HTMLVideoElement | null = null;
-  private audioCtx: AudioContext | null = null;
-  private audioSource: MediaElementAudioSourceNode | null = null;
-  private audioStartTime = 0;
-  private audioVideoOffset = 0;
 
   private packetStream: any = null;
   private parseStream: any = null;
@@ -128,8 +124,6 @@ export class WebCodecsPlayer {
     videoEl.crossOrigin = 'anonymous';
     document.body.appendChild(videoEl);
     this.videoEl = videoEl;
-
-    this.setupAudioRouting(videoEl);
 
     videoEl.addEventListener('timeupdate', () => {
       if (this.destroyed) return;
@@ -250,51 +244,6 @@ export class WebCodecsPlayer {
     this.startDecoderStallCheck();
     this.startSyncCheck();
     this.loop();
-  }
-
-  private setupAudioRouting(videoEl: HTMLVideoElement) {
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) {
-        console.warn('[WebCodecsPlayer] AudioContext not available');
-        return;
-      }
-
-      this.audioCtx = new AudioContext();
-      this.audioSource = this.audioCtx.createMediaElementSource(videoEl);
-      this.audioSource.connect(this.audioCtx.destination);
-      videoEl.muted = true;
-
-      videoEl.addEventListener('play', () => {
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume().catch(() => {});
-        }
-      });
-
-      console.log('[WebCodecsPlayer] Web Audio API routing setup');
-    } catch (e) {
-      console.warn('[WebCodecsPlayer] Failed to setup Web Audio API:', e);
-    }
-  }
-
-  private getAudioClock(): number {
-    if (!this.audioCtx || !this.videoEl) {
-      return this.videoEl?.currentTime ?? 0;
-    }
-
-    if (this.state !== 'playing') {
-      return this.videoEl.currentTime;
-    }
-
-    const audioTime = this.audioCtx.currentTime - this.audioStartTime + this.audioVideoOffset;
-    return audioTime;
-  }
-
-  private resetAudioClock() {
-    if (this.audioCtx && this.videoEl) {
-      this.audioStartTime = this.audioCtx.currentTime;
-      this.audioVideoOffset = this.videoEl.currentTime;
-    }
   }
 
   private initDemuxPipeline() {
@@ -563,7 +512,7 @@ export class WebCodecsPlayer {
     try {
       this.pumpVideo();
 
-      const clock = this.getAudioClock();
+      const clock = this.videoEl?.currentTime ?? 0;
       this.presentVideo(clock);
 
       if (this.showDebug) {
@@ -706,7 +655,6 @@ export class WebCodecsPlayer {
   play() {
     if (this.videoEl) {
       this.videoEl.play().catch((e) => console.warn('[WebCodecsPlayer] play failed:', e));
-      setTimeout(() => this.resetAudioClock(), 50);
     }
   }
 
@@ -766,7 +714,6 @@ export class WebCodecsPlayer {
 
     if (this.videoEl) {
       this.videoEl.currentTime = t;
-      this.resetAudioClock();
     }
   }
 
@@ -794,16 +741,6 @@ export class WebCodecsPlayer {
       this.videoEl.load();
       this.videoEl.remove();
       this.videoEl = null;
-    }
-
-    if (this.audioSource) {
-      try { this.audioSource.disconnect(); } catch {}
-      this.audioSource = null;
-    }
-
-    if (this.audioCtx) {
-      try { this.audioCtx.close(); } catch {}
-      this.audioCtx = null;
     }
 
     for (const f of this.frameQueue) f.close();

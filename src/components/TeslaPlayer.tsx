@@ -10,13 +10,14 @@ import {
   Pause,
   Play,
   RotateCcw,
-  SkipForward,
-  SkipBack,
   Cpu,
   MonitorPlay,
   Settings,
   Volume2,
   VolumeX,
+  Rewind,
+  FastForward,
+  Maximize2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -137,6 +138,7 @@ export default function TeslaPlayer({
   const [rate, setRate] = useState(1);
   const [showRateMenu, setShowRateMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isWebFullscreen, setIsWebFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [quality, setQuality] = useState<string>('auto');
   const [showQualityMenu, setShowQualityMenu] = useState(false);
@@ -207,6 +209,10 @@ export default function TeslaPlayer({
         (document as any).msExitFullscreen?.();
       }
     }
+  }, []);
+
+  const toggleWebFullscreen = useCallback(() => {
+    setIsWebFullscreen((prev) => !prev);
   }, []);
 
   useEffect(() => {
@@ -586,7 +592,11 @@ export default function TeslaPlayer({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-black"
+      className={`relative w-full bg-black transition-all duration-300 ${
+        isWebFullscreen
+          ? 'fixed inset-0 z-50 h-screen w-screen rounded-none'
+          : 'h-full'
+      }`}
       onMouseMove={resetControlsTimer}
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
@@ -763,10 +773,11 @@ export default function TeslaPlayer({
       </div>
 
       {/* 底部控制条 */}
-      <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pb-3 pt-8 md:px-4 md:pb-4 md:pt-10 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="pointer-events-auto mb-2 md:mb-3">
+      <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-2 pb-2 pt-12 md:px-3 md:pb-3 md:pt-16 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+        {/* 进度条 */}
+        <div className="pointer-events-auto mb-1 md:mb-2 group">
           <div
-            className="relative h-2 md:h-2.5 cursor-pointer rounded-full bg-white/30 hover:bg-white/40 transition-all"
+            className="relative h-1 group-hover:h-1.5 cursor-pointer rounded-full bg-white/20 transition-all"
             onClick={(e) => {
               e.stopPropagation();
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -775,60 +786,81 @@ export default function TeslaPlayer({
             }}
           >
             <div
-              className="h-full rounded-full bg-green-400"
+              className="h-full rounded-full bg-green-500"
               style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 rounded-full bg-white shadow-lg opacity-0 hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 8px)` }}
+              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 5px)` }}
             />
-          </div>
-          <div className="mt-1 flex justify-between text-xs text-white/70">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
           </div>
         </div>
 
+        {/* 控制按钮行 */}
         <div className="pointer-events-auto flex items-center justify-between">
-          <div className="flex items-center gap-1 md:gap-2">
+          <div className="flex items-center gap-0.5 md:gap-1">
+            {/* 快退 10s */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.max(0, currentTime - 10)); }}
-              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
+              className="relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+              title="快退10秒"
             >
-              <SkipBack className="h-6 w-6 md:h-7 md:w-7 text-white" />
+              <Rewind className="h-5 w-5 md:h-5 md:w-5" />
+              <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] md:text-[10px] font-bold">10</span>
             </button>
+
+            {/* 播放/暂停 */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-              className="rounded-full bg-white/20 p-3 md:p-4 hover:bg-white/40 active:scale-95 transition-all shadow-lg"
+              className="p-1.5 md:p-2 text-white hover:bg-white/10 rounded transition-colors"
             >
-              {playing ? <Pause className="h-8 w-8 md:h-10 md:w-10 text-white" /> : <Play className="h-8 w-8 md:h-10 md:w-10 text-white" />}
+              {playing ? <Pause className="h-6 w-6 md:h-6 md:w-6" /> : <Play className="h-6 w-6 md:h-6 md:w-6" />}
             </button>
+
+            {/* 快进 10s */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.min(duration || 1, currentTime + 10)); }}
-              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
+              className="relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+              title="快进10秒"
             >
-              <SkipForward className="h-6 w-6 md:h-7 md:w-7 text-white" />
+              <FastForward className="h-5 w-5 md:h-5 md:w-5" />
+              <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] md:text-[10px] font-bold">10</span>
             </button>
 
+            {/* 音量 */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+              className="p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+            >
+              {muted ? <VolumeX className="h-5 w-5 md:h-5 md:w-5" /> : <Volume2 className="h-5 w-5 md:h-5 md:w-5" />}
+            </button>
+
+            {/* 时间 */}
+            <div className="text-xs text-white/70 ml-1 md:ml-2">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </div>
+
+            {/* 倍速 */}
             <div className="relative ml-1 md:ml-2">
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setShowRateMenu(!showRateMenu); }}
-                className="rounded px-2 py-1 text-xs md:text-sm font-medium hover:bg-white/10"
+                className="px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
               >
                 {rate}x
               </button>
               {showRateMenu && (
-                <div className="absolute bottom-full left-0 mb-2 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20">
+                <div className="absolute bottom-full left-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[80px]">
                   {PLAYBACK_RATES.map((r) => (
                     <button
                       key={r}
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setPlaybackRate(r); }}
-                      className={`block w-full rounded px-3 py-1.5 text-sm ${rate === r ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                      className={`block w-full rounded px-2 py-1 text-xs text-left ${rate === r ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                     >
                       {r}x
                     </button>
@@ -838,24 +870,25 @@ export default function TeslaPlayer({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 md:gap-2">
+          <div className="flex items-center gap-0.5 md:gap-1">
+            {/* 清晰度（video 模式） */}
             {mode === 'video' && qualities.length > 1 && (
               <div className="relative">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }}
-                  className="rounded px-2 py-1 text-xs md:text-sm font-medium hover:bg-white/10"
+                  className="px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
                 >
                   {qualities.find((q) => q.value === quality)?.label || '清晰度'}
                 </button>
                 {showQualityMenu && (
-                  <div className="absolute bottom-full right-0 mb-2 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20">
+                  <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[80px]">
                     {qualities.map((q) => (
                       <button
                         key={q.value}
                         type="button"
                         onClick={(e) => { e.stopPropagation(); switchQuality(q.value); }}
-                        className={`block w-full rounded px-3 py-1.5 text-sm ${quality === q.value ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                        className={`block w-full rounded px-2 py-1 text-xs text-right ${quality === q.value ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                       >
                         {q.label}
                       </button>
@@ -864,19 +897,57 @@ export default function TeslaPlayer({
                 )}
               </div>
             )}
+
+            {/* 播放模式切换 */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
+                className="p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+                title="播放模式"
+              >
+                {mode === 'webcodecs' ? <Cpu className="h-5 w-5" /> : <MonitorPlay className="h-5 w-5" />}
+              </button>
+              {showModeMenu && (
+                <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[140px]">
+                  {wcSupported && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
+                      className={`block w-full rounded px-2 py-1 text-xs text-right ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                    >
+                      WebCodecs（行驶用）
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
+                    className={`block w-full rounded px-2 py-1 text-xs text-right ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                  >
+                    Video（兼容）
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 网页全屏 */}
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
+              onClick={(e) => { e.stopPropagation(); toggleWebFullscreen(); }}
+              className="p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+              title={isWebFullscreen ? '退出网页全屏' : '网页全屏'}
             >
-              {muted ? <VolumeX className="h-6 w-6 md:h-7 md:w-7 text-white" /> : <Volume2 className="h-6 w-6 md:h-7 md:w-7 text-white" />}
+              <Maximize2 className="h-5 w-5 md:h-5 md:w-5" />
             </button>
+
+            {/* 全屏 */}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
+              className="p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+              title={isFullscreen ? '退出全屏' : '全屏'}
             >
-              {isFullscreen ? <Minimize className="h-6 w-6 md:h-7 md:w-7 text-white" /> : <Maximize className="h-6 w-6 md:h-7 md:w-7 text-white" />}
+              {isFullscreen ? <Minimize className="h-5 w-5 md:h-5 md:w-5" /> : <Maximize className="h-5 w-5 md:h-5 md:w-5" />}
             </button>
           </div>
         </div>
