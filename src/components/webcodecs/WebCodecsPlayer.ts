@@ -428,7 +428,7 @@ export class WebCodecsPlayer {
     const check = () => {
       if (this.destroyed) return;
 
-      if (this.state === 'playing' && this.hasOffset && this.frameQueue.length > 0 && this.videoEl) {
+      if (this.state === 'playing' && this.hasOffset && this.frameQueue.length >= 3 && this.videoEl) {
         const clock = this.videoEl.currentTime;
         const midFrameIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
         const midFrame = this.frameQueue[midFrameIdx];
@@ -441,9 +441,9 @@ export class WebCodecsPlayer {
         if (this.syncDriftCount >= 2) {
           const avgDrift = this.syncDriftAccum / this.syncDriftCount;
 
-          if (Math.abs(avgDrift) > 0.1) {
-            console.log('[WebCodecsPlayer] sync drift detected: avg=' + (avgDrift * 1000).toFixed(0) + 'ms, correcting offset');
-            this.videoTimeOffset -= avgDrift * 0.8;
+          if (Math.abs(avgDrift) > 0.08) {
+            console.log('[WebCodecsPlayer] sync drift=' + (avgDrift * 1000).toFixed(0) + 'ms, correcting');
+            this.videoTimeOffset -= avgDrift * 0.6;
           }
 
           this.syncDriftAccum = 0;
@@ -451,10 +451,10 @@ export class WebCodecsPlayer {
         }
       }
 
-      this.syncCheckTimer = window.setTimeout(check, 1000);
+      this.syncCheckTimer = window.setTimeout(check, 500);
     };
 
-    this.syncCheckTimer = window.setTimeout(check, 1000);
+    this.syncCheckTimer = window.setTimeout(check, 500);
   }
 
   private filterAdsFromM3U8(m3u8Content: string): string {
@@ -556,7 +556,7 @@ export class WebCodecsPlayer {
     if (this.frameQueue.length === 0) return;
 
     const now = performance.now();
-    const minFrameInterval = 1000 / (65 * this.playbackRate);
+    const minFrameInterval = 1000 / (62 * this.playbackRate);
 
     if (now - this.lastRenderTime < minFrameInterval) {
       return;
@@ -564,16 +564,20 @@ export class WebCodecsPlayer {
 
     let toDraw: VideoFrame | null = null;
 
-    if (!this.hasOffset && this.frameQueue.length > 0) {
-      const firstFrame = this.frameQueue[0];
-      const firstPts = firstFrame.timestamp / 1e6;
-      this.videoTimeOffset = clock - firstPts + 0.08;
+    if (!this.hasOffset && this.frameQueue.length >= 3) {
+      const midIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
+      const midFrame = this.frameQueue[midIdx];
+      const midPts = midFrame.timestamp / 1e6;
+      this.videoTimeOffset = clock - midPts - 0.05;
       this.hasOffset = true;
-      console.log('[WebCodecsPlayer] sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
+      console.log('[WebCodecsPlayer] sync init: midPts=' + midPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
     }
 
-    const aheadThreshold = 0.06 + 0.02 * this.playbackRate;
-    const behindThreshold = -0.3;
+    if (!this.hasOffset) return;
+
+    const targetAhead = 0.03 + 0.01 * this.playbackRate;
+    const maxAhead = 0.15;
+    const maxBehind = -0.5;
 
     let bestFrame: VideoFrame | null = null;
     let bestDiff = Infinity;
@@ -583,8 +587,9 @@ export class WebCodecsPlayer {
       const frameTime = frame.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
-      if (diff <= aheadThreshold && diff >= behindThreshold) {
-        if (Math.abs(diff) < Math.abs(bestDiff)) {
+      if (diff <= maxAhead && diff >= maxBehind) {
+        const targetDiff = targetAhead;
+        if (Math.abs(diff - targetDiff) < Math.abs(bestDiff - targetDiff)) {
           bestDiff = diff;
           bestFrame = frame;
         }
@@ -605,7 +610,7 @@ export class WebCodecsPlayer {
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
-      if (diff < behindThreshold) {
+      if (diff < maxBehind) {
         toDraw = this.frameQueue.shift()!;
         this.droppedFrames++;
       }

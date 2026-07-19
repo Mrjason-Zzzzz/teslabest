@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps, no-console */
 
-import { ArrowLeft, ChevronLeft, ChevronRight, Heart, Star, ArrowUpDown, Loader2, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Heart, Star, ArrowUpDown, Loader2 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -83,7 +83,6 @@ function TeslaPlayPageInner() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [allSources, setAllSources] = useState<SearchResult[]>([]);
-  const [sourceSpeeds, setSourceSpeeds] = useState<Record<string, number | 'testing' | 'error' | null>>({});
   const [currentDetail, setCurrentDetail] = useState<SearchResult | null>(null);
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(initialEpisode);
   const [playUrl, setPlayUrl] = useState('');
@@ -259,69 +258,6 @@ function TeslaPlayPageInner() {
     }
   }, [currentSource, currentId, fetchDetail, initialTitle, initialEpisode]);
 
-  const testSourceSpeed = useCallback(async (src: SearchResult) => {
-    const key = `${src.source}-${src.id}`;
-    setSourceSpeeds((prev) => ({ ...prev, [key]: 'testing' }));
-
-    try {
-      const { detail } = await fetchTVDetail({ source: src.source, id: src.id });
-      if (!detail?.episodes?.length) {
-        setSourceSpeeds((prev) => ({ ...prev, [key]: 'error' }));
-        return;
-      }
-
-      const firstEp = detail.episodes[0];
-      const startTime = performance.now();
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const proxyUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(firstEp)}&source=${encodeURIComponent(src.source)}`;
-
-      try {
-        const response = await fetch(proxyUrl, {
-          method: 'GET',
-          signal: controller.signal,
-          headers: { Range: 'bytes=0-1023' },
-        });
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const elapsed = performance.now() - startTime;
-          setSourceSpeeds((prev) => ({ ...prev, [key]: Math.round(elapsed) }));
-        } else {
-          setSourceSpeeds((prev) => ({ ...prev, [key]: 'error' }));
-        }
-      } catch (fetchErr: any) {
-        clearTimeout(timeoutId);
-        if (fetchErr.name === 'AbortError') {
-          setSourceSpeeds((prev) => ({ ...prev, [key]: 10000 }));
-        } else {
-          setSourceSpeeds((prev) => ({ ...prev, [key]: 'error' }));
-        }
-      }
-    } catch (e) {
-      setSourceSpeeds((prev) => ({ ...prev, [key]: 'error' }));
-    }
-  }, []);
-
-  const testAllSources = useCallback(async () => {
-    for (const src of allSources) {
-      testSourceSpeed(src);
-      await new Promise((r) => setTimeout(r, 300));
-    }
-  }, [allSources, testSourceSpeed]);
-
-  const getSpeedLabel = (speed: number | 'testing' | 'error' | null | undefined) => {
-    if (speed === null || speed === undefined) return { text: '测速', color: 'text-gray-400', bg: '' };
-    if (speed === 'testing') return { text: '测速中', color: 'text-blue-500', bg: '' };
-    if (speed === 'error') return { text: '失败', color: 'text-red-500', bg: '' };
-    if (speed < 1000) return { text: '极快', color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-950/30' };
-    if (speed < 3000) return { text: '较快', color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30' };
-    if (speed < 5000) return { text: '一般', color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' };
-    return { text: '较慢', color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' };
-  };
-
   const backToOriginal = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     router.push(`/play?${params.toString()}`);
@@ -376,16 +312,7 @@ function TeslaPlayPageInner() {
       <div className="min-h-screen">
         {/* 面包屑标题 */}
         <div className="hidden px-4 pt-4 md:block">
-          <div className="flex items-center gap-2 text-sm">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="flex items-center gap-1 text-gray-500 transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              返回
-            </button>
-            <span className="text-gray-300">|</span>
+          <div className="flex items-center gap-2 text-sm pl-12">
             <span className="font-medium text-gray-800 dark:text-gray-100">{initialTitle}</span>
             {currentDetail && currentDetail.episodes?.length > 1 && (
               <>
@@ -625,29 +552,9 @@ function TeslaPlayPageInner() {
                         <div className="p-4 text-center text-xs text-gray-400">暂无其他源</div>
                       ) : (
                         <div className="p-2">
-                          <div className="mb-2 flex items-center justify-between px-1">
-                            <span className="text-xs text-gray-500">共 {allSources.length} 个源</span>
-                            <button
-                              type="button"
-                              onClick={testAllSources}
-                              className="flex items-center gap-1 rounded-md bg-green-50 px-2 py-1 text-xs text-green-600 hover:bg-green-100 dark:bg-green-950/30 dark:text-green-400 dark:hover:bg-green-950/50"
-                            >
-                              <Zap className="h-3 w-3" /> 一键测速
-                            </button>
-                          </div>
-                          {allSources
-                            .sort((a, b) => {
-                              const aSpeed = sourceSpeeds[`${a.source}-${a.id}`];
-                              const bSpeed = sourceSpeeds[`${b.source}-${b.id}`];
-                              const aNum = typeof aSpeed === 'number' ? aSpeed : Infinity;
-                              const bNum = typeof bSpeed === 'number' ? bSpeed : Infinity;
-                              if (aNum !== bNum) return aNum - bNum;
-                              return 0;
-                            })
-                            .map((s) => {
+                          <div className="mb-2 px-1 text-xs text-gray-500">共 {allSources.length} 个源</div>
+                          {allSources.map((s) => {
                               const isActive = s.source === currentSource && s.id === currentId;
-                              const speed = sourceSpeeds[`${s.source}-${s.id}`];
-                              const speedLabel = getSpeedLabel(speed);
                               return (
                               <button
                                 key={`${s.source}-${s.id}`}
@@ -662,31 +569,13 @@ function TeslaPlayPageInner() {
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2">
                                     <span className="truncate text-sm font-medium">{s.source_name || s.source}</span>
-                                    {speed !== null && speed !== undefined && speed !== 'testing' && typeof speed === 'number' && (
-                                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${speedLabel.bg} ${speedLabel.color}`}>
-                                        {speedLabel.text}
-                                      </span>
-                                    )}
                                   </div>
                                   <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
                                     {s.episodes?.length ? `${s.episodes.length} 集` : ''}
-                                    {speed !== null && speed !== undefined && speed !== 'testing' && typeof speed === 'number' && (
-                                      <span>{speed}ms</span>
-                                    )}
-                                    {speed === 'testing' && <span className="text-blue-500">测速中...</span>}
-                                    {speed === 'error' && <span className="text-red-500">测速失败</span>}
                                   </div>
                                 </div>
                                 <div className="ml-2 flex items-center gap-1">
                                   {isActive && <span className="text-xs text-green-600 dark:text-green-400">当前</span>}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); testSourceSpeed(s); }}
-                                    className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
-                                    title="测速"
-                                  >
-                                    <Zap className="h-3.5 w-3.5" />
-                                  </button>
                                 </div>
                               </button>
                             );
