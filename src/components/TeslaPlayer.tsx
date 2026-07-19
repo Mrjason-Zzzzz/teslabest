@@ -587,7 +587,7 @@ export default function TeslaPlayer({
     if (p) p.setShowDebug(showDebug);
   }, [mode, showDebug]);
 
-  const modeLabel = mode === 'webcodecs' ? 'WebCodecs' : 'Video';
+  const modeLabel = mode === 'webcodecs' ? '特斯拉模式' : '兼容模式';
 
   return (
     <div
@@ -707,6 +707,12 @@ export default function TeslaPlayer({
       {/* 顶部条 */}
       <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent p-3 md:p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="pointer-events-auto flex items-center gap-2 md:gap-3">
+          <h1 className="text-sm md:text-base font-semibold drop-shadow max-w-[50vw] md:max-w-[60vw] truncate">
+            {title || '播放中'}
+            {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
+          </h1>
+        </div>
+        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2">
           {onBackToOriginal && (
             <button
               type="button"
@@ -717,12 +723,6 @@ export default function TeslaPlayer({
               <RotateCcw className="inline h-4 w-4" /> <span className="hidden md:inline">原版</span>
             </button>
           )}
-          <h1 className="text-sm md:text-base font-semibold drop-shadow max-w-[50vw] md:max-w-[60vw] truncate">
-            {title || '播放中'}
-            {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
-          </h1>
-        </div>
-        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2">
           <div className="relative">
             <button
               type="button"
@@ -745,7 +745,7 @@ export default function TeslaPlayer({
                     onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
                     className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                   >
-                    WebCodecs 模式（行驶用）
+                    特斯拉模式
                   </button>
                 )}
                 <button
@@ -753,22 +753,11 @@ export default function TeslaPlayer({
                   onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
                   className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                 >
-                  Video 模式（兼容）
+                  兼容模式
                 </button>
               </div>
             )}
           </div>
-
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setShowDebug(!showDebug); }}
-            className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs backdrop-blur ${
-              showDebug ? 'bg-yellow-500/30 text-yellow-300 ring-1 ring-yellow-400/50' : 'bg-white/10 text-white/70 hover:bg-white/20'
-            }`}
-            title="调试信息"
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </button>
         </div>
       </div>
 

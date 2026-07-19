@@ -271,15 +271,14 @@ function TeslaPlayPageInner() {
       }
 
       const firstEp = detail.episodes[0];
+      const resolvedUrl = await resolveTVEpisodeUrl(firstEp, src.source, true);
       const startTime = performance.now();
-
-      const proxyUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(firstEp)}&source=${encodeURIComponent(src.source)}`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       try {
-        const response = await fetch(proxyUrl, {
+        const response = await fetch(resolvedUrl, {
           method: 'GET',
           signal: controller.signal,
           headers: { Range: 'bytes=0-1023' },
@@ -404,19 +403,19 @@ function TeslaPlayPageInner() {
         {/* 主体 */}
         <div className="mx-auto max-w-7xl px-4 py-4">
           <div
-            className={`grid gap-4 transition-all duration-300 ease-in-out ${rightPanelCollapsed
+            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${rightPanelCollapsed
               ? 'grid-cols-1'
               : 'grid-cols-1 md:grid-cols-4'
             }`}
           >
             {/* 左侧：播放器 + 详情 */}
             <div
-              className={`transition-all duration-300 ease-in-out flex flex-col ${rightPanelCollapsed ? 'col-span-1' : 'md:col-span-3'
+              className={`transition-all duration-300 ease-in-out rounded-xl border border-white/0 dark:border-white/30 flex flex-col ${rightPanelCollapsed ? 'col-span-1' : 'md:col-span-3'
                 }`}
             >
               {/* 播放器容器 */}
-              <div className="relative w-full h-[300px]">
-                <div className="absolute inset-0 overflow-hidden rounded-xl bg-black shadow-lg">
+              <div className="relative w-full h-[300px] lg:flex-1 lg:min-h-0">
+                <div className="bg-black w-full h-full rounded-xl overflow-hidden shadow-lg">
               {isLoading && loadingStage !== 'error' && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900">
                   <Loader2 className="h-8 w-8 animate-spin text-green-500" />
