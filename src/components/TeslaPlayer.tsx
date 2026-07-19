@@ -766,7 +766,7 @@ export default function TeslaPlayer({
       <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pb-3 pt-8 md:px-4 md:pb-4 md:pt-10 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="pointer-events-auto mb-2 md:mb-3">
           <div
-            className="relative h-1.5 md:h-1 cursor-pointer rounded-full bg-white/20 hover:h-2 md:hover:h-1.5 transition-all"
+            className="relative h-2 md:h-2.5 cursor-pointer rounded-full bg-white/30 hover:bg-white/40 transition-all"
             onClick={(e) => {
               e.stopPropagation();
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -775,12 +775,12 @@ export default function TeslaPlayer({
             }}
           >
             <div
-              className="h-full rounded-full bg-green-500"
+              className="h-full rounded-full bg-green-400"
               style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-green-500 shadow-lg opacity-0 hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 6px)` }}
+              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 rounded-full bg-white shadow-lg opacity-0 hover:opacity-100 transition-opacity"
+              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 8px)` }}
             />
           </div>
           <div className="mt-1 flex justify-between text-xs text-white/70">
@@ -794,23 +794,23 @@ export default function TeslaPlayer({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.max(0, currentTime - 10)); }}
-              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
             >
-              <SkipBack className="h-5 w-5 md:h-5 md:w-5" />
+              <SkipBack className="h-6 w-6 md:h-7 md:w-7 text-white" />
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-              className="rounded-full bg-white/10 p-2.5 md:p-3 hover:bg-white/20 active:scale-95 transition-all"
+              className="rounded-full bg-white/20 p-3 md:p-4 hover:bg-white/40 active:scale-95 transition-all shadow-lg"
             >
-              {playing ? <Pause className="h-6 w-6 md:h-6 md:w-6" /> : <Play className="h-6 w-6 md:h-6 md:w-6" />}
+              {playing ? <Pause className="h-8 w-8 md:h-10 md:w-10 text-white" /> : <Play className="h-8 w-8 md:h-10 md:w-10 text-white" />}
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.min(duration || 1, currentTime + 10)); }}
-              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
             >
-              <SkipForward className="h-5 w-5 md:h-5 md:w-5" />
+              <SkipForward className="h-6 w-6 md:h-7 md:w-7 text-white" />
             </button>
 
             <div className="relative ml-1 md:ml-2">
@@ -867,16 +867,16 @@ export default function TeslaPlayer({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
             >
-              {muted ? <VolumeX className="h-5 w-5 md:h-5 md:w-5" /> : <Volume2 className="h-5 w-5 md:h-5 md:w-5" />}
+              {muted ? <VolumeX className="h-6 w-6 md:h-7 md:w-7 text-white" /> : <Volume2 className="h-6 w-6 md:h-7 md:w-7 text-white" />}
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-              className="rounded p-1.5 md:p-2 hover:bg-white/10 active:bg-white/20 transition-colors"
+              className="rounded-full p-2 md:p-3 bg-white/10 hover:bg-white/30 active:bg-white/40 transition-all"
             >
-              {isFullscreen ? <Minimize className="h-5 w-5 md:h-5 md:w-5" /> : <Maximize className="h-5 w-5 md:h-5 md:w-5" />}
+              {isFullscreen ? <Minimize className="h-6 w-6 md:h-7 md:w-7 text-white" /> : <Maximize className="h-6 w-6 md:h-7 md:w-7 text-white" />}
             </button>
           </div>
         </div>
