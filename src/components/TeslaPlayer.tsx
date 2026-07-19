@@ -705,59 +705,12 @@ export default function TeslaPlayer({
       )}
 
       {/* 顶部条 */}
-      <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent p-3 md:p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="pointer-events-auto flex items-center gap-2 md:gap-3">
-          <h1 className="text-sm md:text-base font-semibold drop-shadow max-w-[50vw] md:max-w-[60vw] truncate">
+      <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-center bg-gradient-to-b from-black/60 to-transparent p-3 md:p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="pointer-events-auto">
+          <h1 className="text-sm md:text-base font-semibold drop-shadow max-w-[70vw] md:max-w-[80vw] truncate text-center">
             {title || '播放中'}
             {live && <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase">LIVE</span>}
           </h1>
-        </div>
-        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2">
-          {onBackToOriginal && (
-            <button
-              type="button"
-              onClick={backToOriginal}
-              className="rounded-md bg-white/10 px-2.5 py-1.5 text-xs md:text-sm font-medium backdrop-blur hover:bg-white/20"
-              title="返回原版播放器"
-            >
-              <RotateCcw className="inline h-4 w-4" /> <span className="hidden md:inline">原版</span>
-            </button>
-          )}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium backdrop-blur ${
-                mode === 'webcodecs'
-                  ? 'bg-purple-500/30 text-purple-300 ring-1 ring-purple-400/50'
-                  : 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-400/50'
-              }`}
-              title="播放模式"
-            >
-              {mode === 'webcodecs' ? <Cpu className="h-3.5 w-3.5" /> : <MonitorPlay className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">{modeLabel}</span>
-            </button>
-            {showModeMenu && (
-              <div className="absolute top-full right-0 mt-1 rounded-md bg-gray-900/95 p-1 backdrop-blur z-20 min-w-[160px]">
-                {wcSupported && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
-                    className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                  >
-                    特斯拉模式
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
-                  className={`block w-full rounded px-3 py-1.5 text-sm text-left ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                >
-                  兼容模式
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
@@ -860,6 +813,19 @@ export default function TeslaPlayer({
           </div>
 
           <div className="flex items-center gap-0.5 md:gap-1">
+            {/* 返回原版 */}
+            {onBackToOriginal && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); backToOriginal(); }}
+                className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+                title="返回原版播放器"
+              >
+                <RotateCcw className="h-4 w-4" />
+                原版
+              </button>
+            )}
+
             {/* 清晰度（video 模式） */}
             {mode === 'video' && qualities.length > 1 && (
               <div className="relative">
@@ -892,10 +858,11 @@ export default function TeslaPlayer({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
-                className="p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
                 title="播放模式"
               >
-                {mode === 'webcodecs' ? <Cpu className="h-5 w-5" /> : <MonitorPlay className="h-5 w-5" />}
+                {mode === 'webcodecs' ? <Cpu className="h-4 w-4" /> : <MonitorPlay className="h-4 w-4" />}
+                {mode === 'webcodecs' ? '特斯拉' : '兼容'}
               </button>
               {showModeMenu && (
                 <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[140px]">
@@ -903,17 +870,17 @@ export default function TeslaPlayer({
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
-                      className={`block w-full rounded px-2 py-1 text-xs text-right ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                      className={`block w-full rounded px-3 py-1.5 text-sm text-right ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                     >
-                      WebCodecs（行驶用）
+                      特斯拉模式
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
-                    className={`block w-full rounded px-2 py-1 text-xs text-right ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                    className={`block w-full rounded px-3 py-1.5 text-sm text-right ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
                   >
-                    Video（兼容）
+                    兼容模式
                   </button>
                 </div>
               )}

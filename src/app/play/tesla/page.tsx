@@ -271,14 +271,15 @@ function TeslaPlayPageInner() {
       }
 
       const firstEp = detail.episodes[0];
-      const resolvedUrl = await resolveTVEpisodeUrl(firstEp, src.source, true);
       const startTime = performance.now();
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+      const proxyUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(firstEp)}&source=${encodeURIComponent(src.source)}`;
+
       try {
-        const response = await fetch(resolvedUrl, {
+        const response = await fetch(proxyUrl, {
           method: 'GET',
           signal: controller.signal,
           headers: { Range: 'bytes=0-1023' },
@@ -401,7 +402,7 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className="mx-auto max-w-7xl px-4 py-4">
+        <div className="mx-auto max-w-7xl px-4 pb-4 pt-2">
           <div
             className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${rightPanelCollapsed
               ? 'grid-cols-1'
@@ -414,7 +415,7 @@ function TeslaPlayPageInner() {
                 }`}
             >
               {/* 播放器容器 */}
-              <div className="relative w-full h-[300px] lg:flex-1 lg:min-h-0">
+              <div className="relative w-full h-[300px] lg:flex-1 lg:min-h-0 mt-2">
                 <div className="bg-black w-full h-full rounded-xl overflow-hidden shadow-lg">
               {isLoading && loadingStage !== 'error' && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900">

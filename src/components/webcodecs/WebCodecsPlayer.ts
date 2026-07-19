@@ -438,12 +438,12 @@ export class WebCodecsPlayer {
         this.syncDriftAccum += drift;
         this.syncDriftCount++;
 
-        if (this.syncDriftCount >= 3) {
+        if (this.syncDriftCount >= 2) {
           const avgDrift = this.syncDriftAccum / this.syncDriftCount;
 
-          if (Math.abs(avgDrift) > 0.15) {
+          if (Math.abs(avgDrift) > 0.1) {
             console.log('[WebCodecsPlayer] sync drift detected: avg=' + (avgDrift * 1000).toFixed(0) + 'ms, correcting offset');
-            this.videoTimeOffset -= avgDrift * 0.5;
+            this.videoTimeOffset -= avgDrift * 0.8;
           }
 
           this.syncDriftAccum = 0;
@@ -451,10 +451,10 @@ export class WebCodecsPlayer {
         }
       }
 
-      this.syncCheckTimer = window.setTimeout(check, 2000);
+      this.syncCheckTimer = window.setTimeout(check, 1000);
     };
 
-    this.syncCheckTimer = window.setTimeout(check, 3000);
+    this.syncCheckTimer = window.setTimeout(check, 1000);
   }
 
   private filterAdsFromM3U8(m3u8Content: string): string {
@@ -567,34 +567,47 @@ export class WebCodecsPlayer {
     if (!this.hasOffset && this.frameQueue.length > 0) {
       const firstFrame = this.frameQueue[0];
       const firstPts = firstFrame.timestamp / 1e6;
-      this.videoTimeOffset = clock - firstPts + 0.12;
+      this.videoTimeOffset = clock - firstPts + 0.08;
       this.hasOffset = true;
       console.log('[WebCodecsPlayer] sync: firstPts=' + firstPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
     }
 
-    const aheadThreshold = 0.08 + 0.02 * this.playbackRate;
-    const behindThreshold = -0.2;
+    const aheadThreshold = 0.06 + 0.02 * this.playbackRate;
+    const behindThreshold = -0.3;
 
-    while (this.frameQueue.length > 0) {
+    let bestFrame: VideoFrame | null = null;
+    let bestDiff = Infinity;
+
+    for (let i = 0; i < this.frameQueue.length; i++) {
+      const frame = this.frameQueue[i];
+      const frameTime = frame.timestamp / 1e6 + this.videoTimeOffset;
+      const diff = frameTime - clock;
+
+      if (diff <= aheadThreshold && diff >= behindThreshold) {
+        if (Math.abs(diff) < Math.abs(bestDiff)) {
+          bestDiff = diff;
+          bestFrame = frame;
+        }
+      }
+    }
+
+    if (bestFrame) {
+      toDraw = bestFrame;
+      const idx = this.frameQueue.indexOf(bestFrame);
+      for (let i = 0; i < idx; i++) {
+        const old = this.frameQueue.shift()!;
+        old.close();
+        this.droppedFrames++;
+      }
+      this.frameQueue.shift();
+    } else {
       const first = this.frameQueue[0];
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
       if (diff < behindThreshold) {
-        if (toDraw) {
-          toDraw.close();
-          this.droppedFrames++;
-        }
         toDraw = this.frameQueue.shift()!;
-      } else if (diff <= aheadThreshold) {
-        if (toDraw) {
-          toDraw.close();
-          this.droppedFrames++;
-        }
-        toDraw = this.frameQueue.shift()!;
-        break;
-      } else {
-        break;
+        this.droppedFrames++;
       }
     }
 
