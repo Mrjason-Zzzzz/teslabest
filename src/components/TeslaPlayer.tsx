@@ -129,8 +129,8 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    // capture 模式只需要 HLS.js + Canvas，不需要 WebCodecs API
-    setWcSupported(typeof Hls !== 'undefined' && Hls.isSupported());
+    const w = window as any;
+    setWcSupported(typeof w.VideoDecoder === 'function');
   }, []);
 
   useEffect(() => {
@@ -539,7 +539,7 @@ export default function TeslaPlayer({
       setLoading(false);
       return () => { destroyed = true; };
     }
-  }, [mode, url, wcSupported, playRecordKey, onEndedCallback, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
+  }, [mode, url, wcSupported, showDebug, playRecordKey, onEndedCallback, duration, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
 
   useEffect(() => {
     if (mode !== 'webcodecs') return;
