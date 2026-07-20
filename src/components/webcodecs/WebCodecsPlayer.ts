@@ -46,7 +46,8 @@ export class WebCodecsPlayer {
   }
 
   static isSupported(): boolean {
-    return typeof VideoDecoder === 'function';
+    // capture 模式只需要 HLS.js 支持，不需要 WebCodecs API
+    return typeof Hls !== 'undefined' && Hls.isSupported();
   }
 
   async load(url: string, startAt = 0): Promise<void> {

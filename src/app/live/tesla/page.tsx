@@ -59,9 +59,9 @@ function TeslaLivePageInner() {
     fetch('/api/live/sources')
       .then((r) => r.json())
       .then((data: any) => {
-        const list: LiveSource[] = (data?.sources || []).filter(
-          (s: LiveSource) => !s.disabled
-        );
+        // /api/live/sources 返回 { success, data }
+        const rawList: LiveSource[] = data?.data || data?.sources || [];
+        const list: LiveSource[] = rawList.filter((s: LiveSource) => !s.disabled);
         setSources(list);
         const matched = list.find((s) => s.key === initialSourceKey) || list[0];
         if (matched) setCurrentSource(matched);
@@ -83,7 +83,8 @@ function TeslaLivePageInner() {
     fetch(`/api/live/channels?source=${encodeURIComponent(currentSource.key)}`)
       .then((r) => r.json())
       .then((data: any) => {
-        const list: LiveChannel[] = data?.channels || [];
+        // /api/live/channels 返回 { success, data }
+        const list: LiveChannel[] = data?.data || data?.channels || [];
         setChannels(list);
         const matched =
           list.find((c) => c.id === initialChannelId) || list[0] || null;
@@ -130,7 +131,8 @@ function TeslaLivePageInner() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white">
-      <div className="relative flex-1">
+      {/* 播放器区域 - 参考点播页面：flex-1 + min-h-0 防止溢出 */}
+      <div className="relative flex-1 min-h-0">
         {loadingSources && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <Loader2 className="h-8 w-8 animate-spin" />
@@ -166,8 +168,8 @@ function TeslaLivePageInner() {
         )}
       </div>
 
-      {/* 频道列表 */}
-      <div className="max-h-[40vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
+      {/* 频道列表 - 底部固定高度，可滚动 */}
+      <div className="flex-shrink-0 max-h-[45vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
         <div className="flex items-center gap-2 px-4 py-2">
           <ArrowLeft
             className="h-4 w-4 cursor-pointer text-white/60 hover:text-white"
@@ -199,7 +201,7 @@ function TeslaLivePageInner() {
           </div>
           <Radio className="h-4 w-4 text-rose-400" />
         </div>
-        <div className="max-h-[32vh] overflow-y-auto px-2 pb-2">
+        <div className="overflow-y-auto px-2 pb-2" style={{ maxHeight: '37vh' }}>
           {loadingChannels ? (
             <div className="flex items-center justify-center py-4 text-white/60">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载频道…

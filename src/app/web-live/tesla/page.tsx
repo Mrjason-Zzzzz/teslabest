@@ -46,7 +46,8 @@ function TeslaWebLivePageInner() {
     fetch('/api/web-live/sources')
       .then((r) => r.json())
       .then((data: any) => {
-        const list: WebLiveSource[] = data?.sources || [];
+        // /api/web-live/sources 直接返回数组
+        const list: WebLiveSource[] = Array.isArray(data) ? data : (data?.sources || []);
         setSources(list);
         const matched =
           list.find((s) => s.platform === initialPlatform && s.roomId === initialRoomId) ||
@@ -98,7 +99,8 @@ function TeslaWebLivePageInner() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white">
-      <div className="relative flex-1">
+      {/* 播放器区域 - 参考点播页面：flex-1 + min-h-0 防止溢出 */}
+      <div className="relative flex-1 min-h-0">
         {loadingSources && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <Loader2 className="h-8 w-8 animate-spin" />
@@ -134,8 +136,8 @@ function TeslaWebLivePageInner() {
         )}
       </div>
 
-      {/* 源列表 */}
-      <div className="max-h-[35vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
+      {/* 源列表 - 底部固定高度，可滚动 */}
+      <div className="flex-shrink-0 max-h-[40vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
         <div className="flex items-center gap-2 px-4 py-2 text-sm">
           <ArrowLeft
             className="h-4 w-4 cursor-pointer text-white/60 hover:text-white"
@@ -145,7 +147,7 @@ function TeslaWebLivePageInner() {
           <span className="font-medium">网页直播</span>
           <span className="text-white/40">({sources.length})</span>
         </div>
-        <div className="max-h-[28vh] overflow-y-auto px-2 pb-2">
+        <div className="overflow-y-auto px-2 pb-2" style={{ maxHeight: '32vh' }}>
           {sources.length === 0 ? (
             <div className="py-4 text-center text-white/40">无源</div>
           ) : (

@@ -129,8 +129,8 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const w = window as any;
-    setWcSupported(typeof w.VideoDecoder === 'function' && typeof w.AudioDecoder === 'function');
+    // capture 模式只需要 HLS.js + Canvas，不需要 WebCodecs API
+    setWcSupported(typeof Hls !== 'undefined' && Hls.isSupported());
   }, []);
 
   useEffect(() => {
@@ -554,9 +554,10 @@ export default function TeslaPlayer({
       ref={containerRef}
       className={`relative w-full bg-black transition-all duration-300 ${
         isWebFullscreen
-          ? 'fixed inset-0 z-50 h-screen w-screen rounded-none'
+          ? 'fixed inset-0 z-[9999] h-screen w-screen rounded-none'
           : 'h-full'
       }`}
+      style={isWebFullscreen ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 } : undefined}
       onMouseMove={resetControlsTimer}
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
