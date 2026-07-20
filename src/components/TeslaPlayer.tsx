@@ -39,33 +39,6 @@ interface TeslaPlayerProps {
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 
-function filterAdsFromM3U8(m3u8Content: string): string {
-  if (!m3u8Content) return '';
-  const adKeywords = ['sponsor', '/ad/', '/ads/', 'advert', 'advertisement', '/adjump', 'redtraffic'];
-  const lines = m3u8Content.split('\n');
-  const filteredLines: string[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.includes('#EXT-X-DISCONTINUITY')) {
-      i++;
-      continue;
-    }
-    if (line.includes('#EXTINF:') && i + 1 < lines.length) {
-      const nextLine = lines[i + 1];
-      const isAd = adKeywords.some((keyword) => nextLine.toLowerCase().includes(keyword));
-      if (isAd) {
-        i += 2;
-        continue;
-      }
-    }
-    filteredLines.push(line);
-    i++;
-  }
-  return filteredLines.join('\n');
-}
-
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
   const h = Math.floor(seconds / 3600);
@@ -401,19 +374,6 @@ export default function TeslaPlayer({
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
         backBufferLength: 60,
-        xhrSetup: (xhr: XMLHttpRequest, xhrUrl: string) => {
-          if (xhrUrl.includes('.m3u8')) {
-            xhr.addEventListener('load', () => {
-              if (xhr.readyState === 4 && xhr.status === 200) {
-                const original = xhr.responseText;
-                const filtered = filterAdsFromM3U8(original);
-                if (filtered !== original) {
-                  Object.defineProperty(xhr, 'responseText', { value: filtered, writable: false });
-                }
-              }
-            });
-          }
-        },
       });
       hlsRef.current = hls;
 
