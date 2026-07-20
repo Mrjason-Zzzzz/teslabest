@@ -539,7 +539,7 @@ export default function TeslaPlayer({
       setLoading(false);
       return () => { destroyed = true; };
     }
-  }, [mode, url, wcSupported, showDebug, playRecordKey, onEndedCallback, duration, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
+  }, [mode, url, wcSupported, playRecordKey, onEndedCallback, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
 
   useEffect(() => {
     if (mode !== 'webcodecs') return;

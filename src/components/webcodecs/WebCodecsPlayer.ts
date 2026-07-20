@@ -65,17 +65,24 @@ export class WebCodecsPlayer {
     }
 
     const videoEl = document.createElement('video');
-    videoEl.style.display = 'none';
-    videoEl.style.position = 'absolute';
+    videoEl.style.position = 'fixed';
+    videoEl.style.top = '0';
+    videoEl.style.left = '0';
     videoEl.style.width = '1px';
     videoEl.style.height = '1px';
     videoEl.style.opacity = '0.001';
     videoEl.style.pointerEvents = 'none';
-    videoEl.muted = false;
+    videoEl.style.zIndex = '-1';
+    videoEl.muted = true;
     videoEl.playsInline = true;
+    videoEl.playsinline = true;
     videoEl.crossOrigin = 'anonymous';
+    videoEl.setAttribute('muted', '');
+    videoEl.setAttribute('playsinline', '');
     document.body.appendChild(videoEl);
     this.videoEl = videoEl;
+
+    let metadataLoaded = false;
 
     videoEl.addEventListener('timeupdate', () => {
       if (this.destroyed) return;
@@ -85,6 +92,31 @@ export class WebCodecsPlayer {
     videoEl.addEventListener('durationchange', () => {
       if (this.destroyed) return;
       this.cb.onDurationChange?.(videoEl.duration || 0);
+    });
+
+    videoEl.addEventListener('loadedmetadata', () => {
+      if (this.destroyed) return;
+      metadataLoaded = true;
+      if (videoEl.videoWidth && videoEl.videoHeight) {
+        this.canvas.width = videoEl.videoWidth;
+        this.canvas.height = videoEl.videoHeight;
+      }
+      this.cb.onDurationChange?.(videoEl.duration || 0);
+      console.log('[WebCodecsPlayer] loadedmetadata:', videoEl.videoWidth + 'x' + videoEl.videoHeight, 'duration=' + videoEl.duration);
+    });
+
+    videoEl.addEventListener('canplay', () => {
+      if (this.destroyed) return;
+      console.log('[WebCodecsPlayer] canplay');
+      if (this.state === 'buffering') {
+        this.setState('playing');
+      }
+      // 尝试自动播放（muted 状态下应该能成功）
+      if (videoEl.paused) {
+        videoEl.play().catch((e) => {
+          console.warn('[WebCodecsPlayer] autoplay failed:', e);
+        });
+      }
     });
 
     videoEl.addEventListener('play', () => {
@@ -122,19 +154,12 @@ export class WebCodecsPlayer {
     videoEl.addEventListener('error', () => {
       if (this.destroyed) return;
       console.warn('[WebCodecsPlayer] video element error:', videoEl.error);
+      this.fail('video error: ' + (videoEl.error?.message || videoEl.error?.code || 'unknown'));
     });
 
     videoEl.addEventListener('ratechange', () => {
       if (this.destroyed) return;
       this.playbackRate = videoEl.playbackRate;
-    });
-
-    videoEl.addEventListener('loadedmetadata', () => {
-      if (this.destroyed) return;
-      if (videoEl.videoWidth && videoEl.videoHeight) {
-        this.canvas.width = videoEl.videoWidth;
-        this.canvas.height = videoEl.videoHeight;
-      }
     });
 
     const hls = new Hls({
@@ -151,6 +176,14 @@ export class WebCodecsPlayer {
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt: any, data: any) => {
       console.log('[WebCodecsPlayer] MANIFEST_PARSED, levels:', data.levels?.length);
+      // 加载到 manifest 后就尝试播放（muted 状态）
+      videoEl.play().catch((e) => {
+        console.warn('[WebCodecsPlayer] manifest autoplay failed:', e);
+      });
+    });
+
+    hls.on(Hls.Events.LEVEL_LOADED, () => {
+      console.log('[WebCodecsPlayer] LEVEL_LOADED');
     });
 
     hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
