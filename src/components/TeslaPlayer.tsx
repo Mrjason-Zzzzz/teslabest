@@ -367,11 +367,11 @@ export default function TeslaPlayer({
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* canvas 元素 — 透明覆盖层，用于调试信息 */}
+      {/* canvas 元素 — WebCodecs 渲染层，覆盖在 video 元素之上 */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full"
-        style={{ pointerEvents: 'none' }}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1 }}
       />
 
       {/* 调试信息 */}
