@@ -1,6 +1,5 @@
 // @ts-nocheck
 import Hls from 'hls.js';
-import * as muxjs from 'mux.js';
 
 export type PlayerState = 'idle' | 'buffering' | 'playing' | 'paused' | 'ended' | 'error';
 
@@ -11,6 +10,12 @@ export interface PlayerCallbacks {
   onError?: (message: string) => void;
 }
 
+/**
+ * WebCodecsPlayer — 单管道视频渲染播放器
+ *
+ * 架构：HLS.js → <video>（音视频同源，100% 同步）→ Canvas.drawImage（渲染）
+ * 去掉了 mux.js + VideoDecoder 双管道，从根本上解决音画不同步。
+ */
 export class WebCodecsPlayer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -19,63 +24,18 @@ export class WebCodecsPlayer {
   private hls: any = null;
   private videoEl: HTMLVideoElement | null = null;
 
-  private packetStream: any = null;
-  private parseStream: any = null;
-  private elementaryStream: any = null;
-
-  private videoDecoder: VideoDecoder | null = null;
-  private videoConfig: any = null;
-
-  private encodedVideo: any[] = [];
-  private vIdx = 0;
-
-  private frameQueue: VideoFrame[] = [];
-  private videoTimeOffset: number = 0;
-  private hasOffset = false;
-
   private state: PlayerState = 'idle';
   private destroyed = false;
   private raf = 0;
-  private canvasSized = false;
   private showDebug = false;
-  private needVideoKey = true;
-  private lastTimeReportMs = 0;
-  private lastRenderTime = 0;
   private playbackRate = 1;
+  private audioMuted = true;
 
-  private spsNalu: Uint8Array | null = null;
-  private ppsNalu: Uint8Array | null = null;
-
+  // 帧率统计
   private renderedFrames = 0;
-  private decodedFrames = 0;
-  private droppedFrames = 0;
-  private statsMark = { t: 0, rendered: 0, decoded: 0 };
-
-  private decoderErrorCount = 0;
-  private decoderStallCheckTimer = 0;
-  private lastDecodedFrameCount = 0;
-  private lastDecodedCheckTime = 0;
-
-  private syncCheckTimer = 0;
-  private lastSyncVideoPts = 0;
-  private lastSyncAudioTime = 0;
-  private syncDriftAccum = 0;
-  private syncDriftCount = 0;
-  private hardSyncCooldown = 0;
-
-  private debugStats = {
-    hlsState: 'init',
-    levelCount: 0,
-    currentLevel: -1,
-    fragLoaded: 0,
-    bytesLoaded: 0,
-    videoPes: 0,
-    videoSamples: 0,
-    pmtFound: false,
-    error: '',
-    lastError: '',
-    videoReady: false,
-  };
+  private fps = 0;
+  private fpsFrames = 0;
+  private fpsLastTime = 0;
 
   constructor(canvas: HTMLCanvasElement, cb: PlayerCallbacks = {}) {
     this.canvas = canvas;
@@ -91,129 +51,87 @@ export class WebCodecsPlayer {
   }
 
   static isSupported(): boolean {
-    return typeof VideoDecoder === 'function';
+    return typeof Hls !== 'undefined' && Hls.isSupported();
   }
 
   async load(url: string, startAt = 0): Promise<void> {
     this.teardown();
     this.renderedFrames = 0;
-    this.decodedFrames = 0;
-    this.droppedFrames = 0;
-    this.decoderErrorCount = 0;
-    this.statsMark = { t: performance.now(), rendered: 0, decoded: 0 };
-    this.playbackRate = 1;
+    this.fps = 0;
+    this.fpsFrames = 0;
+    this.fpsLastTime = performance.now();
+    this.audioMuted = true;
     this.setState('buffering');
     console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
-
-    this.setupVideoDecoder();
-    this.initDemuxPipeline();
 
     if (!Hls.isSupported()) {
       this.fail('hls.js not supported');
       return;
     }
 
+    // 创建隐藏的 video 元素 — 放在 body 中最底部，不可见但可解码
     const videoEl = document.createElement('video');
-    videoEl.style.display = 'none';
-    videoEl.style.position = 'absolute';
+    videoEl.style.position = 'fixed';
+    videoEl.style.top = '0';
+    videoEl.style.left = '0';
     videoEl.style.width = '1px';
     videoEl.style.height = '1px';
-    videoEl.style.opacity = '0.001';
+    videoEl.style.opacity = '0';
     videoEl.style.pointerEvents = 'none';
-    videoEl.muted = false;
+    videoEl.style.zIndex = '-1';
+    videoEl.muted = true;
     videoEl.playsInline = true;
+    videoEl.setAttribute('playsinline', '');
+    videoEl.setAttribute('x-webkit-airplay', 'deny');
     videoEl.crossOrigin = 'anonymous';
     document.body.appendChild(videoEl);
     this.videoEl = videoEl;
 
-    videoEl.addEventListener('timeupdate', () => {
-      if (this.destroyed) return;
-      this.cb.onTime?.(videoEl.currentTime);
-    });
+    // 事件监听
+    videoEl.addEventListener('timeupdate', this.onTimeUpdate);
+    videoEl.addEventListener('durationchange', this.onDurationChange);
+    videoEl.addEventListener('loadedmetadata', this.onLoadedMetadata);
+    videoEl.addEventListener('play', this.onPlay);
+    videoEl.addEventListener('pause', this.onPause);
+    videoEl.addEventListener('waiting', this.onWaiting);
+    videoEl.addEventListener('playing', this.onPlaying);
+    videoEl.addEventListener('ended', this.onEnded);
+    videoEl.addEventListener('error', this.onVideoError);
+    videoEl.addEventListener('ratechange', this.onRateChange);
 
-    videoEl.addEventListener('durationchange', () => {
-      if (this.destroyed) return;
-      this.cb.onDurationChange?.(videoEl.duration || 0);
-    });
-
-    videoEl.addEventListener('play', () => {
-      if (this.destroyed) return;
-      if (this.state !== 'ended' && this.state !== 'error') {
-        this.setState('playing');
-      }
-    });
-
-    videoEl.addEventListener('pause', () => {
-      if (this.destroyed) return;
-      if (this.state !== 'ended' && this.state !== 'error') {
-        this.setState('paused');
-      }
-    });
-
-    videoEl.addEventListener('waiting', () => {
-      if (this.destroyed) return;
-      if (this.state !== 'error') this.setState('buffering');
-    });
-
-    videoEl.addEventListener('playing', () => {
-      if (this.destroyed) return;
-      if (this.state !== 'ended' && this.state !== 'error') {
-        this.setState('playing');
-      }
-    });
-
-    videoEl.addEventListener('ended', () => {
-      if (this.destroyed) return;
-      this.setState('ended');
-      setTimeout(() => this.cb.onStateChange?.('ended'), 500);
-    });
-
-    videoEl.addEventListener('error', () => {
-      if (this.destroyed) return;
-      console.warn('[WebCodecsPlayer] video element error:', videoEl.error);
-    });
-
-    videoEl.addEventListener('ratechange', () => {
-      if (this.destroyed) return;
-      this.playbackRate = videoEl.playbackRate;
-    });
-
+    // HLS.js 配置
     const hls = new Hls({
-      enableWorker: false,
+      enableWorker: true,
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
       maxBufferLength: 60,
       maxMaxBufferLength: 120,
-      backBufferLength: 60,
+      backBufferLength: 30,
     });
 
     this.hls = hls;
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt: any, data: any) => {
-      this.debugStats.hlsState = 'manifest-parsed';
-      this.debugStats.levelCount = data.levels?.length || 0;
+      if (this.destroyed) return;
       console.log('[WebCodecsPlayer] MANIFEST_PARSED, levels:', data.levels?.length);
+      // muted 状态下尝试自动播放
+      videoEl.play().catch(() => {
+        console.warn('[WebCodecsPlayer] autoplay blocked, waiting for user gesture');
+      });
     });
 
-    hls.on(Hls.Events.LEVEL_LOADED, (_evt: any, data: any) => {
-      this.debugStats.hlsState = 'level-loaded';
-      this.debugStats.currentLevel = data.level;
-    });
-
-    hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
-      this.debugStats.fragLoaded++;
-      const frag = data.frag;
-      const payload = frag?.data || data.payload;
-      if (payload && payload.byteLength) {
-        this.debugStats.bytesLoaded += payload.byteLength;
-        this.feedTsData(new Uint8Array(payload));
+    hls.on(Hls.Events.FRAG_BUFFERED, () => {
+      if (this.destroyed) return;
+      // 有缓冲数据了，可以开始渲染
+      if (this.state === 'buffering' && videoEl.readyState >= 2) {
+        this.setState('playing');
       }
     });
 
     hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+      if (this.destroyed) return;
       console.warn('[WebCodecsPlayer] HLS ERROR:', data.type, data.details);
-      this.debugStats.lastError = data.details || data.type;
       if (data.fatal) {
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           try { hls.startLoad(); } catch {}
@@ -228,255 +146,78 @@ export class WebCodecsPlayer {
     hls.attachMedia(videoEl);
     hls.loadSource(url);
 
-    this.startDecoderStallCheck();
-    this.startSyncCheck();
     this.loop();
   }
 
-  private initDemuxPipeline() {
-    const mp2t = muxjs.mp2t;
+  // ===== 事件处理 =====
 
-    this.packetStream = new mp2t.TransportPacketStream();
-    this.parseStream = new mp2t.TransportParseStream();
-    this.elementaryStream = new mp2t.ElementaryStream();
+  private onTimeUpdate = () => {
+    if (this.destroyed || !this.videoEl) return;
+    this.cb.onTime?.(this.videoEl.currentTime);
+  };
 
-    this.packetStream.pipe(this.parseStream);
-    this.parseStream.pipe(this.elementaryStream);
+  private onDurationChange = () => {
+    if (this.destroyed || !this.videoEl) return;
+    this.cb.onDurationChange?.(this.videoEl.duration || 0);
+  };
 
-    this.parseStream.on('data', (d: any) => {
-      if (d.type === 'pmt') this.debugStats.pmtFound = true;
-    });
-
-    this.elementaryStream.on('data', (d: any) => {
-      if (this.destroyed) return;
-      if (d.type === 'video') {
-        this.debugStats.videoPes++;
-        this.handleVideoPes(d);
-      }
-    });
-
-    this.elementaryStream.on('error', (err: any) => {
-      console.warn('[WebCodecsPlayer] demux error:', err);
-      this.debugStats.lastError = String(err);
-    });
-  }
-
-  private feedTsData(data: Uint8Array) {
-    if (this.destroyed || !this.packetStream) return;
-    try {
-      this.packetStream.push(data);
-      this.packetStream.flush();
-    } catch (e) {
-      console.warn('[WebCodecsPlayer] feedTs error:', e);
+  private onLoadedMetadata = () => {
+    if (this.destroyed || !this.videoEl) return;
+    const v = this.videoEl;
+    if (v.videoWidth && v.videoHeight) {
+      this.canvas.width = v.videoWidth;
+      this.canvas.height = v.videoHeight;
     }
-  }
+    console.log('[WebCodecsPlayer] loadedmetadata:', v.videoWidth + 'x' + v.videoHeight, 'duration=' + v.duration);
+  };
 
-  private handleVideoPes(pes: any) {
-    const pesData = pes.data;
-    const pts = pes.pts != null ? pes.pts / 90000 : 0;
-    if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
-
-    const nalus = this.splitNalus(pesData);
-    if (nalus.length === 0) return;
-
-    let hasKeyFrame = false;
-    const frameNalus: Uint8Array[] = [];
-
-    for (const nalu of nalus) {
-      const naluType = this.getNaluType(nalu);
-      if (naluType === 7) {
-        this.spsNalu = nalu;
-      } else if (naluType === 8) {
-        this.ppsNalu = nalu;
-      } else if (naluType === 5) {
-        hasKeyFrame = true;
-        frameNalus.push(nalu);
-      } else if (naluType === 1 || naluType === 2 || naluType === 3 || naluType === 4) {
-        frameNalus.push(nalu);
-      }
+  private onPlay = () => {
+    if (this.destroyed) return;
+    if (this.state !== 'ended' && this.state !== 'error') {
+      this.setState('playing');
     }
+  };
 
-    if (!this.videoConfig && this.spsNalu && this.ppsNalu) {
-      const config = this.buildVideoConfig(this.spsNalu, this.ppsNalu);
-      this.videoConfig = config;
-      try {
-        const cfg: any = {
-          codec: config.codec,
-          codedWidth: config.codedWidth,
-          codedHeight: config.codedHeight,
-          description: config.description,
-          optimizeForLatency: false,
-        };
-        this.videoDecoder?.configure(cfg);
-        this.debugStats.videoReady = true;
-        console.log('[WebCodecsPlayer] video decoder configured:', config.codec, config.codedWidth + 'x' + config.codedHeight);
-      } catch (e) {
-        console.warn('[WebCodecsPlayer] video configure failed:', e);
-      }
+  private onPause = () => {
+    if (this.destroyed) return;
+    if (this.state !== 'ended' && this.state !== 'error') {
+      this.setState('paused');
     }
+  };
 
-    if (frameNalus.length === 0) return;
+  private onWaiting = () => {
+    if (this.destroyed) return;
+    if (this.state !== 'error') this.setState('buffering');
+  };
 
-    const frameData = this.nalusToAvcc(frameNalus);
-    this.encodedVideo.push({
-      key: hasKeyFrame,
-      timestamp: Math.round(pts * 1e6),
-      duration: 33000,
-      data: frameData,
-    });
-    this.debugStats.videoSamples++;
-  }
-
-  private setupVideoDecoder() {
-    this.needVideoKey = true;
-    this.videoDecoder = new VideoDecoder({
-      output: (frame) => this.onVideoFrame(frame),
-      error: (e) => {
-        console.warn('[WebCodecsPlayer] video decoder error:', e.message);
-        this.handleVideoDecoderError();
-      },
-    });
-  }
-
-  private handleVideoDecoderError() {
-    this.decoderErrorCount++;
-    const maxErrors = 10;
-    if (this.decoderErrorCount > maxErrors) {
-      this.fail('video decoder: Decoder failure');
-      return;
+  private onPlaying = () => {
+    if (this.destroyed) return;
+    if (this.state !== 'ended' && this.state !== 'error') {
+      this.setState('playing');
     }
-    console.log('[WebCodecsPlayer] restarting video decoder, attempt:', this.decoderErrorCount);
-    
-    try {
-      if (this.videoDecoder && this.videoDecoder.state !== 'closed') {
-        this.videoDecoder.close();
-      }
-    } catch {}
-    this.videoDecoder = null;
-    
-    for (const f of this.frameQueue) f.close();
-    this.frameQueue = [];
-    this.needVideoKey = true;
-    this.hasOffset = false;
-    this.videoTimeOffset = 0;
-    
-    this.setupVideoDecoder();
-    
-    if (this.videoConfig && this.videoDecoder) {
-      try {
-        this.videoDecoder.configure({
-          codec: this.videoConfig.codec,
-          codedWidth: this.videoConfig.codedWidth,
-          codedHeight: this.videoConfig.codedHeight,
-          description: this.videoConfig.description,
-          optimizeForLatency: false,
-        });
-        setTimeout(() => {
-          if (!this.destroyed) {
-            this.decoderErrorCount = Math.max(0, this.decoderErrorCount - 1);
-          }
-        }, 10000);
-      } catch (e) {
-        console.warn('[WebCodecsPlayer] reconfigure failed:', e);
-      }
+  };
+
+  private onEnded = () => {
+    if (this.destroyed) return;
+    this.setState('ended');
+    setTimeout(() => this.cb.onStateChange?.('ended'), 500);
+  };
+
+  private onVideoError = () => {
+    if (this.destroyed || !this.videoEl) return;
+    const err = this.videoEl.error;
+    console.warn('[WebCodecsPlayer] video element error:', err);
+    if (err) {
+      this.fail('video error: ' + (err.message || err.code));
     }
-  }
+  };
 
-  private startDecoderStallCheck() {
-    this.lastDecodedFrameCount = 0;
-    this.lastDecodedCheckTime = performance.now();
-    
-    const check = () => {
-      if (this.destroyed) return;
-      
-      const now = performance.now();
-      const dt = now - this.lastDecodedCheckTime;
-      
-      if (this.state === 'playing' && dt > 3000) {
-        const newDecoded = this.decodedFrames - this.lastDecodedFrameCount;
-        if (newDecoded === 0 && this.frameQueue.length < 2 && this.encodedVideo.length - this.vIdx > 0) {
-          console.warn('[WebCodecsPlayer] decoder stall detected, attempting recovery');
-          this.handleVideoDecoderError();
-        }
-        this.lastDecodedFrameCount = this.decodedFrames;
-        this.lastDecodedCheckTime = now;
-      }
-      
-      this.decoderStallCheckTimer = window.setTimeout(check, 2000);
-    };
-    
-    this.decoderStallCheckTimer = window.setTimeout(check, 3000);
-  }
+  private onRateChange = () => {
+    if (this.destroyed || !this.videoEl) return;
+    this.playbackRate = this.videoEl.playbackRate;
+  };
 
-  private startSyncCheck() {
-    this.syncDriftAccum = 0;
-    this.syncDriftCount = 0;
-    this.hardSyncCooldown = 0;
-
-    const check = () => {
-      if (this.destroyed) return;
-
-      if (this.state === 'playing' && this.hasOffset && this.frameQueue.length >= 3 && this.videoEl) {
-        const clock = this.videoEl.currentTime;
-        const midFrameIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
-        const midFrame = this.frameQueue[midFrameIdx];
-        const midFrameTime = midFrame.timestamp / 1e6 + this.videoTimeOffset;
-        const drift = midFrameTime - clock;
-
-        this.syncDriftAccum += drift;
-        this.syncDriftCount++;
-
-        if (this.syncDriftCount >= 2) {
-          const avgDrift = this.syncDriftAccum / this.syncDriftCount;
-          const absDrift = Math.abs(avgDrift);
-
-          // B1: 硬同步 — 漂移超过 200ms 且冷却时间已过，直接 seek 音频强制对齐
-          if (absDrift > 0.2 && this.hardSyncCooldown <= 0) {
-            const targetTime = midFrameTime - (-0.05); // 目标延迟 -50ms
-            console.log('[WebCodecsPlayer] HARD SYNC: drift=' + (avgDrift * 1000).toFixed(0) + 'ms, seek audio to ' + targetTime.toFixed(3) + 's');
-            try {
-              this.videoEl.currentTime = targetTime;
-              this.hardSyncCooldown = 10; // 10 秒冷却
-            } catch (e) {
-              console.warn('[WebCodecsPlayer] hard sync seek failed:', e);
-            }
-          } else if (absDrift > 0.05) {
-            // 软校正 — 漂移超过 50ms，调整偏移量
-            console.log('[WebCodecsPlayer] sync drift=' + (avgDrift * 1000).toFixed(0) + 'ms, soft correcting');
-            this.videoTimeOffset -= avgDrift * 0.8;
-          }
-
-          this.syncDriftAccum = 0;
-          this.syncDriftCount = 0;
-        }
-
-        if (this.hardSyncCooldown > 0) {
-          this.hardSyncCooldown -= 0.2; // 每次 200ms
-        }
-      }
-
-      this.syncCheckTimer = window.setTimeout(check, 200);
-    };
-
-    this.syncCheckTimer = window.setTimeout(check, 200);
-  }
-
-  private onVideoFrame(frame: VideoFrame) {
-    this.decodedFrames++;
-    if (!this.canvasSized) {
-      this.canvas.width = frame.displayWidth;
-      this.canvas.height = frame.displayHeight;
-      this.canvasSized = true;
-    }
-
-    this.frameQueue.push(frame);
-    const maxQueue = Math.max(15, Math.floor(30 * this.playbackRate));
-    while (this.frameQueue.length > maxQueue) {
-      const old = this.frameQueue.shift()!;
-      old.close();
-      this.droppedFrames++;
-    }
-  }
+  // ===== 渲染循环 =====
 
   private loop = () => {
     this.tick();
@@ -487,10 +228,30 @@ export class WebCodecsPlayer {
 
   private tick() {
     try {
-      this.pumpVideo();
+      if (this.videoEl && this.videoEl.readyState >= 2) {
+        const v = this.videoEl;
+        if (v.videoWidth && v.videoHeight) {
+          // 同步 canvas 尺寸
+          const cw = this.canvas.width;
+          const ch = this.canvas.height;
+          if (cw !== v.videoWidth || ch !== v.videoHeight) {
+            this.canvas.width = v.videoWidth;
+            this.canvas.height = v.videoHeight;
+          }
+          // 从 video 元素捕获帧 — 音画天然同步
+          this.ctx.drawImage(v, 0, 0, this.canvas.width, this.canvas.height);
+          this.renderedFrames++;
 
-      const clock = this.videoEl?.currentTime ?? 0;
-      this.presentVideo(clock);
+          // 帧率统计
+          const now = performance.now();
+          this.fpsFrames++;
+          if (now - this.fpsLastTime >= 1000) {
+            this.fps = Math.round((this.fpsFrames * 1000) / (now - this.fpsLastTime));
+            this.fpsFrames = 0;
+            this.fpsLastTime = now;
+          }
+        }
+      }
 
       if (this.showDebug) {
         this.drawDebugOverlay();
@@ -500,233 +261,154 @@ export class WebCodecsPlayer {
     }
   }
 
-  private pumpVideo() {
-    const dec = this.videoDecoder;
-    if (!dec || dec.state !== 'configured') return;
-    const maxOutstanding = Math.max(20, Math.floor(30 * this.playbackRate));
-    while (
-      this.vIdx < this.encodedVideo.length &&
-      this.frameQueue.length + dec.decodeQueueSize < maxOutstanding
-    ) {
-      const s = this.encodedVideo[this.vIdx++];
-      if (this.needVideoKey) {
-        if (!s.key) continue;
-        this.needVideoKey = false;
-      }
-      try {
-        dec.decode(
-          new EncodedVideoChunk({
-            type: s.key ? 'key' : 'delta',
-            timestamp: s.timestamp,
-            duration: s.duration,
-            data: s.data,
-          }),
-        );
-      } catch (e) {
-        console.warn('[WebCodecsPlayer] video decode error:', e);
-        this.needVideoKey = true;
+  // ===== 播放控制 =====
+
+  play(): void {
+    if (this.videoEl) {
+      this.videoEl.play().catch(() => {});
+    }
+  }
+
+  pause(): void {
+    if (this.videoEl) {
+      this.videoEl.pause();
+    }
+  }
+
+  togglePlay(): void {
+    if (this.videoEl) {
+      if (this.videoEl.paused) {
+        this.videoEl.play().catch(() => {});
+      } else {
+        this.videoEl.pause();
       }
     }
   }
 
-  private presentVideo(clock: number) {
-    if (this.frameQueue.length === 0) return;
-
-    const now = performance.now();
-    const minFrameInterval = 1000 / (62 * this.playbackRate);
-
-    if (now - this.lastRenderTime < minFrameInterval) {
-      return;
-    }
-
-    let toDraw: VideoFrame | null = null;
-
-    // 目标延迟：视频比音频慢 50ms（人耳对声音延迟更敏感，画面略迟不易察觉）
-    const targetDelay = -0.05;
-    const maxAhead = 0.05;   // 视频最多超前 50ms
-    const maxBehind = -0.3;  // 视频最多滞后 300ms
-
-    if (!this.hasOffset && this.frameQueue.length >= 3) {
-      const midIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
-      const midFrame = this.frameQueue[midIdx];
-      const midPts = midFrame.timestamp / 1e6;
-      // 初始偏移：让中间帧对准目标延迟
-      this.videoTimeOffset = (clock + targetDelay) - midPts;
-      this.hasOffset = true;
-      console.log('[WebCodecsPlayer] sync init: midPts=' + midPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(3) + 's targetDelay=' + (targetDelay * 1000) + 'ms');
-    }
-
-    if (!this.hasOffset) return;
-
-    let bestFrame: VideoFrame | null = null;
-    let bestDiff = Infinity;
-
-    for (let i = 0; i < this.frameQueue.length; i++) {
-      const frame = this.frameQueue[i];
-      const frameTime = frame.timestamp / 1e6 + this.videoTimeOffset;
-      const diff = frameTime - clock;
-
-      if (diff <= maxAhead && diff >= maxBehind) {
-        // 找最接近目标延迟的帧
-        if (Math.abs(diff - targetDelay) < Math.abs(bestDiff - targetDelay)) {
-          bestDiff = diff;
-          bestFrame = frame;
-        }
-      }
-    }
-
-    if (bestFrame) {
-      toDraw = bestFrame;
-      const idx = this.frameQueue.indexOf(bestFrame);
-      for (let i = 0; i < idx; i++) {
-        const old = this.frameQueue.shift()!;
-        old.close();
-        this.droppedFrames++;
-      }
-      this.frameQueue.shift();
-    } else {
-      const first = this.frameQueue[0];
-      const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
-      const diff = frameTime - clock;
-
-      // 视频太滞后了，丢帧追赶
-      if (diff < maxBehind) {
-        toDraw = this.frameQueue.shift()!;
-        this.droppedFrames++;
-      }
-    }
-
-    if (toDraw) {
-      this.ctx.drawImage(toDraw, 0, 0, this.canvas.width, this.canvas.height);
-      toDraw.close();
-      this.renderedFrames++;
-      this.lastRenderTime = now;
+  seek(t: number): void {
+    if (this.videoEl) {
+      this.videoEl.currentTime = Math.max(0, t);
     }
   }
+
+  setVolume(v: number): void {
+    if (this.videoEl) {
+      this.videoEl.volume = Math.max(0, Math.min(1, v));
+      // 用户设置音量 > 0 时取消静音
+      if (v > 0 && this.audioMuted) {
+        this.videoEl.muted = false;
+        this.audioMuted = false;
+      }
+    }
+  }
+
+  setMuted(m: boolean): void {
+    if (this.videoEl) {
+      this.videoEl.muted = m;
+      this.audioMuted = m;
+    }
+  }
+
+  unmute(): void {
+    if (this.videoEl && this.audioMuted) {
+      this.videoEl.muted = false;
+      this.audioMuted = false;
+    }
+  }
+
+  setPlaybackRate(r: number): void {
+    if (this.videoEl) {
+      this.videoEl.playbackRate = r;
+    }
+    this.playbackRate = r;
+  }
+
+  setShowDebug(s: boolean): void {
+    this.showDebug = s;
+  }
+
+  getCurrentTime(): number {
+    return this.videoEl?.currentTime || 0;
+  }
+
+  getDuration(): number {
+    return this.videoEl?.duration || 0;
+  }
+
+  getState(): PlayerState {
+    return this.state;
+  }
+
+  getStats() {
+    return {
+      state: this.state,
+      renderFps: this.fps,
+      decodeFps: this.fps,
+      queued: 0,
+      decodeQueue: 0,
+      dropped: 0,
+      bufferedVideoSec: this.videoEl?.buffered?.length
+        ? this.videoEl.buffered.end(this.videoEl.buffered.length - 1) - this.videoEl.currentTime
+        : 0,
+      bufferedAudioSec: 0,
+      resolution: this.videoEl
+        ? `${this.videoEl.videoWidth}x${this.videoEl.videoHeight}`
+        : '0x0',
+      codec: 'native',
+      currentSec: this.videoEl?.currentTime || 0,
+      renderedFrames: this.renderedFrames,
+      decodedFrames: this.renderedFrames,
+      demuxVideoQueue: 0,
+    };
+  }
+
+  // ===== 调试叠加层 =====
 
   private drawDebugOverlay() {
     const stats = this.getStats();
     const ctx = this.ctx;
     const w = this.canvas.width || 640;
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(0, 0, w, 500);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, Math.min(380, w), 150);
     ctx.fillStyle = '#0f0';
     ctx.font = '13px monospace';
-    const ds = this.debugStats;
-
-    let driftStr = 'n/a';
-    if (this.hasOffset && this.frameQueue.length > 0 && this.videoEl) {
-      const midIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
-      const midFrame = this.frameQueue[midIdx];
-      const midTime = midFrame.timestamp / 1e6 + this.videoTimeOffset;
-      const drift = midTime - this.videoEl.currentTime;
-      driftStr = (drift * 1000).toFixed(0) + 'ms';
-    }
 
     const lines = [
-      `[WC] state: ${stats.state}`,
-      `[WC] render: ${stats.renderFps} fps  decode: ${stats.decodeFps} fps`,
-      `[WC] frameQueue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
-      `[WC] ${stats.resolution} ${stats.codec}`,
-      `[WC] t=${stats.currentSec}s  rate=${this.playbackRate.toFixed(2)}x`,
-      `[WC] drift: ${driftStr}  offset: ${this.hasOffset ? this.videoTimeOffset.toFixed(3) + 's' : 'pending'}`,
-      `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
-      `[WC] vBuf: ${stats.demuxVideoQueue}`,
-      `[WC] errCount: ${this.decoderErrorCount}`,
-      `--- HLS ---`,
-      `  state: ${ds.hlsState}  levels: ${ds.levelCount}  level: ${ds.currentLevel}`,
-      `  frags: ${ds.fragLoaded}  bytes: ${(ds.bytesLoaded / 1024 / 1024).toFixed(2)}MB`,
-      `--- Demux ---`,
-      `  pmt: ${ds.pmtFound ? 'found' : 'waiting'}  vPES: ${ds.videoPes}`,
-      `  video samples: ${ds.videoSamples}`,
-      `  audio: via hls.js + video element`,
-      ds.error ? `  ERROR: ${ds.error}` : '',
-      ds.lastError ? `  lastErr: ${ds.lastError}` : '',
-    ].filter(Boolean);
+      `[Native] state: ${stats.state}`,
+      `[Native] render: ${stats.renderFps} fps`,
+      `[Native] ${stats.resolution}`,
+      `[Native] t=${stats.currentSec.toFixed(1)}s  rate=${this.playbackRate.toFixed(2)}x`,
+      `[Native] buf=${stats.bufferedVideoSec.toFixed(1)}s`,
+      `[Native] audio: ${this.audioMuted ? 'muted' : 'on'}`,
+    ];
     lines.forEach((line, i) => {
-      ctx.fillText(line, 10, 18 + i * 16);
+      ctx.fillText(line, 10, 20 + i * 18);
     });
     ctx.restore();
   }
 
-  play() {
-    if (this.videoEl) {
-      this.videoEl.play().catch((e) => console.warn('[WebCodecsPlayer] play failed:', e));
+  // ===== 状态管理 =====
+
+  private setState(s: PlayerState) {
+    if (this.state !== s) {
+      this.state = s;
+      this.cb.onStateChange?.(s);
     }
   }
 
-  pause() {
-    if (this.videoEl) {
-      this.videoEl.pause();
-    }
+  private fail(msg: string) {
+    console.error('[WebCodecsPlayer] fatal error:', msg);
+    this.setState('error');
+    this.cb.onError?.(msg);
   }
 
-  togglePlay() {
-    if (!this.videoEl) return;
-    if (this.videoEl.paused) this.play();
-    else this.pause();
-  }
+  teardown(): void {
+    this.destroyed = true;
 
-  setVolume(v: number) {
-    if (this.videoEl) {
-      this.videoEl.volume = Math.max(0, Math.min(1, v));
-    }
-  }
-
-  setPlaybackRate(r: number) {
-    const rate = Math.max(0.25, Math.min(4, r));
-    this.playbackRate = rate;
-    if (this.videoEl) {
-      this.videoEl.playbackRate = rate;
-    }
-    console.log('[WebCodecsPlayer] setPlaybackRate:', rate);
-  }
-
-  async seek(seconds: number) {
-    const t = Math.max(0, seconds);
-    console.log('[WebCodecsPlayer] seek to:', t);
-
-    this.encodedVideo = [];
-    this.vIdx = 0;
-    this.needVideoKey = true;
-    this.videoTimeOffset = 0;
-    this.hasOffset = false;
-
-    for (const f of this.frameQueue) f.close();
-    this.frameQueue = [];
-
-    try { this.videoDecoder?.reset(); } catch {}
-    if (this.videoConfig) {
-      try {
-        this.videoDecoder?.configure({
-          codec: this.videoConfig.codec,
-          codedWidth: this.videoConfig.codedWidth,
-          codedHeight: this.videoConfig.codedHeight,
-          description: this.videoConfig.description,
-        });
-      } catch {}
-    }
-
-    this.initDemuxPipeline();
-
-    if (this.videoEl) {
-      this.videoEl.currentTime = t;
-    }
-  }
-
-  private teardown() {
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.raf = 0;
-
-    if (this.decoderStallCheckTimer) {
-      clearTimeout(this.decoderStallCheckTimer);
-      this.decoderStallCheckTimer = 0;
-    }
-
-    if (this.syncCheckTimer) {
-      clearTimeout(this.syncCheckTimer);
-      this.syncCheckTimer = 0;
+    if (this.raf) {
+      cancelAnimationFrame(this.raf);
+      this.raf = 0;
     }
 
     if (this.hls) {
@@ -735,190 +417,20 @@ export class WebCodecsPlayer {
     }
 
     if (this.videoEl) {
+      this.videoEl.pause();
       this.videoEl.removeAttribute('src');
       this.videoEl.load();
-      this.videoEl.remove();
+      if (this.videoEl.parentNode) {
+        this.videoEl.parentNode.removeChild(this.videoEl);
+      }
       this.videoEl = null;
     }
 
-    for (const f of this.frameQueue) f.close();
-    this.frameQueue = [];
-    this.encodedVideo = [];
-    this.vIdx = 0;
-    this.canvasSized = false;
-    this.spsNalu = null;
-    this.ppsNalu = null;
-
-    try {
-      if (this.videoDecoder && this.videoDecoder.state !== 'closed') this.videoDecoder.close();
-    } catch {}
-    this.videoDecoder = null;
-
-    this.packetStream = null;
-    this.parseStream = null;
-    this.elementaryStream = null;
+    this.state = 'idle';
+    this.renderedFrames = 0;
   }
 
-  destroy() {
-    this.destroyed = true;
+  destroy(): void {
     this.teardown();
-    this.setState('idle');
-  }
-
-  getState(): PlayerState {
-    return this.state;
-  }
-
-  setShowDebug(show: boolean) {
-    this.showDebug = show;
-  }
-
-  getStats() {
-    const now = performance.now();
-    const dt = Math.max(1, now - this.statsMark.t) / 1000;
-    const renderFps = (this.renderedFrames - this.statsMark.rendered) / dt;
-    const decodeFps = (this.decodedFrames - this.statsMark.decoded) / dt;
-    this.statsMark = { t: now, rendered: this.renderedFrames, decoded: this.decodedFrames };
-
-    const clock = this.videoEl?.currentTime ?? 0;
-    return {
-      state: this.state,
-      renderFps: Math.round(renderFps),
-      decodeFps: Math.round(decodeFps),
-      queued: this.frameQueue.length,
-      decodeQueue: this.videoDecoder?.decodeQueueSize ?? 0,
-      dropped: this.droppedFrames,
-      resolution: this.videoConfig ? `${this.videoConfig.codedWidth}x${this.videoConfig.codedHeight}` : '',
-      codec: this.videoConfig?.codec ?? '',
-      currentSec: +clock.toFixed(1),
-      decodedFrames: this.decodedFrames,
-      renderedFrames: this.renderedFrames,
-      demuxVideoQueue: this.encodedVideo.length - this.vIdx,
-      demuxAudioQueue: 0,
-      bufferedVideoSec: 0,
-      bufferedAudioSec: 0,
-    };
-  }
-
-  private setState(s: PlayerState) {
-    if (this.state === s) return;
-    this.state = s;
-    this.cb.onStateChange?.(s);
-  }
-
-  private fail(message: string) {
-    console.error('[WebCodecsPlayer] fail:', message);
-    this.debugStats.error = message;
-    this.cb.onError?.(message);
-    this.setState('error');
-  }
-
-  private splitNalus(data: Uint8Array): Uint8Array[] {
-    const nalus: Uint8Array[] = [];
-    let i = 0;
-    const len = data.length;
-
-    while (i < len) {
-      let startCodeLen = 0;
-      if (i + 4 <= len && data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1) {
-        startCodeLen = 4;
-      } else if (i + 3 <= len && data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
-        startCodeLen = 3;
-      }
-
-      if (startCodeLen > 0) {
-        const start = i;
-        i += startCodeLen;
-        let end = i;
-        while (end < len) {
-          if (end + 4 <= len && data[end] === 0 && data[end + 1] === 0 && data[end + 2] === 0 && data[end + 3] === 1) break;
-          if (end + 3 <= len && data[end] === 0 && data[end + 1] === 0 && data[end + 2] === 1) break;
-          end++;
-        }
-        nalus.push(data.subarray(start, end));
-        i = end;
-      } else {
-        i++;
-      }
-    }
-
-    return nalus;
-  }
-
-  private getNaluType(nalu: Uint8Array): number {
-    let startCodeLen = 0;
-    if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 0 && nalu[3] === 1) startCodeLen = 4;
-    else if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 1) startCodeLen = 3;
-    if (nalu.length <= startCodeLen) return 0;
-    return nalu[startCodeLen] & 0x1f;
-  }
-
-  private nalusToAvcc(nalus: Uint8Array[]): Uint8Array {
-    let totalLen = 0;
-    const raws: Uint8Array[] = [];
-    for (const nalu of nalus) {
-      const raw = this.stripStartCode(nalu);
-      raws.push(raw);
-      totalLen += 4 + raw.length;
-    }
-    const result = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const raw of raws) {
-      result[offset] = (raw.length >> 24) & 0xff;
-      result[offset + 1] = (raw.length >> 16) & 0xff;
-      result[offset + 2] = (raw.length >> 8) & 0xff;
-      result[offset + 3] = raw.length & 0xff;
-      result.set(raw, offset + 4);
-      offset += 4 + raw.length;
-    }
-    return result;
-  }
-
-  private buildVideoConfig(sps: Uint8Array, pps: Uint8Array) {
-    let spsOffset = 0;
-    if (sps[0] === 0 && sps[1] === 0 && sps[2] === 0 && sps[3] === 1) spsOffset = 4;
-    else if (sps[0] === 0 && sps[1] === 0 && sps[2] === 1) spsOffset = 3;
-
-    const profileIdc = sps[spsOffset + 1];
-    const profileCompat = sps[spsOffset + 2];
-    const levelIdc = sps[spsOffset + 3];
-    const codec = `avc1.${this.hex(profileIdc)}${this.hex(profileCompat)}${this.hex(levelIdc)}`;
-
-    const spsRaw = this.stripStartCode(sps);
-    const ppsRaw = this.stripStartCode(pps);
-    const description = new Uint8Array(11 + spsRaw.length + ppsRaw.length);
-    let i = 0;
-    description[i++] = 1;
-    description[i++] = profileIdc;
-    description[i++] = profileCompat;
-    description[i++] = levelIdc;
-    description[i++] = 0xff;
-    description[i++] = 0xe1;
-    description[i++] = (spsRaw.length >> 8) & 0xff;
-    description[i++] = spsRaw.length & 0xff;
-    description.set(spsRaw, i);
-    i += spsRaw.length;
-    description[i++] = 1;
-    description[i++] = (ppsRaw.length >> 8) & 0xff;
-    description[i++] = ppsRaw.length & 0xff;
-    description.set(ppsRaw, i);
-
-    return {
-      kind: 'video',
-      codec,
-      codedWidth: 1920,
-      codedHeight: 1080,
-      description,
-    };
-  }
-
-  private hex(b: number): string {
-    return b.toString(16).padStart(2, '0').toUpperCase();
-  }
-
-  private stripStartCode(nalu: Uint8Array): Uint8Array {
-    if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 0 && nalu[3] === 1) return nalu.subarray(4);
-    if (nalu[0] === 0 && nalu[1] === 0 && nalu[2] === 1) return nalu.subarray(3);
-    return nalu;
   }
 }

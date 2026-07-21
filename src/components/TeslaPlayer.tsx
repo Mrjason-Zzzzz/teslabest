@@ -129,8 +129,8 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const w = window as any;
-    setWcSupported(typeof w.VideoDecoder === 'function');
+    // 新架构不需要 WebCodecs API，只需要 HLS.js
+    setWcSupported(typeof Hls !== 'undefined' && Hls.isSupported());
   }, []);
 
   useEffect(() => {
@@ -154,6 +154,8 @@ export default function TeslaPlayer({
 
   const togglePlay = useCallback(() => {
     if (mode === 'webcodecs' && wcPlayerRef.current) {
+      // 用户第一次点击时取消静音（浏览器自动播放策略要求 muted）
+      wcPlayerRef.current.unmute();
       wcPlayerRef.current.togglePlay();
     } else if (mode === 'video' && videoRef.current) {
       const v = videoRef.current;
@@ -282,10 +284,10 @@ export default function TeslaPlayer({
   const startBufferingTimeout = useCallback(() => {
     clearBufferingTimeout();
     bufferingTimeoutRef.current = window.setTimeout(() => {
-      console.warn('[TeslaPlayer] buffering timeout after 30s');
+      console.warn('[TeslaPlayer] buffering timeout after 60s');
       setError('缓冲超时，网络可能不稳定');
       setLoading(false);
-    }, 30000);
+    }, 60000); // 60s，给 WebCodecs 模式更多初始化时间
   }, [clearBufferingTimeout]);
 
   // ===== Video 模式初始化（原生 video + hls.js 降级方案）=====
