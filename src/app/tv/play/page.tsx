@@ -55,7 +55,6 @@ import {
 import { loadTVPlayerUpDownAction } from '@/lib/tv-preferences';
 import { SearchResult } from '@/lib/types';
 
-import TeslaEntryButton from '@/components/TeslaEntryButton';
 import TVNativeVideo from '@/components/tv/player/TVNativeVideo';
 import {
   fetchTVDetail,
@@ -1451,18 +1450,6 @@ function TVPlayClient() {
           </div>
           <div className='mt-1 text-xl text-slate-300'>
             {episodeTitle} · {detail.source_name}
-          </div>
-          <div className='mt-2 flex justify-end'>
-            <TeslaEntryButton
-              kind='tv'
-              params={{
-                source: source || undefined,
-                id: id || undefined,
-                title: title || undefined,
-                fileName: fileName || undefined,
-                index: episodeIndex,
-              }}
-            />
           </div>
         </div>
       </div>

@@ -25,7 +25,6 @@ import {
 import { getDoubanDetail } from '@/lib/douban.client';
 
 import ProxyImage from '@/components/ProxyImage';
-import TeslaEntryButton from '@/components/TeslaEntryButton';
 
 interface BannerCarouselProps {
   autoPlayInterval?: number; // 自动播放间隔（毫秒）
@@ -638,24 +637,17 @@ export default function BannerCarousel({
             )}
           </div>
 
-          {/* PC端播放按钮 + Tesla 版入口 */}
-          <div className='hidden md:flex items-center gap-3 pointer-events-auto'>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePlay(currentItem.title);
-              }}
-              className='flex items-center gap-2 px-6 py-3 bg-gray-500/30 hover:bg-gray-500/50 backdrop-blur-sm text-white font-semibold rounded-lg transition-all'
-            >
-              <Play className='w-5 h-5 fill-white' />
-              立即播放
-            </button>
-            <TeslaEntryButton
-              kind='play'
-              params={{ title: currentItem.title }}
-              label='Tesla 版'
-            />
-          </div>
+          {/* PC端播放按钮 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePlay(currentItem.title);
+            }}
+            className='hidden md:flex items-center gap-2 px-6 py-3 bg-gray-500/30 hover:bg-gray-500/50 backdrop-blur-sm text-white font-semibold rounded-lg transition-all pointer-events-auto'
+          >
+            <Play className='w-5 h-5 fill-white' />
+            立即播放
+          </button>
 
           {currentItem.overview && (
             <p className='text-sm md:text-base text-white/80 line-clamp-3 drop-shadow-md'>

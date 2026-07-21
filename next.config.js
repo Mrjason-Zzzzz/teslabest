@@ -1,17 +1,4 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  // 新增这一行，全局关闭静态预渲染，所有接口动态执行
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "10mb"
-    }
-  },
-  // 强制全部路由动态，根治 searchParams 静态报错
-  reactStrictMode: true,
-}
-
-module.exports = nextConfig
-/** @type {import('next').NextConfig} */
 /* eslint-disable @typescript-eslint/no-var-requires */
 
 const { PHASE_DEVELOPMENT_SERVER } = require('next/constants');
@@ -117,6 +104,9 @@ const createNextConfig = (phase) => {
             'redis',
             '@vercel/postgres',
             'pg',
+            'libsql',
+            '@libsql/isomorphic-fetch',
+            '@libsql/isomorphic-ws',
           ].map((pkg) => [
             pkg,
             path.resolve(
@@ -149,13 +139,14 @@ const createNextConfig = (phase) => {
       });
     }
 
-    // Exclude better-sqlite3, D1, and Postgres modules from client-side bundle
+    // Exclude better-sqlite3, D1, Postgres, and Turso modules from client-side bundle
     if (!isServer) {
       config.externals = config.externals || [];
       config.externals.push({
         'better-sqlite3': 'commonjs better-sqlite3',
         '@vercel/postgres': 'commonjs @vercel/postgres',
         'pg': 'commonjs pg',
+        '@libsql/client': 'commonjs @libsql/client',
       });
 
       config.resolve.alias = {
@@ -165,6 +156,7 @@ const createNextConfig = (phase) => {
         '@/lib/d1-adapter': false,
         '@/lib/postgres.db': false,
         '@/lib/postgres-adapter': false,
+        '@/lib/turso-adapter': false,
       };
     }
 

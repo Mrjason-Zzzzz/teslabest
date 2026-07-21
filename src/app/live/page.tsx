@@ -4,7 +4,7 @@
 
 import { GitBranch, Heart, Radio, Tv } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   deleteFavorite,
@@ -19,7 +19,6 @@ import { useLiveSync } from '@/hooks/useLiveSync';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
 import PageLayout from '@/components/PageLayout';
-import TeslaEntryButton from '@/components/TeslaEntryButton';
 
 // 扩展 HTMLVideoElement 类型以支持 hls 和 flv 属性
 declare global {
@@ -2306,7 +2305,7 @@ function LivePageClient() {
     <PageLayout activePath='/live'>
       <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
         {/* 第一行：页面标题 */}
-        <div className='py-1 flex items-center justify-between gap-3'>
+        <div className='py-1'>
           <h1 className='text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 max-w-[80%]'>
             <Radio className='w-5 h-5 text-blue-500 flex-shrink-0' />
             <div className='min-w-0 flex-1'>
@@ -2325,13 +2324,6 @@ function LivePageClient() {
               </div>
             </div>
           </h1>
-          <TeslaEntryButton
-            kind='live'
-            params={{
-              source: currentSource?.key,
-              id: currentChannel?.id,
-            }}
-          />
         </div>
 
         {/* 第二行：播放器和频道列表 */}
@@ -3156,9 +3148,5 @@ const FavoriteIcon = ({ filled }: { filled: boolean }) => {
 };
 
 export default function LivePage() {
-  return (
-    <Suspense fallback={null}>
-      <LivePageClient />
-    </Suspense>
-  );
+  return <LivePageClient />;
 }
