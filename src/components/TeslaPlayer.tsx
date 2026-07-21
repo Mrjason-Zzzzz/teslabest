@@ -3,12 +3,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import {
+  Gauge,
   Loader2,
   Maximize,
   Minimize,
   Pause,
   Play,
   RotateCcw,
+  Settings,
   Volume2,
   VolumeX,
   Rewind,
@@ -17,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
+import { WebCodecsPlayer, type QualityLevel } from '@/components/webcodecs/WebCodecsPlayer';
 
 interface TeslaPlayerProps {
   url: string;
@@ -40,6 +42,13 @@ function formatTime(seconds: number): string {
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
   const ss = String(s).padStart(2, '0');
   return `${hh}${mm}:${ss}`;
+}
+
+function formatBitrate(bps: number): string {
+  if (bps <= 0) return '';
+  if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(1) + ' Mbps';
+  if (bps >= 1_000) return (bps / 1_000).toFixed(0) + ' Kbps';
+  return bps + ' bps';
 }
 
 const PROGRESS_SAVE_INTERVAL = 3000;
@@ -95,7 +104,12 @@ export default function TeslaPlayer({
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [playerReady, setPlayerReady] = useState(false);
+
+  // 清晰度 / 测速
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);
+  const [currentQuality, setCurrentQuality] = useState<QualityLevel | null>(null);
+  const [bandwidthBps, setBandwidthBps] = useState(0);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -178,9 +192,9 @@ export default function TeslaPlayer({
     if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
     setShowControls(true);
     hideControlsTimerRef.current = window.setTimeout(() => {
-      if (playing && !showRateMenu) setShowControls(false);
+      if (playing && !showRateMenu && !showQualityMenu) setShowControls(false);
     }, 3000);
-  }, [playing, showRateMenu]);
+  }, [playing, showRateMenu, showQualityMenu]);
 
   useEffect(() => {
     if (playRecordKey) {
@@ -216,6 +230,9 @@ export default function TeslaPlayer({
     let destroyed = false;
     setLoading(true);
     setError(null);
+    setQualities([]);
+    setCurrentQuality(null);
+    setBandwidthBps(0);
 
     try {
       const player = new WebCodecsPlayer(canvasRef.current, {
@@ -257,11 +274,25 @@ export default function TeslaPlayer({
             clearBufferingTimeout();
           }
         },
+        onLevelsChange: (levels) => {
+          if (!destroyed) {
+            setQualities(levels);
+          }
+        },
+        onLevelSwitch: (level) => {
+          if (!destroyed) {
+            setCurrentQuality(level);
+          }
+        },
+        onBandwidth: (bps) => {
+          if (!destroyed) {
+            setBandwidthBps(bps);
+          }
+        },
       });
 
       wcPlayerRef.current = player;
       player.setShowDebug(showDebug);
-      setPlayerReady(true);
 
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
@@ -287,20 +318,41 @@ export default function TeslaPlayer({
         clearBufferingTimeout();
         player.destroy();
         wcPlayerRef.current = null;
-        setPlayerReady(false);
       };
     } catch (e: any) {
       setError('播放器初始化失败: ' + (e?.message || String(e)));
       setLoading(false);
       return () => { destroyed = true; };
     }
-    // url 不变时 key 由 React 在父组件通过 key prop 控制重建
   }, [url]);
 
   // 同步 showDebug 到播放器
   useEffect(() => {
     wcPlayerRef.current?.setShowDebug(showDebug);
   }, [showDebug]);
+
+  const handleSwitchQuality = useCallback((index: number) => {
+    wcPlayerRef.current?.setLevel(index);
+    setShowQualityMenu(false);
+    // 更新当前清晰度显示
+    if (index === -1) {
+      setCurrentQuality(null);
+    } else {
+      const q = qualities.find((l) => l.index === index);
+      if (q) setCurrentQuality(q);
+    }
+  }, [qualities]);
+
+  // 当前清晰度标签
+  const qualityLabel = useMemo(() => {
+    if (qualities.length <= 1) return null;
+    const cl = wcPlayerRef.current?.getCurrentLevel();
+    if (cl === -1) return '自动';
+    if (cl !== undefined && cl >= 0 && qualities[cl]) {
+      return qualities[cl].label;
+    }
+    return currentQuality?.label || '自动';
+  }, [qualities, currentQuality]);
 
   return (
     <div
@@ -315,21 +367,22 @@ export default function TeslaPlayer({
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* canvas 元素 — 始终渲染 */}
+      {/* canvas 元素 — 透明覆盖层，用于调试信息 */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 h-full w-full object-contain"
+        className="absolute inset-0 h-full w-full"
+        style={{ pointerEvents: 'none' }}
       />
 
       {/* 调试信息 */}
       {showDebug && debugInfo && (
         <div className="absolute top-2 left-2 z-20 bg-black/70 p-2 text-xs text-green-400 font-mono pointer-events-none">
           <div>state: <b>{debugInfo.state}</b></div>
-          <div>render: {debugInfo.renderFps} fps</div>
-          <div>rendered: {debugInfo.renderedFrames} frames</div>
-          <div>buf: {debugInfo.bufferedVideoSec}s</div>
+          <div>bandwidth: {debugInfo.bandwidth}</div>
+          <div>level: {debugInfo.level} ({debugInfo.levels} levels)</div>
+          <div>buf: {debugInfo.bufferedVideoSec?.toFixed(1)}s</div>
           <div>{debugInfo.resolution}</div>
-          <div>t {debugInfo.currentSec}s</div>
+          <div>t {debugInfo.currentSec?.toFixed(1)}s</div>
         </div>
       )}
 
@@ -496,6 +549,53 @@ export default function TeslaPlayer({
           </div>
 
           <div className="flex items-center gap-0.5 md:gap-1">
+            {/* 带宽测速显示 */}
+            {bandwidthBps > 0 && (
+              <div className="flex items-center gap-1 px-1.5 text-xs text-white/60" title="当前带宽">
+                <Gauge className="h-3.5 w-3.5" />
+                {formatBitrate(bandwidthBps)}
+              </div>
+            )}
+
+            {/* 清晰度选择 */}
+            {qualities.length > 1 && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+                  title="切换清晰度"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  {qualityLabel}
+                </button>
+                {showQualityMenu && (
+                  <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[100px] max-h-[250px] overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleSwitchQuality(-1); }}
+                      className={`block w-full rounded px-2 py-1 text-xs text-left ${wcPlayerRef.current?.getCurrentLevel() === -1 || wcPlayerRef.current?.getCurrentLevel() === undefined ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                    >
+                      自动
+                    </button>
+                    {qualities.map((q) => (
+                      <button
+                        key={q.index}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSwitchQuality(q.index); }}
+                        className={`block w-full rounded px-2 py-1 text-xs text-left ${wcPlayerRef.current?.getCurrentLevel() === q.index ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                      >
+                        <span>{q.label}</span>
+                        {q.bitrate > 0 && (
+                          <span className="ml-2 text-white/40">{formatBitrate(q.bitrate)}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 返回原版 */}
             {onBackToOriginal && (
               <button
@@ -531,8 +631,6 @@ export default function TeslaPlayer({
           </div>
         </div>
       </div>
-
-      <style>{`canvas { display: block; }`}</style>
     </div>
   );
 }

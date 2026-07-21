@@ -3,18 +3,30 @@ import Hls from 'hls.js';
 
 export type PlayerState = 'idle' | 'buffering' | 'playing' | 'paused' | 'ended' | 'error';
 
+export interface QualityLevel {
+  index: number;
+  height: number;
+  width: number;
+  bitrate: number; // bps
+  label: string;
+}
+
 export interface PlayerCallbacks {
   onTime?: (currentSec: number) => void;
   onDurationChange?: (durationSec: number) => void;
   onStateChange?: (state: PlayerState) => void;
   onError?: (message: string) => void;
+  onLevelsChange?: (levels: QualityLevel[]) => void;
+  onLevelSwitch?: (level: QualityLevel) => void;
+  onBandwidth?: (bps: number) => void;
 }
 
 /**
- * WebCodecsPlayer — 单管道视频渲染播放器
+ * WebCodecsPlayer
  *
- * 架构：HLS.js → <video>（音视频同源，100% 同步）→ Canvas.drawImage（渲染）
- * 去掉了 mux.js + VideoDecoder 双管道，从根本上解决音画不同步。
+ * 架构：HLS.js → <video> 直接显示（音视频 100% 同步，浏览器原生渲染管线）
+ * Canvas 仅用于调试叠加层，不参与视频渲染。
+ * 支持 HLS 多码率切换 + 带宽测速。
  */
 export class WebCodecsPlayer {
   private canvas: HTMLCanvasElement;
@@ -26,24 +38,27 @@ export class WebCodecsPlayer {
 
   private state: PlayerState = 'idle';
   private destroyed = false;
-  private raf = 0;
   private showDebug = false;
   private playbackRate = 1;
   private audioMuted = true;
 
-  // 帧率统计
-  private renderedFrames = 0;
-  private fps = 0;
-  private fpsFrames = 0;
-  private fpsLastTime = 0;
+  // 带宽统计
+  private bandwidthBps = 0;
+  private lastFragmentLoadTime = 0;
+  private lastFragmentSize = 0;
+
+  // 调试定时器
+  private debugTimer: number | null = null;
 
   constructor(canvas: HTMLCanvasElement, cb: PlayerCallbacks = {}) {
     this.canvas = canvas;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) throw new Error('2d canvas context unavailable');
     this.ctx = ctx;
     this.cb = cb;
 
+    // canvas 初始设为透明，仅用于调试覆盖
+    canvas.style.pointerEvents = 'none';
     if (!canvas.width || !canvas.height) {
       canvas.width = 1280;
       canvas.height = 720;
@@ -56,11 +71,10 @@ export class WebCodecsPlayer {
 
   async load(url: string, startAt = 0): Promise<void> {
     this.teardown();
-    this.renderedFrames = 0;
-    this.fps = 0;
-    this.fpsFrames = 0;
-    this.fpsLastTime = performance.now();
+    // 关键：teardown 把 destroyed 设为 true，这里必须重置
+    this.destroyed = false;
     this.audioMuted = true;
+    this.bandwidthBps = 0;
     this.setState('buffering');
     console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
 
@@ -69,24 +83,40 @@ export class WebCodecsPlayer {
       return;
     }
 
-    // 将 video 元素插入 canvas 的父容器，藏在 canvas 后面
-    // 这样浏览器会正常解码视频帧（不会因为 1px 尺寸而跳过解码）
     const parent = this.canvas.parentElement;
+    if (!parent) {
+      this.fail('canvas has no parent element');
+      return;
+    }
+
+    // 确保父容器有 position: relative 以便 video 绝对定位
+    const parentPos = window.getComputedStyle(parent).position;
+    if (parentPos === 'static') {
+      parent.style.position = 'relative';
+    }
+
+    // 创建 video 元素 — 直接显示，不隐藏
     const videoEl = document.createElement('video');
-    videoEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:0;pointer-events:none;';
+    videoEl.style.cssText =
+      'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:0;';
     videoEl.muted = true;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('x-webkit-airplay', 'deny');
     videoEl.crossOrigin = 'anonymous';
-    
-    if (parent) {
-      parent.insertBefore(videoEl, this.canvas);
-      // 确保 canvas 在 video 上面
-      this.canvas.style.position = 'relative';
-      this.canvas.style.zIndex = '1';
-    }
+
+    // video 插入在 canvas 前面（canvas 是透明覆盖层，z-index 更高）
+    parent.insertBefore(videoEl, this.canvas);
     this.videoEl = videoEl;
+
+    // 确保 canvas 在 video 上面，但透明不阻挡交互
+    this.canvas.style.position = 'absolute';
+    this.canvas.style.top = '0';
+    this.canvas.style.left = '0';
+    this.canvas.style.width = '100%';
+    this.canvas.style.height = '100%';
+    this.canvas.style.zIndex = '1';
+    this.canvas.style.pointerEvents = 'none';
 
     // 事件监听
     videoEl.addEventListener('timeupdate', this.onTimeUpdate);
@@ -106,6 +136,10 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
+      // 启用自适应码率 + 带宽估算
+      abrEwmaDefaultEstimate: 500000,
+      abrBandWidthFactor: 0.95,
+      abrBandWidthUpFactor: 0.7,
       maxBufferLength: 60,
       maxMaxBufferLength: 120,
       backBufferLength: 30,
@@ -116,15 +150,56 @@ export class WebCodecsPlayer {
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt: any, data: any) => {
       if (this.destroyed) return;
       console.log('[WebCodecsPlayer] MANIFEST_PARSED, levels:', data.levels?.length);
-      // muted 状态下尝试自动播放
+      // 通知上层可用清晰度列表
+      const levels = (data.levels || []).map((l: any, i: number) => ({
+        index: i,
+        height: l.height || 0,
+        width: l.width || 0,
+        bitrate: l.bitrate || 0,
+        label: l.height ? `${l.height}p` : `码率 ${i + 1}`,
+      }));
+      this.cb.onLevelsChange?.(levels);
+
+      // muted 自动播放
       videoEl.play().catch(() => {
         console.warn('[WebCodecsPlayer] autoplay blocked, waiting for user gesture');
       });
     });
 
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_evt: any, data: any) => {
+      if (this.destroyed) return;
+      const level = hls.levels[data.level];
+      if (level) {
+        this.cb.onLevelSwitch?.({
+          index: data.level,
+          height: level.height || 0,
+          width: level.width || 0,
+          bitrate: level.bitrate || 0,
+          label: level.height ? `${level.height}p` : `码率 ${data.level + 1}`,
+        });
+      }
+    });
+
+    // 带宽估算：统计 fragment 加载速度
+    hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
+      if (this.destroyed) return;
+      if (data.frag && data.stats) {
+        const loadTime = data.stats.loading.end - data.stats.loading.start;
+        const size = data.stats.total;
+        if (loadTime > 0 && size > 0) {
+          // 计算瞬时带宽
+          const instantBps = (size * 8 * 1000) / loadTime;
+          // 平滑估算
+          this.bandwidthBps = this.bandwidthBps
+            ? Math.round(this.bandwidthBps * 0.7 + instantBps * 0.3)
+            : Math.round(instantBps);
+          this.cb.onBandwidth?.(this.bandwidthBps);
+        }
+      }
+    });
+
     hls.on(Hls.Events.FRAG_BUFFERED, () => {
       if (this.destroyed) return;
-      // 有缓冲数据了，可以开始渲染
       if (this.state === 'buffering' && videoEl.readyState >= 2) {
         this.setState('playing');
       }
@@ -147,7 +222,8 @@ export class WebCodecsPlayer {
     hls.attachMedia(videoEl);
     hls.loadSource(url);
 
-    this.loop();
+    // 启动调试覆盖层定时器
+    this.startDebugOverlay();
   }
 
   // ===== 事件处理 =====
@@ -165,10 +241,6 @@ export class WebCodecsPlayer {
   private onLoadedMetadata = () => {
     if (this.destroyed || !this.videoEl) return;
     const v = this.videoEl;
-    if (v.videoWidth && v.videoHeight) {
-      this.canvas.width = v.videoWidth;
-      this.canvas.height = v.videoHeight;
-    }
     console.log('[WebCodecsPlayer] loadedmetadata:', v.videoWidth + 'x' + v.videoHeight, 'duration=' + v.duration);
   };
 
@@ -218,48 +290,72 @@ export class WebCodecsPlayer {
     this.playbackRate = this.videoEl.playbackRate;
   };
 
-  // ===== 渲染循环 =====
+  // ===== 调试覆盖层 =====
 
-  private loop = () => {
-    this.tick();
-    if (!this.destroyed) {
-      this.raf = requestAnimationFrame(this.loop);
-    }
-  };
-
-  private tick() {
-    try {
-      if (this.videoEl && this.videoEl.readyState >= 2) {
-        const v = this.videoEl;
-        if (v.videoWidth && v.videoHeight) {
-          // 同步 canvas 尺寸
-          const cw = this.canvas.width;
-          const ch = this.canvas.height;
-          if (cw !== v.videoWidth || ch !== v.videoHeight) {
-            this.canvas.width = v.videoWidth;
-            this.canvas.height = v.videoHeight;
-          }
-          // 从 video 元素捕获帧 — 音画天然同步
-          this.ctx.drawImage(v, 0, 0, this.canvas.width, this.canvas.height);
-          this.renderedFrames++;
-
-          // 帧率统计
-          const now = performance.now();
-          this.fpsFrames++;
-          if (now - this.fpsLastTime >= 1000) {
-            this.fps = Math.round((this.fpsFrames * 1000) / (now - this.fpsLastTime));
-            this.fpsFrames = 0;
-            this.fpsLastTime = now;
-          }
-        }
-      }
-
-      if (this.showDebug) {
+  private startDebugOverlay() {
+    this.stopDebugOverlay();
+    this.debugTimer = window.setInterval(() => {
+      if (this.showDebug && !this.destroyed && this.videoEl) {
         this.drawDebugOverlay();
+      } else if (!this.showDebug) {
+        // 清空 canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
       }
-    } catch (e) {
-      console.error('[WebCodecsPlayer] tick error:', e);
+    }, 500);
+  }
+
+  private stopDebugOverlay() {
+    if (this.debugTimer !== null) {
+      clearInterval(this.debugTimer);
+      this.debugTimer = null;
     }
+  }
+
+  private drawDebugOverlay() {
+    if (!this.videoEl) return;
+    const v = this.videoEl;
+    const ctx = this.ctx;
+    const w = this.canvas.width || 640;
+    const hlsLevels = this.hls?.levels || [];
+    const currentLevel = this.hls?.currentLevel ?? -1;
+
+    ctx.clearRect(0, 0, w, this.canvas.height);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, Math.min(400, w), 200);
+
+    ctx.fillStyle = '#0f0';
+    ctx.font = '13px monospace';
+
+    const levelLabel = currentLevel >= 0 && hlsLevels[currentLevel]
+      ? `${hlsLevels[currentLevel].height}p @ ${this.formatBitrate(hlsLevels[currentLevel].bitrate)}`
+      : currentLevel === -1 ? 'auto' : 'none';
+
+    const lines = [
+      `state: ${this.state}`,
+      `${v.videoWidth}x${v.videoHeight}  level: ${levelLabel}`,
+      `t=${(v.currentTime || 0).toFixed(1)}s / ${(v.duration || 0).toFixed(1)}s`,
+      `rate: ${this.playbackRate.toFixed(2)}x  audio: ${this.audioMuted ? 'muted' : 'on'}`,
+      `bandwidth: ${this.formatBitrate(this.bandwidthBps)}`,
+      `buf: ${this.getBufferEnd() > 0 ? (this.getBufferEnd() - v.currentTime).toFixed(1) : '0'}s`,
+      `levels: ${hlsLevels.length}`,
+    ];
+    lines.forEach((line, i) => {
+      ctx.fillText(line, 10, 20 + i * 18);
+    });
+    ctx.restore();
+  }
+
+  private formatBitrate(bps: number): string {
+    if (bps <= 0) return '--';
+    if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(1) + ' Mbps';
+    if (bps >= 1_000) return (bps / 1_000).toFixed(0) + ' Kbps';
+    return bps + ' bps';
+  }
+
+  private getBufferEnd(): number {
+    if (!this.videoEl?.buffered?.length) return 0;
+    return this.videoEl.buffered.end(this.videoEl.buffered.length - 1);
   }
 
   // ===== 播放控制 =====
@@ -295,7 +391,6 @@ export class WebCodecsPlayer {
   setVolume(v: number): void {
     if (this.videoEl) {
       this.videoEl.volume = Math.max(0, Math.min(1, v));
-      // 用户设置音量 > 0 时取消静音
       if (v > 0 && this.audioMuted) {
         this.videoEl.muted = false;
         this.audioMuted = false;
@@ -326,6 +421,43 @@ export class WebCodecsPlayer {
 
   setShowDebug(s: boolean): void {
     this.showDebug = s;
+    if (!s) {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+  }
+
+  // ===== 清晰度 / 换源 =====
+
+  /** 获取所有可用清晰度 */
+  getLevels(): QualityLevel[] {
+    if (!this.hls?.levels) return [];
+    return this.hls.levels.map((l: any, i: number) => ({
+      index: i,
+      height: l.height || 0,
+      width: l.width || 0,
+      bitrate: l.bitrate || 0,
+      label: l.height ? `${l.height}p` : `码率 ${i + 1}`,
+    }));
+  }
+
+  /** 切换清晰度，-1 = 自动 */
+  setLevel(index: number): void {
+    if (!this.hls) return;
+    if (index === -1) {
+      this.hls.currentLevel = -1;
+    } else if (index >= 0 && index < this.hls.levels.length) {
+      this.hls.currentLevel = index;
+    }
+  }
+
+  /** 获取当前清晰度 */
+  getCurrentLevel(): number {
+    return this.hls?.currentLevel ?? -1;
+  }
+
+  /** 获取当前带宽估算 */
+  getBandwidth(): number {
+    return this.bandwidthBps;
   }
 
   getCurrentTime(): number {
@@ -341,52 +473,32 @@ export class WebCodecsPlayer {
   }
 
   getStats() {
+    const v = this.videoEl;
+    const levels = this.hls?.levels || [];
+    const cl = this.hls?.currentLevel ?? -1;
+    const levelLabel = cl >= 0 && levels[cl]
+      ? `${levels[cl].height}p @ ${this.formatBitrate(levels[cl].bitrate)}`
+      : cl === -1 ? 'auto' : '--';
+
     return {
       state: this.state,
-      renderFps: this.fps,
-      decodeFps: this.fps,
+      renderFps: 0,
+      decodeFps: 0,
       queued: 0,
       decodeQueue: 0,
       dropped: 0,
-      bufferedVideoSec: this.videoEl?.buffered?.length
-        ? this.videoEl.buffered.end(this.videoEl.buffered.length - 1) - this.videoEl.currentTime
-        : 0,
+      bufferedVideoSec: this.getBufferEnd() > 0 ? this.getBufferEnd() - (v?.currentTime || 0) : 0,
       bufferedAudioSec: 0,
-      resolution: this.videoEl
-        ? `${this.videoEl.videoWidth}x${this.videoEl.videoHeight}`
-        : '0x0',
+      resolution: v ? `${v.videoWidth}x${v.videoHeight}` : '0x0',
       codec: 'native',
-      currentSec: this.videoEl?.currentTime || 0,
-      renderedFrames: this.renderedFrames,
-      decodedFrames: this.renderedFrames,
+      currentSec: v?.currentTime || 0,
+      renderedFrames: 0,
+      decodedFrames: 0,
       demuxVideoQueue: 0,
+      bandwidth: this.formatBitrate(this.bandwidthBps),
+      level: levelLabel,
+      levels: levels.length,
     };
-  }
-
-  // ===== 调试叠加层 =====
-
-  private drawDebugOverlay() {
-    const stats = this.getStats();
-    const ctx = this.ctx;
-    const w = this.canvas.width || 640;
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, Math.min(380, w), 150);
-    ctx.fillStyle = '#0f0';
-    ctx.font = '13px monospace';
-
-    const lines = [
-      `[Native] state: ${stats.state}`,
-      `[Native] render: ${stats.renderFps} fps`,
-      `[Native] ${stats.resolution}`,
-      `[Native] t=${stats.currentSec.toFixed(1)}s  rate=${this.playbackRate.toFixed(2)}x`,
-      `[Native] buf=${stats.bufferedVideoSec.toFixed(1)}s`,
-      `[Native] audio: ${this.audioMuted ? 'muted' : 'on'}`,
-    ];
-    lines.forEach((line, i) => {
-      ctx.fillText(line, 10, 20 + i * 18);
-    });
-    ctx.restore();
   }
 
   // ===== 状态管理 =====
@@ -406,11 +518,7 @@ export class WebCodecsPlayer {
 
   teardown(): void {
     this.destroyed = true;
-
-    if (this.raf) {
-      cancelAnimationFrame(this.raf);
-      this.raf = 0;
-    }
+    this.stopDebugOverlay();
 
     if (this.hls) {
       try { this.hls.destroy(); } catch {}
@@ -427,8 +535,11 @@ export class WebCodecsPlayer {
       this.videoEl = null;
     }
 
+    // 清空 canvas
+    try { this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); } catch {}
+
     this.state = 'idle';
-    this.renderedFrames = 0;
+    this.bandwidthBps = 0;
   }
 
   destroy(): void {
