@@ -2,7 +2,6 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import Hls from 'hls.js';
 import {
   Loader2,
   Maximize,
@@ -10,9 +9,6 @@ import {
   Pause,
   Play,
   RotateCcw,
-  Cpu,
-  MonitorPlay,
-  Settings,
   Volume2,
   VolumeX,
   Rewind,
@@ -21,10 +17,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { setTeslaOptOut } from '@/components/TeslaAutoRedirect';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
-
-type PlayMode = 'webcodecs' | 'video';
 
 interface TeslaPlayerProps {
   url: string;
@@ -34,7 +27,6 @@ interface TeslaPlayerProps {
   onBackToOriginal?: () => void;
   onEnded?: () => void;
   playRecordKey?: string;
-  defaultMode?: PlayMode;
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -71,13 +63,6 @@ function saveProgress(key: string, time: number): void {
   }
 }
 
-function getInitialMode(): PlayMode {
-  if (typeof window === 'undefined') return 'webcodecs';
-  const saved = localStorage.getItem('tesla_player_mode') as PlayMode | null;
-  if (saved && ['webcodecs', 'video'].includes(saved)) return saved;
-  return 'webcodecs';
-}
-
 export default function TeslaPlayer({
   url,
   title,
@@ -86,21 +71,13 @@ export default function TeslaPlayer({
   onBackToOriginal,
   onEnded: onEndedCallback,
   playRecordKey,
-  defaultMode,
 }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
   const wcPlayerRef = useRef<WebCodecsPlayer | null>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
   const progressSaveTimerRef = useRef<number | null>(null);
   const bufferingTimeoutRef = useRef<number | null>(null);
-  const loadTimeoutRef = useRef<number | null>(null);
-
-  const [mode, setMode] = useState<PlayMode>(defaultMode || getInitialMode());
-  const [showModeMenu, setShowModeMenu] = useState(false);
-  const [wcSupported, setWcSupported] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -113,25 +90,17 @@ export default function TeslaPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isWebFullscreen, setIsWebFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [quality, setQuality] = useState<string>('auto');
-  const [showQualityMenu, setShowQualityMenu] = useState(false);
-  const [qualities, setQualities] = useState<Array<{ label: string; value: string }>>([]);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
     return getSavedProgress(playRecordKey);
   }, [playRecordKey]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    // 新架构不需要 WebCodecs API，只需要 HLS.js
-    setWcSupported(typeof Hls !== 'undefined' && Hls.isSupported());
-  }, []);
 
   useEffect(() => {
     if (savedProgress > 0 && duration > 0 && seekToTime === null) {
@@ -143,26 +112,14 @@ export default function TeslaPlayer({
   }, [savedProgress, duration, seekToTime]);
 
   const seek = useCallback((t: number) => {
-    if (mode === 'webcodecs' && wcPlayerRef.current) {
-      wcPlayerRef.current.seek(t);
-      setCurrentTime(t);
-    } else if (mode === 'video' && videoRef.current) {
-      videoRef.current.currentTime = t;
-      setCurrentTime(t);
-    }
-  }, [mode]);
+    wcPlayerRef.current?.seek(t);
+    setCurrentTime(t);
+  }, []);
 
   const togglePlay = useCallback(() => {
-    if (mode === 'webcodecs' && wcPlayerRef.current) {
-      // 用户第一次点击时取消静音（浏览器自动播放策略要求 muted）
-      wcPlayerRef.current.unmute();
-      wcPlayerRef.current.togglePlay();
-    } else if (mode === 'video' && videoRef.current) {
-      const v = videoRef.current;
-      if (v.paused) v.play().catch(() => {});
-      else v.pause();
-    }
-  }, [mode]);
+    wcPlayerRef.current?.unmute();
+    wcPlayerRef.current?.togglePlay();
+  }, []);
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -203,65 +160,27 @@ export default function TeslaPlayer({
   }, []);
 
   const setPlaybackRate = useCallback((r: number) => {
-    if (mode === 'webcodecs') {
-      wcPlayerRef.current?.setPlaybackRate(r);
-      setRate(r);
-    } else if (mode === 'video' && videoRef.current) {
-      videoRef.current.playbackRate = r;
-      setRate(r);
-    }
+    wcPlayerRef.current?.setPlaybackRate(r);
+    setRate(r);
     setShowRateMenu(false);
-  }, [mode]);
+  }, []);
 
   const toggleMute = useCallback(() => {
-    if (mode === 'webcodecs' && wcPlayerRef.current) {
-      const newMuted = !muted;
-      wcPlayerRef.current.setVolume(newMuted ? 0 : volume);
-      setMuted(newMuted);
-    } else if (mode === 'video' && videoRef.current) {
-      const v = videoRef.current;
-      v.muted = !v.muted;
-      setMuted(v.muted);
+    const newMuted = !muted;
+    wcPlayerRef.current?.setMuted(newMuted);
+    if (!newMuted) {
+      wcPlayerRef.current?.setVolume(volume);
     }
-  }, [mode, muted, volume]);
-
-  const switchQuality = useCallback((q: string) => {
-    setQuality(q);
-    setShowQualityMenu(false);
-    if (mode === 'video' && hlsRef.current) {
-      const hls = hlsRef.current;
-      if (q === 'auto') {
-        hls.currentLevel = -1;
-      } else {
-        const level = parseInt(q, 10);
-        if (!isNaN(level)) {
-          hls.currentLevel = level;
-        }
-      }
-    }
-  }, [mode]);
-
-  const switchMode = useCallback((newMode: PlayMode) => {
-    if (newMode === 'webcodecs' && !wcSupported) return;
-    setMode(newMode);
-    setShowModeMenu(false);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tesla_player_mode', newMode);
-    }
-  }, [wcSupported]);
-
-  const backToOriginal = useCallback(() => {
-    setTeslaOptOut();
-    onBackToOriginal?.();
-  }, [onBackToOriginal]);
+    setMuted(newMuted);
+  }, [muted, volume]);
 
   const resetControlsTimer = useCallback(() => {
     if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
     setShowControls(true);
     hideControlsTimerRef.current = window.setTimeout(() => {
-      if (playing && !showRateMenu && !showQualityMenu && !showModeMenu) setShowControls(false);
+      if (playing && !showRateMenu) setShowControls(false);
     }, 3000);
-  }, [playing, showRateMenu, showQualityMenu, showModeMenu]);
+  }, [playing, showRateMenu]);
 
   useEffect(() => {
     if (playRecordKey) {
@@ -287,180 +206,12 @@ export default function TeslaPlayer({
       console.warn('[TeslaPlayer] buffering timeout after 60s');
       setError('缓冲超时，网络可能不稳定');
       setLoading(false);
-    }, 60000); // 60s，给 WebCodecs 模式更多初始化时间
+    }, 60000);
   }, [clearBufferingTimeout]);
 
-  // ===== Video 模式初始化（原生 video + hls.js 降级方案）=====
+  // ===== 播放器初始化 =====
   useEffect(() => {
-    if (mode !== 'video') return;
-    if (!videoRef.current) return;
-
-    let destroyed = false;
-    setLoading(true);
-    setError(null);
-    setBuffering(false);
-
-    const video = videoRef.current;
-    const startPos = seekToTime !== null ? seekToTime : savedProgress;
-
-    const onLoadedMetadata = () => {
-      if (destroyed) return;
-      setDuration(video.duration || 0);
-      setLoading(false);
-    };
-
-    const onTimeUpdate = () => {
-      if (!destroyed) setCurrentTime(video.currentTime);
-    };
-
-    const onPlay = () => {
-      if (!destroyed) {
-        setPlaying(true);
-        setBuffering(false);
-        setLoading(false);
-      }
-    };
-
-    const onPause = () => {
-      if (!destroyed) setPlaying(false);
-    };
-
-    const onWaiting = () => {
-      if (destroyed) return;
-      setBuffering(true);
-      startBufferingTimeout();
-    };
-
-    const onPlaying = () => {
-      if (destroyed) return;
-      setBuffering(false);
-      setLoading(false);
-      clearBufferingTimeout();
-    };
-
-    const onEnded = () => {
-      if (destroyed) return;
-      setPlaying(false);
-      if (playRecordKey) saveProgress(playRecordKey, video.duration || 0);
-      setTimeout(() => onEndedCallback?.(), 500);
-    };
-
-    const onError = () => {
-      if (destroyed) return;
-      setError('播放错误，请尝试切换模式');
-      setLoading(false);
-    };
-
-    const onRateChange = () => {
-      if (!destroyed) setRate(video.playbackRate);
-    };
-
-    video.addEventListener('loadedmetadata', onLoadedMetadata);
-    video.addEventListener('timeupdate', onTimeUpdate);
-    video.addEventListener('play', onPlay);
-    video.addEventListener('pause', onPause);
-    video.addEventListener('waiting', onWaiting);
-    video.addEventListener('playing', onPlaying);
-    video.addEventListener('ended', onEnded);
-    video.addEventListener('error', onError);
-    video.addEventListener('ratechange', onRateChange);
-
-    let hls: Hls | null = null;
-
-    if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        autoStartLoad: true,
-        startPosition: startPos,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        backBufferLength: 60,
-      });
-      hlsRef.current = hls;
-
-      hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
-        if (destroyed) return;
-        const levels = data.levels || [];
-        const qs: Array<{ label: string; value: string }> = [
-          { label: '自动', value: 'auto' },
-          ...levels.map((l: any, i: number) => ({
-            label: l.height ? `${l.height}p` : `清晰度 ${i + 1}`,
-            value: String(i),
-          })),
-        ];
-        setQualities(qs);
-      });
-
-      hls.on(Hls.Events.LEVEL_LOADED, () => {
-        if (destroyed) return;
-        if (startPos > 0 && video.paused) {
-          video.currentTime = startPos;
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (destroyed) return;
-        console.warn('[TeslaPlayer] HLS ERROR:', data.type, data.details);
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            try { hlsRef.current?.startLoad(); } catch {}
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            try { hlsRef.current?.recoverMediaError(); } catch {}
-          } else {
-            setError('播放错误: ' + (data.details || data.type));
-            setLoading(false);
-          }
-        }
-      });
-
-      hls.attachMedia(video);
-      hls.loadSource(url);
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = url;
-      if (startPos > 0) {
-        video.currentTime = startPos;
-      }
-    } else {
-      setError('当前浏览器不支持 HLS 播放');
-      setLoading(false);
-    }
-
-    const loadTimeout = window.setTimeout(() => {
-      if (!destroyed && !video.duration) {
-        setLoading(false);
-      }
-    }, 10000);
-
-    return () => {
-      destroyed = true;
-      clearTimeout(loadTimeout);
-      clearBufferingTimeout();
-      video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      video.removeEventListener('timeupdate', onTimeUpdate);
-      video.removeEventListener('play', onPlay);
-      video.removeEventListener('pause', onPause);
-      video.removeEventListener('waiting', onWaiting);
-      video.removeEventListener('playing', onPlaying);
-      video.removeEventListener('ended', onEnded);
-      video.removeEventListener('error', onError);
-      video.removeEventListener('ratechange', onRateChange);
-      if (hls) {
-        try { hls.destroy(); } catch {}
-        hlsRef.current = null;
-      }
-    };
-  }, [mode, url, playRecordKey, onEndedCallback, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
-
-  // ===== WebCodecs 模式初始化 =====
-  useEffect(() => {
-    if (mode !== 'webcodecs') return;
     if (!canvasRef.current) return;
-    if (!wcSupported) {
-      setError('当前浏览器不支持 WebCodecs API');
-      setLoading(false);
-      return;
-    }
 
     let destroyed = false;
     setLoading(true);
@@ -510,6 +261,7 @@ export default function TeslaPlayer({
 
       wcPlayerRef.current = player;
       player.setShowDebug(showDebug);
+      setPlayerReady(true);
 
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
@@ -520,7 +272,7 @@ export default function TeslaPlayer({
       });
 
       const statsTimer = window.setInterval(() => {
-        if (showDebug && player) {
+        if (showDebug && player && !destroyed) {
           try {
             setDebugInfo(player.getStats());
           } catch {
@@ -535,21 +287,20 @@ export default function TeslaPlayer({
         clearBufferingTimeout();
         player.destroy();
         wcPlayerRef.current = null;
+        setPlayerReady(false);
       };
     } catch (e: any) {
       setError('播放器初始化失败: ' + (e?.message || String(e)));
       setLoading(false);
       return () => { destroyed = true; };
     }
-  }, [mode, url, wcSupported, showDebug, playRecordKey, onEndedCallback, duration, savedProgress, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
+    // url 不变时 key 由 React 在父组件通过 key prop 控制重建
+  }, [url]);
 
+  // 同步 showDebug 到播放器
   useEffect(() => {
-    if (mode !== 'webcodecs') return;
-    const p = wcPlayerRef.current;
-    if (p) p.setShowDebug(showDebug);
-  }, [mode, showDebug]);
-
-  const modeLabel = mode === 'webcodecs' ? '特斯拉模式' : '兼容模式';
+    wcPlayerRef.current?.setShowDebug(showDebug);
+  }, [showDebug]);
 
   return (
     <div
@@ -564,33 +315,20 @@ export default function TeslaPlayer({
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* video 元素（video 模式用） */}
-      {mode === 'video' && (
-        <video
-          ref={videoRef}
-          className="absolute inset-0 h-full w-full object-contain"
-          playsInline
-          poster={poster}
-          crossOrigin="anonymous"
-        />
-      )}
-
-      {/* canvas 元素（webcodecs 模式用） */}
-      {mode === 'webcodecs' && (
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 h-full w-full object-contain"
-        />
-      )}
+      {/* canvas 元素 — 始终渲染 */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
 
       {/* 调试信息 */}
-      {showDebug && debugInfo && mode === 'webcodecs' && (
+      {showDebug && debugInfo && (
         <div className="absolute top-2 left-2 z-20 bg-black/70 p-2 text-xs text-green-400 font-mono pointer-events-none">
           <div>state: <b>{debugInfo.state}</b></div>
-          <div>render: {debugInfo.renderFps} fps · decode: {debugInfo.decodeFps} fps</div>
-          <div>queue: {debugInfo.queued} · inDecode: {debugInfo.decodeQueue} · dropped: {debugInfo.dropped}</div>
-          <div>buffer v{debugInfo.bufferedVideoSec}s · a{debugInfo.bufferedAudioSec}s</div>
-          <div>{debugInfo.resolution} {debugInfo.codec}</div>
+          <div>render: {debugInfo.renderFps} fps</div>
+          <div>rendered: {debugInfo.renderedFrames} frames</div>
+          <div>buf: {debugInfo.bufferedVideoSec}s</div>
+          <div>{debugInfo.resolution}</div>
           <div>t {debugInfo.currentSec}s</div>
         </div>
       )}
@@ -622,28 +360,10 @@ export default function TeslaPlayer({
               >
                 重试
               </button>
-              {mode === 'webcodecs' && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
-                  className="rounded bg-gray-600 px-4 py-1.5 text-sm text-white"
-                >
-                  切换 Video 模式
-                </button>
-              )}
-              {mode === 'video' && wcSupported && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
-                  className="rounded bg-purple-600 px-4 py-1.5 text-sm text-white"
-                >
-                  切换 WebCodecs 模式
-                </button>
-              )}
               {onBackToOriginal && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); backToOriginal(); }}
+                  onClick={(e) => { e.stopPropagation(); onBackToOriginal(); }}
                   className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white"
                 >
                   返回原版
@@ -780,7 +500,7 @@ export default function TeslaPlayer({
             {onBackToOriginal && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); backToOriginal(); }}
+                onClick={(e) => { e.stopPropagation(); onBackToOriginal(); }}
                 className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
                 title="返回原版播放器"
               >
@@ -788,66 +508,6 @@ export default function TeslaPlayer({
                 原版
               </button>
             )}
-
-            {/* 清晰度（video 模式） */}
-            {mode === 'video' && qualities.length > 1 && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }}
-                  className="px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
-                >
-                  {qualities.find((q) => q.value === quality)?.label || '清晰度'}
-                </button>
-                {showQualityMenu && (
-                  <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[80px]">
-                    {qualities.map((q) => (
-                      <button
-                        key={q.value}
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); switchQuality(q.value); }}
-                        className={`block w-full rounded px-2 py-1 text-xs text-right ${quality === q.value ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                      >
-                        {q.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 播放模式切换 */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
-                className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
-                title="播放模式"
-              >
-                {mode === 'webcodecs' ? <Cpu className="h-4 w-4" /> : <MonitorPlay className="h-4 w-4" />}
-                {mode === 'webcodecs' ? '特斯拉' : '兼容'}
-              </button>
-              {showModeMenu && (
-                <div className="absolute bottom-full right-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[140px]">
-                  {wcSupported && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); switchMode('webcodecs'); }}
-                      className={`block w-full rounded px-3 py-1.5 text-sm text-right ${mode === 'webcodecs' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                    >
-                      特斯拉模式
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); switchMode('video'); }}
-                    className={`block w-full rounded px-3 py-1.5 text-sm text-right ${mode === 'video' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
-                  >
-                    兼容模式
-                  </button>
-                </div>
-              )}
-            </div>
 
             {/* 网页全屏 */}
             <button
@@ -872,10 +532,7 @@ export default function TeslaPlayer({
         </div>
       </div>
 
-      <style>{`
-        canvas { display: block; }
-        video { display: block; }
-      `}</style>
+      <style>{`canvas { display: block; }`}</style>
     </div>
   );
 }

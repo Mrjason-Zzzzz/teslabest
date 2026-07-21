@@ -69,22 +69,23 @@ export class WebCodecsPlayer {
       return;
     }
 
-    // 创建隐藏的 video 元素 — 放在 body 中最底部，不可见但可解码
+    // 将 video 元素插入 canvas 的父容器，藏在 canvas 后面
+    // 这样浏览器会正常解码视频帧（不会因为 1px 尺寸而跳过解码）
+    const parent = this.canvas.parentElement;
     const videoEl = document.createElement('video');
-    videoEl.style.position = 'fixed';
-    videoEl.style.top = '0';
-    videoEl.style.left = '0';
-    videoEl.style.width = '1px';
-    videoEl.style.height = '1px';
-    videoEl.style.opacity = '0';
-    videoEl.style.pointerEvents = 'none';
-    videoEl.style.zIndex = '-1';
+    videoEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:0;pointer-events:none;';
     videoEl.muted = true;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('x-webkit-airplay', 'deny');
     videoEl.crossOrigin = 'anonymous';
-    document.body.appendChild(videoEl);
+    
+    if (parent) {
+      parent.insertBefore(videoEl, this.canvas);
+      // 确保 canvas 在 video 上面
+      this.canvas.style.position = 'relative';
+      this.canvas.style.zIndex = '1';
+    }
     this.videoEl = videoEl;
 
     // 事件监听
