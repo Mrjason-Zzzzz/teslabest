@@ -61,6 +61,7 @@ export class WebCodecsPlayer {
   private lastSyncAudioTime = 0;
   private syncDriftAccum = 0;
   private syncDriftCount = 0;
+  private hardSyncCooldown = 0;
 
   private debugStats = {
     hlsState: 'init',
@@ -410,6 +411,7 @@ export class WebCodecsPlayer {
   private startSyncCheck() {
     this.syncDriftAccum = 0;
     this.syncDriftCount = 0;
+    this.hardSyncCooldown = 0;
 
     const check = () => {
       if (this.destroyed) return;
@@ -426,21 +428,37 @@ export class WebCodecsPlayer {
 
         if (this.syncDriftCount >= 2) {
           const avgDrift = this.syncDriftAccum / this.syncDriftCount;
+          const absDrift = Math.abs(avgDrift);
 
-          if (Math.abs(avgDrift) > 0.08) {
-            console.log('[WebCodecsPlayer] sync drift=' + (avgDrift * 1000).toFixed(0) + 'ms, correcting');
-            this.videoTimeOffset -= avgDrift * 0.6;
+          // B1: 硬同步 — 漂移超过 200ms 且冷却时间已过，直接 seek 音频强制对齐
+          if (absDrift > 0.2 && this.hardSyncCooldown <= 0) {
+            const targetTime = midFrameTime - (-0.05); // 目标延迟 -50ms
+            console.log('[WebCodecsPlayer] HARD SYNC: drift=' + (avgDrift * 1000).toFixed(0) + 'ms, seek audio to ' + targetTime.toFixed(3) + 's');
+            try {
+              this.videoEl.currentTime = targetTime;
+              this.hardSyncCooldown = 10; // 10 秒冷却
+            } catch (e) {
+              console.warn('[WebCodecsPlayer] hard sync seek failed:', e);
+            }
+          } else if (absDrift > 0.05) {
+            // 软校正 — 漂移超过 50ms，调整偏移量
+            console.log('[WebCodecsPlayer] sync drift=' + (avgDrift * 1000).toFixed(0) + 'ms, soft correcting');
+            this.videoTimeOffset -= avgDrift * 0.8;
           }
 
           this.syncDriftAccum = 0;
           this.syncDriftCount = 0;
         }
+
+        if (this.hardSyncCooldown > 0) {
+          this.hardSyncCooldown -= 0.2; // 每次 200ms
+        }
       }
 
-      this.syncCheckTimer = window.setTimeout(check, 500);
+      this.syncCheckTimer = window.setTimeout(check, 200);
     };
 
-    this.syncCheckTimer = window.setTimeout(check, 500);
+    this.syncCheckTimer = window.setTimeout(check, 200);
   }
 
   private onVideoFrame(frame: VideoFrame) {
@@ -523,20 +541,22 @@ export class WebCodecsPlayer {
 
     let toDraw: VideoFrame | null = null;
 
+    // 目标延迟：视频比音频慢 50ms（人耳对声音延迟更敏感，画面略迟不易察觉）
+    const targetDelay = -0.05;
+    const maxAhead = 0.05;   // 视频最多超前 50ms
+    const maxBehind = -0.3;  // 视频最多滞后 300ms
+
     if (!this.hasOffset && this.frameQueue.length >= 3) {
       const midIdx = Math.min(Math.floor(this.frameQueue.length / 2), this.frameQueue.length - 1);
       const midFrame = this.frameQueue[midIdx];
       const midPts = midFrame.timestamp / 1e6;
-      this.videoTimeOffset = clock - midPts - 0.05;
+      // 初始偏移：让中间帧对准目标延迟
+      this.videoTimeOffset = (clock + targetDelay) - midPts;
       this.hasOffset = true;
-      console.log('[WebCodecsPlayer] sync init: midPts=' + midPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(2) + 's');
+      console.log('[WebCodecsPlayer] sync init: midPts=' + midPts.toFixed(2) + 's clock=' + clock.toFixed(2) + 's offset=' + this.videoTimeOffset.toFixed(3) + 's targetDelay=' + (targetDelay * 1000) + 'ms');
     }
 
     if (!this.hasOffset) return;
-
-    const targetAhead = 0.03 + 0.01 * this.playbackRate;
-    const maxAhead = 0.15;
-    const maxBehind = -0.5;
 
     let bestFrame: VideoFrame | null = null;
     let bestDiff = Infinity;
@@ -547,8 +567,8 @@ export class WebCodecsPlayer {
       const diff = frameTime - clock;
 
       if (diff <= maxAhead && diff >= maxBehind) {
-        const targetDiff = targetAhead;
-        if (Math.abs(diff - targetDiff) < Math.abs(bestDiff - targetDiff)) {
+        // 找最接近目标延迟的帧
+        if (Math.abs(diff - targetDelay) < Math.abs(bestDiff - targetDelay)) {
           bestDiff = diff;
           bestFrame = frame;
         }
@@ -569,6 +589,7 @@ export class WebCodecsPlayer {
       const frameTime = first.timestamp / 1e6 + this.videoTimeOffset;
       const diff = frameTime - clock;
 
+      // 视频太滞后了，丢帧追赶
       if (diff < maxBehind) {
         toDraw = this.frameQueue.shift()!;
         this.droppedFrames++;
