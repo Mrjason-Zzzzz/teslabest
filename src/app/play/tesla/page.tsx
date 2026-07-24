@@ -11,6 +11,13 @@ import type { SearchResult } from '@/lib/types';
 import PageLayout from '@/components/PageLayout';
 import TeslaPlayer from '@/components/TeslaPlayer';
 import { fetchTVDetail, resolveTVEpisodeUrl } from '@/components/tv/player/utils';
+import {
+  getTeslaSourceKey,
+  getTeslaSourceScore,
+  markTeslaSourceFailure,
+  markTeslaSourceReady,
+  rankTeslaSources,
+} from '@/lib/tesla/source-health';
 
 type LoadingStage = 'searching' | 'preferring' | 'fetching' | 'ready' | 'error';
 
@@ -84,6 +91,7 @@ function TeslaPlayPageInner() {
 
   const [allSources, setAllSources] = useState<SearchResult[]>([]);
   const [currentDetail, setCurrentDetail] = useState<SearchResult | null>(null);
+  const [sourceNotice, setSourceNotice] = useState('');
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(initialEpisode);
   const [playUrl, setPlayUrl] = useState('');
   const [isAutoPlayingNext, setIsAutoPlayingNext] = useState(false);
@@ -96,6 +104,8 @@ function TeslaPlayPageInner() {
 
   const detailSeqRef = useRef(0);
   const searchSeqRef = useRef(0);
+  const triedSourceKeysRef = useRef(new Set<string>());
+  const playbackLoadStartedRef = useRef(performance.now());
 
   const currentSource = currentDetail?.source || '';
   const currentId = currentDetail?.id || '';
@@ -118,9 +128,7 @@ function TeslaPlayPageInner() {
   }, []);
 
   const preferBestSource = useCallback((sources: SearchResult[]): SearchResult => {
-    if (sources.length <= 1) return sources[0];
-    const sorted = [...sources].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
-    return sorted[0];
+    return rankTeslaSources(sources)[0];
   }, []);
 
   const fetchDetail = useCallback(async (src: string, vid: string, title: string): Promise<SearchResult> => {
@@ -216,6 +224,12 @@ function TeslaPlayPageInner() {
     return () => { disposed = true; };
   }, [currentDetail, currentEpisodeIndex]);
 
+  useEffect(() => {
+    if (!playUrl || !currentDetail) return;
+    playbackLoadStartedRef.current = performance.now();
+    triedSourceKeysRef.current.add(getTeslaSourceKey(currentDetail));
+  }, [playUrl, currentDetail]);
+
   const handlePlayEnded = useCallback(() => {
     if (!currentDetail || !currentDetail.episodes) return;
     const nextIndex = episodeOrderAsc ? currentEpisodeIndex + 1 : currentEpisodeIndex - 1;
@@ -242,21 +256,83 @@ function TeslaPlayPageInner() {
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   }, [currentDetail]);
 
-  const handleSwitchSource = useCallback(async (src: SearchResult) => {
+  const handleSwitchSource = useCallback(async (src: SearchResult, notice?: string) => {
     if (src.source === currentSource && src.id === currentId) return;
     setLoadingStage('fetching');
+    setErrorMsg(null);
+    if (notice) setSourceNotice(notice);
     try {
       const detail = await fetchDetail(src.source, src.id, initialTitle);
       setCurrentDetail(detail);
-      const epIdx = initialEpisode < (detail.episodes?.length || 0) ? initialEpisode : 0;
+      const episodeCount = detail.episodes?.length || 0;
+      const epIdx = episodeCount > 0 ? Math.min(currentEpisodeIndex, episodeCount - 1) : 0;
       setCurrentEpisodeIndex(epIdx);
+      const params = new URLSearchParams(window.location.search);
+      params.set('source', detail.source);
+      params.set('id', detail.id);
+      params.set('episode', String(epIdx + 1));
+      window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
       setLoadingStage('ready');
     } catch (e) {
       console.error('[TeslaPlay] switch source error:', e);
       setErrorMsg(e instanceof Error ? e.message : '切换源失败');
       setLoadingStage('error');
     }
-  }, [currentSource, currentId, fetchDetail, initialTitle, initialEpisode]);
+  }, [currentSource, currentId, fetchDetail, initialTitle, currentEpisodeIndex]);
+
+  const rankedSources = useMemo(() => rankTeslaSources(allSources), [allSources, currentDetail]);
+  const recommendedSource = rankedSources[0] || null;
+  const originalSource = useMemo(
+    () => allSources.find((item) => item.source === source && item.id === id) || null,
+    [allSources, source, id],
+  );
+
+  const handlePlaybackReady = useCallback(() => {
+    if (!currentDetail) return;
+    const startMs = Math.max(0, performance.now() - playbackLoadStartedRef.current);
+    markTeslaSourceReady(currentDetail, startMs);
+    setSourceNotice((previous) => previous || `已连接：${currentDetail.source_name || currentDetail.source}`);
+    window.setTimeout(() => setSourceNotice(''), 3000);
+  }, [currentDetail]);
+
+  const handlePlaybackError = useCallback((message: string) => {
+    if (!currentDetail) return;
+    markTeslaSourceFailure(currentDetail, message.includes('缓冲') || message.includes('卡顿'));
+    const failedKey = getTeslaSourceKey(currentDetail);
+    triedSourceKeysRef.current.add(failedKey);
+    const next = rankTeslaSources(allSources).find(
+      (item) => !triedSourceKeysRef.current.has(getTeslaSourceKey(item)),
+    );
+    if (next) {
+      handleSwitchSource(next, `当前源异常，自动切换到 ${next.source_name || next.source}`);
+    } else {
+      setSourceNotice('当前影片的候选资源均已尝试，可手动恢复原源或返回原版播放器');
+    }
+  }, [allSources, currentDetail, handleSwitchSource]);
+
+  const handleSelectRecommended = useCallback(() => {
+    if (!recommendedSource) return;
+    if (recommendedSource.source === currentSource && recommendedSource.id === currentId) {
+      setSourceNotice('当前已经是综合评分最高的资源');
+      return;
+    }
+    handleSwitchSource(
+      recommendedSource,
+      `正在切换到推荐源：${recommendedSource.source_name || recommendedSource.source}`,
+    );
+  }, [recommendedSource, currentSource, currentId, handleSwitchSource]);
+
+  const handleRestoreOriginalSource = useCallback(() => {
+    if (!originalSource) {
+      setSourceNotice('原始资源已不在当前候选列表');
+      return;
+    }
+    triedSourceKeysRef.current.clear();
+    handleSwitchSource(
+      originalSource,
+      `已恢复原资源：${originalSource.source_name || originalSource.source}`,
+    );
+  }, [originalSource, handleSwitchSource]);
 
   const backToOriginal = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
@@ -329,21 +405,20 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className="mx-auto max-w-7xl px-4 pb-4 pt-2">
+        <div className="mx-auto max-w-[1600px] px-3 pb-6 pt-2 sm:px-4">
           <div
-            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${rightPanelCollapsed
+            className={`grid items-start gap-4 transition-all duration-300 ease-in-out ${rightPanelCollapsed
               ? 'grid-cols-1'
-              : 'grid-cols-1 md:grid-cols-4'
+              : 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]'
             }`}
           >
             {/* 左侧：播放器 + 详情 */}
             <div
-              className={`transition-all duration-300 ease-in-out rounded-xl border border-white/0 dark:border-white/30 flex flex-col ${rightPanelCollapsed ? 'col-span-1' : 'md:col-span-3'
-                }`}
+              className="min-w-0 rounded-xl border border-white/0 transition-all duration-300 ease-in-out dark:border-white/30"
             >
               {/* 播放器容器 */}
-              <div className="relative w-full h-[300px] lg:flex-1 lg:min-h-0 mt-2">
-                <div className="bg-black w-full h-full rounded-xl overflow-hidden shadow-lg">
+              <div className="relative mt-2 aspect-video w-full min-h-[220px] max-h-[78vh]">
+                <div className="h-full w-full overflow-hidden rounded-xl bg-black shadow-lg">
               {isLoading && loadingStage !== 'error' && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900">
                   <Loader2 className="h-8 w-8 animate-spin text-green-500" />
@@ -394,7 +469,16 @@ function TeslaPlayPageInner() {
                     onEnded={handlePlayEnded}
                     onBackToOriginal={backToOriginal}
                     playRecordKey={playRecordKey}
+                    onPlaybackReady={handlePlaybackReady}
+                    onPlaybackError={handlePlaybackError}
                   />
+                  {sourceNotice && (
+                    <div className="absolute inset-x-0 top-4 z-20 flex justify-center px-4 pointer-events-none">
+                      <div className="max-w-[90%] rounded-full bg-black/80 px-4 py-2 text-center text-xs text-white shadow-lg backdrop-blur">
+                        {sourceNotice}
+                      </div>
+                    </div>
+                  )}
                   {isAutoPlayingNext && (
                     <div className="absolute inset-x-0 bottom-20 z-10 flex justify-center">
                       <div className="rounded-full bg-black/80 px-4 py-2 backdrop-blur">
@@ -457,7 +541,7 @@ function TeslaPlayPageInner() {
 
           {/* 右侧面板（可折叠） */}
           {currentDetail && currentDetail.episodes && currentDetail.episodes.length > 0 && !rightPanelCollapsed && (
-            <div className="md:col-span-1">
+            <div className="min-w-0 lg:sticky lg:top-4">
                 <div className="overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur dark:bg-gray-900/80 dark:ring-gray-700/50">
                   <div className="flex border-b border-gray-100 dark:border-gray-800">
                     <button
@@ -521,21 +605,23 @@ function TeslaPlayPageInner() {
                         </div>
                       )}
                       <div className="max-h-[500px] overflow-y-auto p-3">
-                        <div className="grid grid-cols-5 gap-2">
+                        <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
                           {currentPageEpisodes.map(({ idx, label }) => (
                             <button
                               key={idx}
                               type="button"
                               onClick={() => handleSelectEpisode(idx)}
-                              className={`rounded px-1 py-1.5 text-xs transition-colors ${
+                              className={`rounded px-2.5 py-2 text-xs transition-colors ${
                                 idx === currentEpisodeIndex
                                   ? 'bg-green-500 font-medium text-white shadow-sm'
                                   : 'bg-gray-50 text-gray-700 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
                               }`}
                             >
-                              {label.startsWith('第 ') && label.endsWith(' 集')
-                                ? String(idx + 1).padStart(2, '0')
-                                : label.slice(0, 6)}
+                              <span className="block min-h-[2.5rem] break-words text-left leading-5" title={label}>
+                                {label.startsWith('第 ') && label.endsWith(' 集')
+                                  ? `第 ${String(idx + 1).padStart(2, '0')} 集`
+                                  : label}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -552,7 +638,25 @@ function TeslaPlayPageInner() {
                         <div className="p-4 text-center text-xs text-gray-400">暂无其他源</div>
                       ) : (
                         <div className="p-2">
-                          <div className="mb-2 px-1 text-xs text-gray-500">共 {allSources.length} 个源</div>
+                          <div className="mb-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={handleSelectRecommended}
+                              className="rounded-lg bg-green-500 px-3 py-2 text-xs font-medium text-white hover:bg-green-600"
+                            >
+                              优选推荐源
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleRestoreOriginalSource}
+                              className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200"
+                            >
+                              恢复原资源
+                            </button>
+                          </div>
+                          <div className="mb-2 px-1 text-xs text-gray-500">
+                            共 {allSources.length} 个源 · 按实际成功率与启动速度排序
+                          </div>
                           {allSources.map((s) => {
                               const isActive = s.source === currentSource && s.id === currentId;
                               return (
@@ -569,9 +673,15 @@ function TeslaPlayPageInner() {
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2">
                                     <span className="truncate text-sm font-medium">{s.source_name || s.source}</span>
+                                    {recommendedSource && s.source === recommendedSource.source && s.id === recommendedSource.id && (
+                                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                        推荐
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
                                     {s.episodes?.length ? `${s.episodes.length} 集` : ''}
+                                    <span>评分 {Math.round(getTeslaSourceScore(s))}</span>
                                   </div>
                                 </div>
                                 <div className="ml-2 flex items-center gap-1">
