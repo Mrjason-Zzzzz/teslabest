@@ -240,19 +240,22 @@ function TeslaPlayPageInner() {
   }, [playUrl, currentDetail]);
 
   const handlePlayEnded = useCallback(() => {
-    if (!currentDetail || !currentDetail.episodes) return;
-    const nextIndex = episodeOrderAsc ? currentEpisodeIndex + 1 : currentEpisodeIndex - 1;
-    const episodes = currentDetail.episodes;
-    if (nextIndex >= 0 && nextIndex < episodes.length) {
-      setIsAutoPlayingNext(true);
-      setTimeout(() => {
-        setCurrentEpisodeIndex(nextIndex);
-        const params = new URLSearchParams(window.location.search);
-        params.set('episode', String(nextIndex + 1));
-        window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
-      }, 1500);
+    if (!currentDetail?.episodes?.length) return;
+    // 排序只影响选集展示，剧情顺序始终按真实集数向后播放。
+    const nextIndex = currentEpisodeIndex + 1;
+    if (nextIndex >= currentDetail.episodes.length) {
+      setSourceNotice('已播放至最后一集');
+      return;
     }
-  }, [currentDetail, currentEpisodeIndex, episodeOrderAsc]);
+
+    setIsAutoPlayingNext(true);
+    window.setTimeout(() => {
+      setCurrentEpisodeIndex(nextIndex);
+      const params = new URLSearchParams(window.location.search);
+      params.set('episode', String(nextIndex + 1));
+      window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+    }, 1000);
+  }, [currentDetail, currentEpisodeIndex]);
 
   const handleSelectEpisode = useCallback((index: number) => {
     setCurrentEpisodeIndex(index);
