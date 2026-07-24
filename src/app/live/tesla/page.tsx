@@ -112,12 +112,13 @@ function TeslaLivePageInner() {
     const applyChannels = (list: LiveChannel[]) => {
       setChannels(list);
       const preferred = preferredChannelRef.current;
+      const wantsSpecificChannel = Boolean(preferred.id || preferred.tvgId || preferred.name);
       const matched =
         list.find((channel) => preferred.id && channel.id === preferred.id) ||
         list.find((channel) => preferred.tvgId && channel.tvgId === preferred.tvgId) ||
         list.find((channel) => preferred.name && channel.name === preferred.name) ||
         list.find((channel) => preferred.name && channel.name.includes(preferred.name)) ||
-        list[0] ||
+        (!wantsSpecificChannel ? list[0] : null) ||
         null;
       setCurrentChannel(matched);
       if (matched) {
@@ -236,6 +237,17 @@ function TeslaLivePageInner() {
     setPlaybackNotice(`当前线路无有效画面，正在自动尝试 ${next.name}…`);
     setCurrentSource(next);
   }, [currentSource, currentChannel, sources]);
+
+  useEffect(() => {
+    if (
+      !currentSource ||
+      loadingChannels ||
+      currentChannel ||
+      !channels.length ||
+      !preferredChannelRef.current.name
+    ) return;
+    tryNextSource(`${currentSource.name} 没有同名频道`);
+  }, [currentSource, currentChannel, channels, loadingChannels, tryNextSource]);
 
   const restoreInitialChannel = useCallback(() => {
     failedSourcesRef.current.clear();
