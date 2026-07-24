@@ -17394,6 +17394,28 @@ const WebLiveConfig = ({
     ).catch(() => {});
   };
 
+  const handleTestSource = (source: any) => {
+    withLoading(`testWebLive_${source.key}`, async () => {
+      const params = new URLSearchParams({
+        platform: source.platform,
+        roomId: source.roomId,
+      });
+      const response = await fetch(`/api/web-live/stream?${params.toString()}`, {
+        cache: 'no-store',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) {
+        throw new Error(data.error || '没有解析到可播放直播流');
+      }
+      showSuccess(
+        `解析成功：${data.name || source.name}${data.title ? ` · ${data.title}` : ''}`,
+        showAlert
+      );
+    }).catch((error) => {
+      showError(error instanceof Error ? error.message : '解析测试失败', showAlert);
+    });
+  };
+
   const handleToggleWebLiveEnabled = async () => {
     const currentEnabled = config?.WebLiveEnabled ?? false;
 
@@ -17522,6 +17544,10 @@ const WebLiveConfig = ({
           document.body
         )}
 
+      <div className='rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs leading-5 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'>
+        可填写房间 ID，也可直接粘贴虎牙、哔哩哔哩或抖音的完整直播间链接；保存时会自动提取 ID。添加后先点击“解析测试”，成功后再去网络直播页面播放。
+      </div>
+
       <div className='flex items-center justify-between'>
         <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
           网络直播列表
@@ -17561,7 +17587,7 @@ const WebLiveConfig = ({
             </select>
             <input
               type='text'
-              placeholder='房间ID'
+              placeholder='房间 ID 或完整直播间链接'
               value={newSource.roomId}
               onChange={(e) =>
                 setNewSource((prev) => ({ ...prev, roomId: e.target.value }))
@@ -17642,7 +17668,7 @@ const WebLiveConfig = ({
             </div>
             <div>
               <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                房间ID
+                房间 ID 或完整直播间链接
               </label>
               <input
                 type='text'
@@ -17763,6 +17789,17 @@ const WebLiveConfig = ({
                       }`}
                     >
                       {!source.disabled ? '禁用' : '启用'}
+                    </button>
+                    <button
+                      onClick={() => handleTestSource(source)}
+                      disabled={isLoading(`testWebLive_${source.key}`)}
+                      className={`${buttonStyles.roundedPrimary} ${
+                        isLoading(`testWebLive_${source.key}`)
+                          ? 'opacity-50 cursor-not-allowed'
+                          : ''
+                      }`}
+                    >
+                      {isLoading(`testWebLive_${source.key}`) ? '测试中' : '解析测试'}
                     </button>
                     {source.from !== 'config' && (
                       <>
