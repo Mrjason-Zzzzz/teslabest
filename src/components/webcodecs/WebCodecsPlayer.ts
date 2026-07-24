@@ -314,38 +314,44 @@ export class WebCodecsPlayer {
     if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
 
     const aacFrames = this.splitAdtsFrames(pesData);
+    let frameOffsetSec = 0;
     for (const frame of aacFrames) {
+      const adts = this.parseAdts(frame);
+      if (!adts) continue;
+
       if (!this.audioConfig && frame.length > 7) {
-        const adts = this.parseAdts(frame);
-        if (adts) {
-          const desc = this.buildAacConfig(adts.sampleRate, adts.channels, adts.profile);
-          this.audioConfig = {
+        const desc = this.buildAacConfig(adts.sampleRate, adts.channels, adts.profile);
+        this.audioConfig = {
+          codec: 'mp4a.40.2',
+          sampleRate: adts.sampleRate,
+          numberOfChannels: adts.channels,
+          description: desc,
+        };
+        try {
+          this.audioDecoder?.configure({
             codec: 'mp4a.40.2',
             sampleRate: adts.sampleRate,
             numberOfChannels: adts.channels,
             description: desc,
-          };
-          try {
-            this.audioDecoder?.configure({
-              codec: 'mp4a.40.2',
-              sampleRate: adts.sampleRate,
-              numberOfChannels: adts.channels,
-              description: desc,
-            });
-            console.log('[WebCodecsPlayer] audio decoder configured:', adts.sampleRate + 'Hz', adts.channels + 'ch');
-          } catch (e) {
-            console.warn('[WebCodecsPlayer] audio configure failed:', e);
-          }
+          });
+          console.log('[WebCodecsPlayer] audio decoder configured:', adts.sampleRate + 'Hz', adts.channels + 'ch');
+        } catch (e) {
+          console.warn('[WebCodecsPlayer] audio configure failed:', e);
         }
       }
 
+      // One ADTS AAC-LC frame represents 1024 PCM samples. A PES packet can
+      // contain several ADTS frames, so assigning the PES PTS to every frame
+      // makes audio drift. Synthesize a monotonic timestamp for each frame.
+      const frameDurationSec = 1024 / adts.sampleRate;
       const rawAac = frame.subarray(7);
       this.encodedAudio.push({
         key: true,
-        timestamp: Math.round(pts * 1e6),
-        duration: 23000,
+        timestamp: Math.round((pts + frameOffsetSec) * 1e6),
+        duration: Math.round(frameDurationSec * 1e6),
         data: rawAac,
       });
+      frameOffsetSec += frameDurationSec;
       this.debugStats.audioSamples++;
     }
   }
@@ -428,9 +434,8 @@ export class WebCodecsPlayer {
         this.reportTime(clock);
       }
 
-      if (this.showDebug) {
-        this.drawDebugOverlay();
-      }
+      // Debug information is exposed through getStats(). Never paint it into
+      // the video canvas: that races with VideoFrame rendering and flickers.
     } catch (e) {
       console.error('[WebCodecsPlayer] tick error:', e);
     }
@@ -490,11 +495,19 @@ export class WebCodecsPlayer {
   }
 
   private maybePrime() {
-    const haveVideo = this.frameQueue.length > 0;
-    const haveAudio = this.decodedAudio.length > 0;
-    if (!haveVideo || !haveAudio) return;
+    const firstVideo = this.frameQueue[0];
+    const firstAudio = this.decodedAudio[0];
+    if (!firstVideo || !firstAudio || !this.audioCtx) return;
 
-    this.ctxStartTime = this.audioCtx!.currentTime + 0.1;
+    // HLS starts at the nearest segment/keyframe, which can differ from the
+    // requested seek second. Anchor both streams to the first timestamp that
+    // is actually playable so audio and video start on the same timeline.
+    const firstVideoSec = firstVideo.timestamp / 1e6;
+    const firstAudioSec = firstAudio.timestamp / 1e6;
+    this.baseMediaTime = Math.max(this.baseMediaTime, firstVideoSec, firstAudioSec);
+    this.ctxStartTime = this.audioCtx.currentTime + 0.15;
+    this.nextAudioStartTime = 0;
+
     if (this.wantPlaying) {
       this.resumeAudio();
     }
@@ -535,30 +548,30 @@ export class WebCodecsPlayer {
       const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
       const headDuration = head.numberOfFrames / rate;
+      const mediaNow = this.getMediaTime();
 
-      let startOffsetSec = 0;
-      if (this.nextAudioStartTime === 0) {
-        if (headTs + headDuration <= this.baseMediaTime) {
-          this.decodedAudio.shift();
-          head.close();
-          continue;
-        }
-        startOffsetSec = Math.min(Math.max(0, this.baseMediaTime - headTs), headDuration);
+      // Drop audio that is already too old for the current master clock.
+      // Keeping it would make sound lag farther behind after stalls or seek.
+      if (headTs + headDuration < mediaNow - 0.08) {
+        this.decodedAudio.shift();
+        head.close();
+        continue;
       }
 
+      let startOffsetSec = Math.max(0, mediaNow - headTs);
+      startOffsetSec = Math.min(startOffsetSec, headDuration);
       const audibleTs = headTs + startOffsetSec;
       const idealWhen = this.ctxStartTime + (audibleTs - this.baseMediaTime);
-      let when: number;
-      if (this.nextAudioStartTime === 0) {
-        when = Math.max(idealWhen, now + 0.05);
-      } else {
-        when = this.nextAudioStartTime;
-        if (when < now - 0.1) {
-          when = now + 0.05;
-        }
+
+      let when = Math.max(idealWhen, now + 0.03);
+      if (this.nextAudioStartTime !== 0) {
+        const driftSec = idealWhen - this.nextAudioStartTime;
+        when = Math.abs(driftSec) > 0.08
+          ? Math.max(idealWhen, now + 0.03)
+          : Math.max(this.nextAudioStartTime, now + 0.03);
       }
 
-      if (when > now + 4) break;
+      if (when > now + 2.5) break;
 
       const frames = head.numberOfFrames;
       let buffer: AudioBuffer;
@@ -580,7 +593,7 @@ export class WebCodecsPlayer {
       src.start(when, startOffsetSec);
       this.activeSources.add(src);
       src.onended = () => this.activeSources.delete(src);
-      this.nextAudioStartTime = when + (frames / rate - startOffsetSec);
+      this.nextAudioStartTime = when + Math.max(0, frames / rate - startOffsetSec);
       scheduled++;
     }
   }
@@ -606,41 +619,6 @@ export class WebCodecsPlayer {
     if (now - this.lastTimeReportMs < 250) return;
     this.lastTimeReportMs = now;
     this.cb.onTime?.(Math.min(clock, this.durationSec));
-  }
-
-  private drawDebugOverlay() {
-    const stats = this.getStats();
-    const ctx = this.ctx;
-    const w = this.canvas.width || 640;
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(0, 0, w, 560);
-    ctx.fillStyle = '#0f0';
-    ctx.font = '13px monospace';
-    const ds = this.debugStats;
-    const lines = [
-      `[WC] state: ${stats.state}`,
-      `[WC] render: ${stats.renderFps} fps  decode: ${stats.decodeFps} fps`,
-      `[WC] frameQueue: ${stats.queued}  inDecode: ${stats.decodeQueue}  dropped: ${stats.dropped}`,
-      `[WC] ${stats.resolution} ${stats.codec}`,
-      `[WC] t=${stats.currentSec}s  duration=${this.durationSec.toFixed(1)}s`,
-      `[WC] decoded=${stats.decodedFrames} rendered=${stats.renderedFrames}`,
-      `[WC] vBuf: ${stats.demuxVideoQueue}  aBuf: ${stats.demuxAudioQueue}`,
-      `[WC] vCfg: ${this.videoConfig ? 'OK' : 'no'}  aCfg: ${this.audioConfig ? 'OK' : 'no'}`,
-      `--- HLS ---`,
-      `  state: ${ds.hlsState}  levels: ${ds.levelCount}  level: ${ds.currentLevel}`,
-      `  frags: ${ds.fragLoaded}  bytes: ${(ds.bytesLoaded / 1024 / 1024).toFixed(2)}MB`,
-      `--- Demux ---`,
-      `  pmt: ${ds.pmtFound ? 'found' : 'waiting'}  vPES: ${ds.videoPes}  aPES: ${ds.audioPes}`,
-      `  video samples: ${ds.videoSamples}  audio samples: ${ds.audioSamples}`,
-      `  audioCtx: ${this.audioCtx?.state || 'none'}`,
-      ds.error ? `  ERROR: ${ds.error}` : '',
-      ds.lastError ? `  lastErr: ${ds.lastError}` : '',
-    ].filter(Boolean);
-    lines.forEach((line, i) => {
-      ctx.fillText(line, 10, 18 + i * 16);
-    });
-    ctx.restore();
   }
 
   play() {
@@ -811,6 +789,7 @@ export class WebCodecsPlayer {
       renderedFrames: this.renderedFrames,
       demuxVideoQueue: this.encodedVideo.length - this.vIdx,
       demuxAudioQueue: this.encodedAudio.length - this.aIdx,
+      audioCtx: this.audioCtx?.state ?? 'none',
     };
   }
 
