@@ -64,6 +64,8 @@ export class WebCodecsPlayer {
   private bufferingStartedAtMs = 0;
   private recoveryAttempts = 0;
   private recoveryInFlight = false;
+  private hlsNetworkRecoveryAttempts = 0;
+  private hlsNetworkRecoveryTimer: number | null = null;
   private checkedTsContainer = false;
   private audioRemainder = new Uint8Array(0);
   private nextAudioPtsSec: number | null = null;
@@ -122,6 +124,7 @@ export class WebCodecsPlayer {
   async load(url: string, startAt = 0): Promise<void> {
     const isNewSource = this.sourceUrl !== url;
     if (isNewSource) this.recoveryAttempts = 0;
+    this.hlsNetworkRecoveryAttempts = 0;
     const generation = ++this.loadGeneration;
     this.teardown();
     this.teardownAudioGraph();
@@ -210,6 +213,11 @@ export class WebCodecsPlayer {
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
       this.debugStats.fragLoaded++;
+      this.hlsNetworkRecoveryAttempts = 0;
+      if (this.hlsNetworkRecoveryTimer) {
+        clearTimeout(this.hlsNetworkRecoveryTimer);
+        this.hlsNetworkRecoveryTimer = null;
+      }
       const frag = data.frag;
       const payload = frag?.data || data.payload;
       if (payload && payload.byteLength) {
@@ -230,9 +238,33 @@ export class WebCodecsPlayer {
       if (this.destroyed || generation !== this.loadGeneration) return;
       console.warn('[WebCodecsPlayer] HLS ERROR:', data.type, data.details);
       this.debugStats.lastError = data.details || data.type;
-      if (data.fatal) {
-        this.fail('hls: ' + (data.details || data.type));
+      if (!data.fatal) return;
+
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        this.setState('buffering');
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+        if (this.hlsNetworkRecoveryAttempts < 5) {
+          const attempt = ++this.hlsNetworkRecoveryAttempts;
+          const delay = Math.min(10000, 1000 * Math.pow(2, attempt - 1));
+          if (this.hlsNetworkRecoveryTimer) clearTimeout(this.hlsNetworkRecoveryTimer);
+          this.hlsNetworkRecoveryTimer = window.setTimeout(() => {
+            this.hlsNetworkRecoveryTimer = null;
+            if (this.destroyed || generation !== this.loadGeneration || this.hls !== hls) return;
+            try { hls.startLoad(Math.max(0, this.getMediaTime())); } catch {}
+          }, delay);
+          return;
+        }
       }
+
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && this.recoveryAttempts < 3) {
+        this.recoveryAttempts++;
+        this.setState('buffering');
+        try { hls.recoverMediaError(); } catch {}
+        return;
+      }
+
+      this.fail('hls: ' + (data.details || data.type));
     });
 
     hls.loadSource(url);
@@ -866,6 +898,10 @@ export class WebCodecsPlayer {
 
   private teardown() {
     if (this.raf) cancelAnimationFrame(this.raf);
+    if (this.hlsNetworkRecoveryTimer) {
+      clearTimeout(this.hlsNetworkRecoveryTimer);
+      this.hlsNetworkRecoveryTimer = null;
+    }
     this.raf = 0;
 
     if (this.hls) {
