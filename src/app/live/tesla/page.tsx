@@ -212,6 +212,7 @@ function TeslaLivePageInner() {
       : preferredChannelRef.current;
     failedSourcesRef.current.clear();
     setPlaybackNotice(`正在从 ${source.name} 查找同名频道…`);
+    setCurrentChannel(null);
     setCurrentSource(source);
     setPanel('channels');
   }, [currentChannel]);
@@ -235,6 +236,7 @@ function TeslaLivePageInner() {
     }
 
     setPlaybackNotice(`当前线路无有效画面，正在自动尝试 ${next.name}…`);
+    setCurrentChannel(null);
     setCurrentSource(next);
   }, [currentSource, currentChannel, sources]);
 
