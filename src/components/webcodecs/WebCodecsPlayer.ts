@@ -60,6 +60,7 @@ export class WebCodecsPlayer {
   private lastTimeReportMs = 0;
   private lastHlsClockSyncMs = 0;
   private lastRenderedAtMs = 0;
+  private bufferingStartedAtMs = 0;
   private recoveryAttempts = 0;
   private recoveryInFlight = false;
   private checkedTsContainer = false;
@@ -137,6 +138,7 @@ export class WebCodecsPlayer {
     this.checkedTsContainer = false;
     this.lastHlsClockSyncMs = 0;
     this.lastRenderedAtMs = performance.now();
+    this.bufferingStartedAtMs = performance.now();
     this.baseMediaTime = startAt;
     this.ctxStartTime = null;
     this.nextAudioStartTime = 0;
@@ -161,9 +163,12 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
-      maxBufferLength: 24,
-      maxMaxBufferLength: 48,
-      backBufferLength: 12,
+      maxBufferLength: 45,
+      maxMaxBufferLength: 90,
+      backBufferLength: 20,
+      fragLoadingTimeOut: 30000,
+      manifestLoadingTimeOut: 20000,
+      levelLoadingTimeOut: 20000,
     });
 
     this.hls = hls;
@@ -466,6 +471,7 @@ export class WebCodecsPlayer {
         this.presentVideo(clock);
         this.reportTime(clock);
         this.maybeReportEnded(clock);
+        this.maybeEnterBuffering();
       }
 
       // Debug information is exposed through getStats(). Never paint it into
@@ -503,22 +509,59 @@ export class WebCodecsPlayer {
     }
   }
 
-  private maybeRecoverFromStall() {
-    if (
-      this.state !== 'playing' ||
-      this.ctxStartTime === null ||
-      this.recoveryInFlight ||
-      performance.now() - this.lastRenderedAtMs < 8000
-    ) return;
+  private maybeEnterBuffering() {
+    if (this.state !== 'playing' || !this.wantPlaying || this.ctxStartTime === null) return;
 
-    if (this.recoveryAttempts >= 2) {
+    const noVideoReady =
+      this.frameQueue.length === 0 &&
+      (this.videoDecoder?.decodeQueueSize || 0) === 0 &&
+      this.vIdx >= this.encodedVideo.length;
+    const noAudioReady =
+      this.decodedAudio.length === 0 &&
+      (this.audioDecoder?.decodeQueueSize || 0) === 0 &&
+      this.aIdx >= this.encodedAudio.length;
+
+    // Brief decoder gaps are normal. Freeze the media clock only when the
+    // pipeline has actually been empty for a moment, otherwise the AudioContext
+    // keeps advancing and late frames are discarded in a visible stop/start loop.
+    if ((!noVideoReady && !noAudioReady) || performance.now() - this.lastRenderedAtMs < 700) return;
+
+    const clock = this.getMediaTime();
+    this.baseMediaTime = Math.max(this.baseMediaTime, this.lastRenderedMediaTime || clock);
+    this.ctxStartTime = null;
+    this.nextAudioStartTime = 0;
+    this.bufferingStartedAtMs = performance.now();
+
+    for (const source of this.activeSources) {
+      try { source.stop(); } catch {}
+    }
+    this.activeSources.clear();
+    this.audioCtx?.suspend().catch(() => {});
+    this.setState('buffering');
+  }
+
+  private maybeRecoverFromStall() {
+    const now = performance.now();
+    const stalledWhilePlaying =
+      this.state === 'playing' &&
+      this.ctxStartTime !== null &&
+      now - this.lastRenderedAtMs >= 8000;
+    const stalledWhileBuffering =
+      this.state === 'buffering' &&
+      this.ctxStartTime === null &&
+      this.bufferingStartedAtMs > 0 &&
+      now - this.bufferingStartedAtMs >= 12000;
+
+    if ((!stalledWhilePlaying && !stalledWhileBuffering) || this.recoveryInFlight) return;
+
+    if (this.recoveryAttempts >= 3) {
       this.fail('画面持续卡顿，正在切换通用播放器');
       return;
     }
 
     this.recoveryAttempts++;
     this.recoveryInFlight = true;
-    const restartAt = Math.max(0, this.getMediaTime() + 0.05);
+    const restartAt = Math.max(0, this.lastRenderedMediaTime || this.baseMediaTime, this.getMediaTime()) + 0.05;
     Promise.resolve()
       .then(() => this.seek(restartAt))
       .finally(() => { this.recoveryInFlight = false; });
@@ -579,9 +622,16 @@ export class WebCodecsPlayer {
   }
 
   private maybePrime() {
+    const minVideoFrames = this.canvasSized ? 12 : 6;
+    const minAudioFrames = this.canvasSized ? 24 : 12;
+    if (
+      this.frameQueue.length < minVideoFrames ||
+      this.decodedAudio.length < minAudioFrames ||
+      !this.audioCtx
+    ) return;
+
     const firstVideo = this.frameQueue[0];
     const firstAudio = this.decodedAudio[0];
-    if (!firstVideo || !firstAudio || !this.audioCtx) return;
 
     // HLS starts at the nearest segment/keyframe, which can differ from the
     // requested seek second. Anchor both streams to the first timestamp that
@@ -602,6 +652,8 @@ export class WebCodecsPlayer {
     this.audioCtx.resume()
       .then(() => {
         if (this.audioCtx?.state === 'running' && this.state !== 'ended') {
+          this.bufferingStartedAtMs = 0;
+          this.lastRenderedAtMs = performance.now();
           this.setState('playing');
         }
       })
