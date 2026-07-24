@@ -60,6 +60,7 @@ export class WebCodecsPlayer {
   private lastTimeReportMs = 0;
   private lastHlsClockSyncMs = 0;
   private lastRenderedAtMs = 0;
+  private lastAudioScheduledAtMs = 0;
   private bufferingStartedAtMs = 0;
   private recoveryAttempts = 0;
   private recoveryInFlight = false;
@@ -138,6 +139,7 @@ export class WebCodecsPlayer {
     this.checkedTsContainer = false;
     this.lastHlsClockSyncMs = 0;
     this.lastRenderedAtMs = performance.now();
+    this.lastAudioScheduledAtMs = performance.now();
     this.bufferingStartedAtMs = performance.now();
     this.baseMediaTime = startAt;
     this.ctxStartTime = null;
@@ -521,10 +523,12 @@ export class WebCodecsPlayer {
       (this.audioDecoder?.decodeQueueSize || 0) === 0 &&
       this.aIdx >= this.encodedAudio.length;
 
-    // Brief decoder gaps are normal. Freeze the media clock only when the
-    // pipeline has actually been empty for a moment, otherwise the AudioContext
-    // keeps advancing and late frames are discarded in a visible stop/start loop.
-    if ((!noVideoReady && !noAudioReady) || performance.now() - this.lastRenderedAtMs < 700) return;
+    // Brief decoder gaps are normal. Freeze the media clock only when one side
+    // of the A/V pipeline has actually been empty for a moment.
+    const now = performance.now();
+    const videoStarved = noVideoReady && now - this.lastRenderedAtMs >= 700;
+    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= 700;
+    if (!videoStarved && !audioStarved) return;
 
     const clock = this.getMediaTime();
     this.baseMediaTime = Math.max(this.baseMediaTime, this.lastRenderedMediaTime || clock);
@@ -654,6 +658,7 @@ export class WebCodecsPlayer {
         if (this.audioCtx?.state === 'running' && this.state !== 'ended') {
           this.bufferingStartedAtMs = 0;
           this.lastRenderedAtMs = performance.now();
+          this.lastAudioScheduledAtMs = performance.now();
           this.setState('playing');
         }
       })
@@ -747,6 +752,7 @@ export class WebCodecsPlayer {
       src.buffer = buffer;
       src.connect(this.gain);
       src.start(when, startOffsetSec);
+      this.lastAudioScheduledAtMs = performance.now();
       this.activeSources.add(src);
       src.onended = () => this.activeSources.delete(src);
       this.nextAudioStartTime = when + Math.max(0, frames / rate - startOffsetSec);
