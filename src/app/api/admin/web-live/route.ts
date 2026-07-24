@@ -4,6 +4,26 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
+function normalizeRoomInput(platform: string, input: string): string {
+  const value = input.trim();
+  try {
+    const parsed = new URL(value.startsWith('http') ? value : `https://${value}`);
+    const host = parsed.hostname.toLowerCase();
+    const roomId = parsed.pathname.split('/').filter(Boolean)[0];
+    if (
+      roomId &&
+      ((platform === 'douyin' && host === 'live.douyin.com') ||
+        (platform === 'bilibili' && host === 'live.bilibili.com') ||
+        (platform === 'huya' && (host === 'huya.com' || host.endsWith('.huya.com'))))
+    ) {
+      return roomId;
+    }
+  } catch {
+    // Plain room id.
+  }
+  return value;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const authInfo = getAuthInfoFromCookie(request);
@@ -49,7 +69,7 @@ export async function POST(request: NextRequest) {
           key,
           name,
           platform,
-          roomId,
+          roomId: normalizeRoomInput(platform, roomId),
           from: 'custom',
           disabled: false,
         });
@@ -100,7 +120,7 @@ export async function POST(request: NextRequest) {
         }
         source.name = name;
         source.platform = platform;
-        source.roomId = roomId;
+        source.roomId = normalizeRoomInput(platform, roomId);
         break;
       }
 
