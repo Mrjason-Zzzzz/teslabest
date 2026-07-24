@@ -152,7 +152,16 @@ export class WebCodecsPlayer {
 
     // 启动渲染循环和音频调度
     this.loop();
-    this.audioScheduleTimer = window.setInterval(() => this.tick(), AUDIO_SCHEDULE_INTERVAL_MS);
+    // Keep audio fed when RAF cadence fluctuates, but do not run the complete
+    // video/render tick twice. Duplicate ticks were a major source of CPU load.
+    this.audioScheduleTimer = window.setInterval(() => {
+      try {
+        this.pumpAudio();
+        this.scheduleAudio();
+      } catch (e) {
+        console.error('[WebCodecsPlayer] audio schedule error:', e);
+      }
+    }, AUDIO_SCHEDULE_INTERVAL_MS);
   }
 
   // ===== 解码器 =====
@@ -215,6 +224,13 @@ export class WebCodecsPlayer {
       this.canvasSized = true;
     }
     this.frameQueue.push(frame);
+    // Bound VideoFrame memory on the low-power vehicle browser. If rendering
+    // falls behind, preserving latency is more useful than retaining old frames.
+    const MAX_FRAME_QUEUE = 18;
+    while (this.frameQueue.length > MAX_FRAME_QUEUE) {
+      this.frameQueue.shift()!.close();
+      this.droppedFrames++;
+    }
   }
 
   // ===== Web Audio =====
@@ -248,6 +264,8 @@ export class WebCodecsPlayer {
 
   private tick() {
     try {
+      this.compactConsumedSamples();
+      this.updateDemuxBackpressure();
       this.pumpVideo();
       this.pumpAudio();
 
@@ -274,7 +292,7 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const MAX_OUTSTANDING = 30;
+    const MAX_OUTSTANDING = 18;
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
@@ -366,7 +384,8 @@ export class WebCodecsPlayer {
     const now = this.audioCtx.currentTime;
     if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > 4) return;
 
-    while (this.decodedAudio.length) {
+    let scheduledThisTick = 0;
+    while (this.decodedAudio.length && scheduledThisTick < 12) {
       const head = this.decodedAudio[0];
       const rate = head.sampleRate;
       const channels = head.numberOfChannels;
@@ -416,6 +435,29 @@ export class WebCodecsPlayer {
       src.onended = () => this.activeSources.delete(src);
       this.nextAudioStartTime = when + (frames / rate - startOffsetSec);
       this.lastAudioScheduledSec = headTs + headDuration;
+      scheduledThisTick++;
+    }
+  }
+
+  /**
+   * Stop the demuxer from parsing the whole title as fast as the network allows.
+   * This removes CPU spikes and keeps memory bounded on the vehicle browser.
+   */
+  private updateDemuxBackpressure() {
+    const pendingVideo = this.encodedVideo.length - this.vIdx;
+    if (pendingVideo > 240) this.demuxer?.pause();
+    else if (pendingVideo < 90) this.demuxer?.resume();
+  }
+
+  /** Release references to samples that have already been submitted. */
+  private compactConsumedSamples() {
+    if (this.vIdx > 600) {
+      this.encodedVideo.splice(0, this.vIdx);
+      this.vIdx = 0;
+    }
+    if (this.aIdx > 1200) {
+      this.encodedAudio.splice(0, this.aIdx);
+      this.aIdx = 0;
     }
   }
 
@@ -489,6 +531,10 @@ export class WebCodecsPlayer {
     if (this.demuxer) {
       // 清空管线
       this.flushPipeline();
+      // Drop decoder-internal work as well as our JS queues. Without reset(),
+      // frames from before the seek may arrive after the new position starts.
+      try { this.videoDecoder?.reset(); } catch {}
+      try { this.audioDecoder?.reset(); } catch {}
       this.baseMediaTime = seconds;
       this.ctxStartTime = null;
       this.lastAudioScheduledSec = 0;
