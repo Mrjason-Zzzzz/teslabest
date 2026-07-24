@@ -2,7 +2,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 
-import { ArrowLeft, Loader2, Radio, RotateCcw, Search } from 'lucide-react';
+import { ArrowLeft, Loader2, Radio, RefreshCw, RotateCcw, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -41,6 +41,7 @@ function TeslaWebLivePageInner() {
   const [loadingStream, setLoadingStream] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [playbackNotice, setPlaybackNotice] = useState('');
+  const [streamReloadToken, setStreamReloadToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // 拉取源列表
@@ -67,22 +68,36 @@ function TeslaWebLivePageInner() {
   // 加载流地址
   useEffect(() => {
     if (!currentSource) return;
+    const controller = new AbortController();
     setLoadingStream(true);
     setError(null);
+    setPlaybackNotice('正在解析实时直播流…');
     setVideoUrl('');
-    fetch(`/api/web-live/stream?platform=${currentSource.platform}&roomId=${currentSource.roomId}`)
-      .then(async (r) => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
+    const params = new URLSearchParams({
+      platform: currentSource.platform,
+      roomId: currentSource.roomId,
+    });
+    fetch(`/api/web-live/stream?${params.toString()}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+        if (!data.url) throw new Error('平台没有返回可播放直播流');
         setVideoUrl(data.url);
         setStreamInfo({ name: data.name, title: data.title });
+        setPlaybackNotice('直播流已解析，正在连接播放器…');
         setLoadingStream(false);
       })
-      .catch((e) => {
-        setError(e?.message || '获取直播流失败');
+      .catch((requestError) => {
+        if (requestError?.name === 'AbortError') return;
+        setError(requestError?.message || '获取直播流失败');
+        setPlaybackNotice('');
         setLoadingStream(false);
       });
-  }, [currentSource]);
+    return () => controller.abort();
+  }, [currentSource, streamReloadToken]);
 
   const handleSelectSource = useCallback((s: WebLiveSource) => {
     setCurrentSource(s);
@@ -130,14 +145,24 @@ function TeslaWebLivePageInner() {
         )}
         {error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
-            <p className="text-red-300">{error}</p>
-            <button
-              type="button"
-              onClick={backToOriginal}
-              className="rounded bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20"
-            >
-              切回原版网页直播
-            </button>
+            <p className="max-w-xl text-red-300">{error}</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setStreamReloadToken((value) => value + 1)}
+                className="flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-sm hover:bg-rose-500"
+              >
+                <RefreshCw className="h-4 w-4" />
+                重新解析
+              </button>
+              <button
+                type="button"
+                onClick={backToOriginal}
+                className="rounded bg-white/10 px-3 py-1.5 text-sm hover:bg-white/20"
+              >
+                切回原版网页直播
+              </button>
+            </div>
           </div>
         )}
         {!loadingSources && !error && videoUrl && (
@@ -146,6 +171,7 @@ function TeslaWebLivePageInner() {
             url={videoUrl}
             title={fullTitle}
             live
+            defaultMode="video"
             onBackToOriginal={backToOriginal}
             onPlaybackReady={() => setPlaybackNotice('')}
             onPlaybackError={(message) => {
@@ -217,7 +243,7 @@ function TeslaWebLivePageInner() {
                 >
                   <span className="block line-clamp-2 break-words">{s.name}</span>
                   <span className="mt-0.5 block truncate text-[10px] text-white/40">
-                    {s.platform}{s.status === 'live' ? ' · 直播中' : s.status === 'offline' ? ' · 未开播' : ''}
+                    {platformLabel(s.platform)}{s.status === 'live' ? ' · 直播中' : s.status === 'offline' ? ' · 未开播' : ''}
                   </span>
                 </button>
               ))}
@@ -227,6 +253,16 @@ function TeslaWebLivePageInner() {
       </div>
     </div>
   );
+}
+
+function platformLabel(platform: string): string {
+  const labels: Record<string, string> = {
+    huya: '虎牙',
+    bilibili: '哔哩哔哩',
+    douyin: '抖音',
+    douyu: '斗鱼',
+  };
+  return labels[platform] || platform;
 }
 
 function useMemoTitle(
