@@ -14,12 +14,18 @@ export async function middleware(request: NextRequest) {
     return new NextResponse('Not Found', { status: 404 });
   }
 
-  // Tesla recovery branch: make the compatibility player the default point-on-demand
-  // destination while preserving every source/title/episode query parameter.
-  // The production main branch is untouched, and /play/tesla itself is not redirected.
-  if (pathname === '/play') {
+  // Tesla recovery branch: use one compatibility experience for on-demand,
+  // IPTV and web-live while preserving every query parameter. Production main
+  // remains untouched and explicit /tesla routes never redirect again.
+  const teslaEntrypoints: Record<string, string> = {
+    '/play': '/play/tesla',
+    '/live': '/live/tesla',
+    '/web-live': '/web-live/tesla',
+  };
+  const teslaDestination = teslaEntrypoints[pathname];
+  if (teslaDestination) {
     const teslaUrl = request.nextUrl.clone();
-    teslaUrl.pathname = '/play/tesla';
+    teslaUrl.pathname = teslaDestination;
     return NextResponse.redirect(teslaUrl);
   }
 
