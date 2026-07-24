@@ -9,106 +9,86 @@ export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const url = searchParams.get('url');
+  // URLSearchParams already returns the decoded value. Decoding a second time
+  // corrupts signed URLs containing percent sequences.
+  const targetUrl = searchParams.get('url');
   const allowCORS = searchParams.get('allowCORS') === 'true';
   const source = searchParams.get('moontv-source');
-  if (!url) {
+  if (!targetUrl) {
     return NextResponse.json({ error: 'Missing url' }, { status: 400 });
   }
 
   const config = await getConfig();
-  const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
+  const liveSource = config.LiveConfig?.find((item: any) => item.key === source);
   if (!liveSource) {
     return NextResponse.json({ error: 'Source not found' }, { status: 404 });
   }
-  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
 
-  let response: Response | null = null;
-  let responseUsed = false;
-
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const decodedUrl = decodeURIComponent(url);
-
-    response = await fetch(decodedUrl, {
-      cache: 'no-cache',
+    const upstream = await fetch(targetUrl, {
+      cache: 'no-store',
       redirect: 'follow',
-      credentials: 'same-origin',
+      signal: controller.signal,
       headers: {
-        'User-Agent': ua,
+        'User-Agent': liveSource.ua || 'AptvPlayer/1.4.10',
+        Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
       },
     });
+    clearTimeout(timeout);
 
-    if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch m3u8' }, { status: 500 });
+    if (!upstream.ok) {
+      return NextResponse.json(
+        { error: 'Failed to fetch playlist', upstreamStatus: upstream.status },
+        { status: upstream.status === 404 ? 404 : 502 },
+      );
     }
 
-    const contentType = response.headers.get('Content-Type') || '';
-    // rewrite m3u8
-    if (contentType.toLowerCase().includes('mpegurl') || contentType.toLowerCase().includes('octet-stream')) {
-      // 获取最终的响应URL（处理重定向后的URL）
-      const finalUrl = response.url;
-      const m3u8Content = await response.text();
-      responseUsed = true; // 标记 response 已被使用
+    const bytes = await upstream.arrayBuffer();
+    const contentType = upstream.headers.get('Content-Type') || '';
+    const preview = new TextDecoder().decode(bytes.slice(0, Math.min(bytes.byteLength, 32))).trimStart();
+    const pathname = new URL(upstream.url || targetUrl).pathname.toLowerCase();
+    const isPlaylist =
+      contentType.toLowerCase().includes('mpegurl') ||
+      pathname.endsWith('.m3u8') ||
+      preview.startsWith('#EXTM3U');
 
-      // 使用最终的响应URL作为baseUrl，而不是原始的请求URL
-      const baseUrl = getBaseUrl(finalUrl);
-
-      // 重写 M3U8 内容
-      const modifiedContent = rewriteM3U8Content(m3u8Content, baseUrl, request, allowCORS);
-
-      const headers = new Headers();
-      headers.set('Content-Type', contentType);
-      headers.set('Access-Control-Allow-Origin', '*');
-      headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      headers.set('Access-Control-Allow-Headers', 'Content-Type, Range, Origin, Accept');
-      headers.set('Cache-Control', 'no-cache');
-      headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-      return new Response(modifiedContent, { headers });
-    }
-    // just proxy
     const headers = new Headers();
-    headers.set('Content-Type', response.headers.get('Content-Type') || 'application/vnd.apple.mpegurl');
     headers.set('Access-Control-Allow-Origin', '*');
-    headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
     headers.set('Access-Control-Allow-Headers', 'Content-Type, Range, Origin, Accept');
-    headers.set('Cache-Control', 'no-cache');
     headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+    headers.set('Cache-Control', isPlaylist ? 'no-store' : 'public, max-age=30, s-maxage=120');
 
-    // 直接返回视频流
-    return new Response(response.body, {
-      status: 200,
-      headers,
-    });
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed to fetch m3u8' }, { status: 500 });
-  } finally {
-    // 确保 response 被正确关闭以释放资源
-    if (response && !responseUsed) {
-      try {
-        response.body?.cancel();
-      } catch (error) {
-        // 忽略关闭时的错误
-        console.warn('Failed to close response body:', error);
-      }
+    if (!isPlaylist) {
+      // application/octet-stream is frequently used for TS/fMP4 fragments.
+      // Never decode it as text solely because of that generic MIME type.
+      headers.set('Content-Type', contentType || 'application/octet-stream');
+      return new Response(bytes, { status: 200, headers });
     }
+
+    const playlist = new TextDecoder().decode(bytes);
+    const modified = rewriteM3U8Content(
+      playlist,
+      getBaseUrl(upstream.url || targetUrl),
+      request,
+      allowCORS,
+    );
+    headers.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+    return new Response(modified, { status: 200, headers });
+  } catch (error: any) {
+    clearTimeout(timeout);
+    const timedOut = error?.name === 'AbortError';
+    return NextResponse.json(
+      { error: timedOut ? 'Playlist upstream timed out' : 'Failed to fetch playlist' },
+      { status: timedOut ? 504 : 502 },
+    );
   }
 }
 
 function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allowCORS: boolean) {
-  // 从 referer 头提取协议信息
-  const referer = req.headers.get('referer');
-  let protocol = 'http';
-  if (referer) {
-    try {
-      const refererUrl = new URL(referer);
-      protocol = refererUrl.protocol.replace(':', '');
-    } catch (error) {
-      // ignore
-    }
-  }
-
-  const host = req.headers.get('host');
-  const proxyBase = `${protocol}://${host}/api/proxy`;
+  const proxyBase = `${new URL(req.url).origin}/api/proxy`;
 
   // 获取 moontv-source 参数
   const reqUrl = new URL(req.url);
