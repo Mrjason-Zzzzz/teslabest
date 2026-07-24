@@ -17,6 +17,8 @@ import {
   Rewind,
   FastForward,
   Maximize2,
+  RefreshCw,
+  WifiOff,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -109,6 +111,10 @@ export default function TeslaPlayer({
   const playbackErrorReportedRef = useRef(false);
   const userPausedRef = useRef(false);
   const liveStallRecoveryTimerRef = useRef<number | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const automaticReconnectAttemptsRef = useRef(0);
+  const currentTimeRef = useRef(0);
+  const scrubTimeRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -128,10 +134,21 @@ export default function TeslaPlayer({
   const [muted, setMuted] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [engineLabel, setEngineLabel] = useState('兼容播放');
+  const [networkOffline, setNetworkOffline] = useState(false);
+  const [reconnectMessage, setReconnectMessage] = useState('');
+  const [playbackSession, setPlaybackSession] = useState(0);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
 
   const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'video' : defaultModeProp));
 
   const reportPlaybackReady = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    automaticReconnectAttemptsRef.current = 0;
+    setReconnectMessage('');
+    setNetworkOffline(false);
     if (playbackReadyReportedRef.current) return;
     playbackReadyReportedRef.current = true;
     onPlaybackReady?.();
@@ -142,6 +159,67 @@ export default function TeslaPlayer({
     playbackErrorReportedRef.current = true;
     onPlaybackError?.(message);
   }, [onPlaybackError]);
+
+  const requestReconnect = useCallback((automatic = false) => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (!live && currentTimeRef.current > 0.5) {
+      setSeekToTime(currentTimeRef.current);
+    }
+    playbackReadyReportedRef.current = false;
+    playbackErrorReportedRef.current = false;
+    setError(null);
+    setLoading(true);
+    setBuffering(true);
+    setReconnectMessage(automatic ? '网络恢复，正在自动重新连接…' : '正在重新连接…');
+    setPlaybackSession((value) => value + 1);
+  }, [live]);
+
+  const scheduleAutomaticReconnect = useCallback((reason: string) => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setNetworkOffline(true);
+      setReconnectMessage('网络已断开，恢复后将自动继续播放');
+      return;
+    }
+    if (reconnectTimerRef.current || userPausedRef.current) return;
+    const attempt = ++automaticReconnectAttemptsRef.current;
+    const delay = Math.min(12000, 1500 * Math.pow(2, Math.min(attempt - 1, 3)));
+    setReconnectMessage(`${reason}，${Math.ceil(delay / 1000)} 秒后自动重连（第 ${attempt} 次）`);
+    reconnectTimerRef.current = window.setTimeout(() => requestReconnect(true), delay);
+  }, [requestReconnect]);
+
+  useEffect(() => {
+    const handleOffline = () => {
+      setNetworkOffline(true);
+      setBuffering(true);
+      setReconnectMessage('网络已断开，恢复后将自动继续播放');
+    };
+    const handleOnline = () => {
+      setNetworkOffline(false);
+      requestReconnect(true);
+    };
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    if (!navigator.onLine) handleOffline();
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+  }, [requestReconnect]);
+
+  useEffect(() => {
+    setMode(getInitialMode(live ? 'video' : defaultModeProp));
+    setError(null);
+    setReconnectMessage('');
+    playbackReadyReportedRef.current = false;
+    playbackErrorReportedRef.current = false;
+  }, [url, live, defaultModeProp]);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -160,6 +238,7 @@ export default function TeslaPlayer({
   // ===== 播放控制（统一接口） =====
 
   const seek = useCallback((t: number) => {
+    currentTimeRef.current = t;
     if (mode === 'webcodecs') {
       wcPlayerRef.current?.seek(t);
     } else if (videoRef.current) {
@@ -296,6 +375,12 @@ export default function TeslaPlayer({
     let flvPlayer: any = null;
     let directFallbackTried = false;
     let liveRecoveryAttempts = 0;
+    let visualWatchdogTimer: number | null = null;
+    let videoFrameCallbackId = 0;
+    let lastVideoFrameAt = Date.now();
+    let lastVideoMediaTime = 0;
+    let lastTotalVideoFrames = 0;
+    const supportsVideoFrameCallback = typeof (HTMLVideoElement.prototype as any).requestVideoFrameCallback === 'function';
 
     const clearLiveStallRecovery = () => {
       if (liveStallRecoveryTimerRef.current) {
@@ -321,7 +406,11 @@ export default function TeslaPlayer({
     container.insertBefore(videoEl, container.firstChild);
     videoRef.current = videoEl;
 
-    const onTimeUpdate = () => { if (!destroyed) setCurrentTime(videoEl.currentTime); };
+    const onTimeUpdate = () => {
+      if (destroyed) return;
+      currentTimeRef.current = videoEl.currentTime;
+      setCurrentTime(videoEl.currentTime);
+    };
     const onDuration = () => { if (!destroyed && videoEl.duration > 0) { setDuration(videoEl.duration); setLoading(false); } };
     const onPlay = () => {
       if (!destroyed) {
@@ -332,6 +421,7 @@ export default function TeslaPlayer({
         setBuffering(false);
         setLoading(false);
         clearBufferingTimeout();
+        automaticReconnectAttemptsRef.current = 0;
         reportPlaybackReady();
       }
     };
@@ -384,6 +474,10 @@ export default function TeslaPlayer({
     const onVideoError = () => {
       if (destroyed) return;
       const err = videoEl.error;
+      if (err?.code === 2) {
+        scheduleAutomaticReconnect('视频网络请求失败');
+        return;
+      }
       const message = '当前资源格式不受浏览器支持：' + (err?.message || err?.code || '未知错误');
       setError(message);
       reportPlaybackError(message);
@@ -397,6 +491,55 @@ export default function TeslaPlayer({
     videoEl.addEventListener('playing', onPlaying);
     videoEl.addEventListener('ended', onEnded);
     videoEl.addEventListener('error', onVideoError);
+
+    const observeVideoFrame = (_now: number, metadata: any) => {
+      if (destroyed) return;
+      lastVideoFrameAt = Date.now();
+      lastVideoMediaTime = metadata?.mediaTime ?? videoEl.currentTime;
+      videoFrameCallbackId = (videoEl as any).requestVideoFrameCallback(observeVideoFrame);
+    };
+    if (supportsVideoFrameCallback) {
+      videoFrameCallbackId = (videoEl as any).requestVideoFrameCallback(observeVideoFrame);
+    }
+
+    visualWatchdogTimer = window.setInterval(() => {
+      if (destroyed || videoEl.paused || userPausedRef.current || videoEl.currentTime < 2) return;
+
+      if (!supportsVideoFrameCallback) {
+        const quality = (videoEl as any).getVideoPlaybackQuality?.();
+        const totalFrames = quality?.totalVideoFrames || 0;
+        if (totalFrames > lastTotalVideoFrames) {
+          lastTotalVideoFrames = totalFrames;
+          lastVideoFrameAt = Date.now();
+          lastVideoMediaTime = videoEl.currentTime;
+        }
+      }
+
+      const audioAdvancedWithoutFrames =
+        videoEl.currentTime - lastVideoMediaTime > 3 &&
+        Date.now() - lastVideoFrameAt > 6000;
+      if (!audioAdvancedWithoutFrames) return;
+
+      if (!live) {
+        const message = '当前资源只有声音但没有可解码画面，正在自动换源';
+        setError(message);
+        reportPlaybackError(message);
+        return;
+      }
+
+      liveRecoveryAttempts++;
+      setBuffering(true);
+      setReconnectMessage('检测到直播画面停止，正在恢复视频线路…');
+      if (hlsRef.current && liveRecoveryAttempts <= 3) {
+        try { hlsRef.current.recoverMediaError(); } catch {}
+        try { hlsRef.current.stopLoad(); hlsRef.current.startLoad(-1); } catch {}
+        videoEl.play().catch(() => {});
+        lastVideoFrameAt = Date.now();
+        lastVideoMediaTime = videoEl.currentTime;
+      } else {
+        scheduleAutomaticReconnect('直播有声音但画面已停止');
+      }
+    }, 3000);
 
     const attachDirectMedia = () => {
       if (destroyed) return;
@@ -446,6 +589,9 @@ export default function TeslaPlayer({
           fragLoadingTimeOut: 30000,
           manifestLoadingTimeOut: 20000,
           levelLoadingTimeOut: 20000,
+          startLevel: 0,
+          capLevelToPlayerSize: true,
+          testBandwidth: false,
         });
         hlsRef.current = hls;
 
@@ -475,6 +621,10 @@ export default function TeslaPlayer({
           }
 
           const message = 'HLS 资源无法播放：' + (data.details || data.type);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            scheduleAutomaticReconnect(message);
+            return;
+          }
           setError(message);
           reportPlaybackError(message);
         });
@@ -499,6 +649,10 @@ export default function TeslaPlayer({
     return () => {
       destroyed = true;
       clearLiveStallRecovery();
+      if (visualWatchdogTimer) clearInterval(visualWatchdogTimer);
+      if (supportsVideoFrameCallback && videoFrameCallbackId) {
+        try { (videoEl as any).cancelVideoFrameCallback(videoFrameCallbackId); } catch {}
+      }
       if (canvasRafRef.current) cancelAnimationFrame(canvasRafRef.current);
       if (flvPlayer) { try { flvPlayer.destroy(); } catch {} flvPlayer = null; }
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch {} hlsRef.current = null; }
@@ -510,7 +664,7 @@ export default function TeslaPlayer({
       }
       videoRef.current = null;
     };
-  }, [url, mode, live, poster, reportPlaybackError, reportPlaybackReady]);
+  }, [url, mode, live, poster, playbackSession, reportPlaybackError, reportPlaybackReady, savedProgress, scheduleAutomaticReconnect, seekToTime, startBufferingTimeout, clearBufferingTimeout]);
 
   // ===== webcodecs 模式初始化 =====
   useEffect(() => {
@@ -523,6 +677,7 @@ export default function TeslaPlayer({
     }
 
     let destroyed = false;
+    let firstFrameTimer: number | null = null;
     setLoading(true);
     setError(null);
 
@@ -533,6 +688,10 @@ export default function TeslaPlayer({
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
+            if (firstFrameTimer) {
+              clearTimeout(firstFrameTimer);
+              firstFrameTimer = null;
+            }
             const audioActive = wcPlayerRef.current?.isAudioActive() ?? false;
             setPlaying(true);
             setMuted(!audioActive);
@@ -573,6 +732,15 @@ export default function TeslaPlayer({
         setMode('video');
       });
 
+      firstFrameTimer = window.setTimeout(() => {
+        if (destroyed || playbackReadyReportedRef.current || networkOffline) return;
+        console.warn('[TeslaPlayer] WebCodecs produced no playable frame, falling back to native video');
+        setReconnectMessage('兼容模式未产生画面，正在切换通用播放器…');
+        setError(null);
+        setLoading(true);
+        setMode('video');
+      }, 12000);
+
       const statsTimer = window.setInterval(() => {
         if (showDebug && !destroyed) {
           try { setDebugInfo(player.getStats()); } catch {}
@@ -582,6 +750,7 @@ export default function TeslaPlayer({
       return () => {
         destroyed = true;
         clearInterval(statsTimer);
+        if (firstFrameTimer) clearTimeout(firstFrameTimer);
         clearBufferingTimeout();
         player.destroy();
         wcPlayerRef.current = null;
@@ -593,7 +762,7 @@ export default function TeslaPlayer({
       setMode('video');
       return () => { destroyed = true; };
     }
-  }, [url, mode]);
+  }, [url, mode, playbackSession]);
 
   useEffect(() => {
     wcPlayerRef.current?.setShowDebug(showDebug);
@@ -630,6 +799,15 @@ export default function TeslaPlayer({
         </div>
       )}
 
+      {(networkOffline || reconnectMessage) && !error && (
+        <div className="pointer-events-none absolute inset-x-0 top-14 z-30 flex justify-center px-4">
+          <div className="flex items-center gap-2 rounded-full bg-black/85 px-4 py-2 text-xs text-white shadow-lg backdrop-blur">
+            {networkOffline ? <WifiOff className="h-4 w-4 text-amber-400" /> : <RefreshCw className="h-4 w-4 animate-spin text-green-400" />}
+            <span>{networkOffline ? '网络已断开，恢复后自动续播' : reconnectMessage}</span>
+          </div>
+        </div>
+      )}
+
       {/* 加载状态 */}
       {loading && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
@@ -652,10 +830,11 @@ export default function TeslaPlayer({
             <div className="mt-3 flex gap-2 justify-center flex-wrap">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); window.location.reload(); }}
-                className="rounded bg-green-500 px-4 py-1.5 text-sm text-white"
+                onClick={(e) => { e.stopPropagation(); requestReconnect(false); }}
+                className="flex items-center gap-1 rounded bg-green-500 px-4 py-1.5 text-sm text-white"
               >
-                重试
+                <RefreshCw className="h-4 w-4" />
+                重新连接
               </button>
               {onBackToOriginal && (
                 <button
@@ -714,26 +893,47 @@ export default function TeslaPlayer({
       {/* 底部控制条 */}
       <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-2 pb-2 pt-12 md:px-3 md:pb-3 md:pt-16 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         {/* 直播没有可拖动的固定时间轴。 */}
-        {!live && <div className="pointer-events-auto mb-1 md:mb-2 group">
+        {!live && (
           <div
-            className="relative h-1 group-hover:h-1.5 cursor-pointer rounded-full bg-white/20 transition-all"
-            onClick={(e) => {
-              e.stopPropagation();
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              const percent = (e.clientX - rect.left) / rect.width;
-              seek(percent * (duration || 1));
-            }}
+            className="pointer-events-auto mb-1 md:mb-2"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
           >
-            <div
-              className="h-full rounded-full bg-green-500"
-              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            <input
+              type="range"
+              min={0}
+              max={Math.max(duration, 1)}
+              step={0.1}
+              value={scrubTime ?? currentTime}
+              onChange={(event) => {
+                const value = Number(event.currentTarget.value);
+                scrubTimeRef.current = value;
+                setScrubTime(value);
+              }}
+              onPointerUp={(event) => {
+                event.stopPropagation();
+                const value = scrubTimeRef.current ?? Number(event.currentTarget.value);
+                seek(value);
+                scrubTimeRef.current = null;
+                setScrubTime(null);
+              }}
+              onKeyUp={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+                const value = scrubTimeRef.current ?? Number(event.currentTarget.value);
+                seek(value);
+                scrubTimeRef.current = null;
+                setScrubTime(null);
+              }}
+              className="h-10 w-full cursor-pointer accent-green-500 touch-none"
+              aria-label="播放进度"
             />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 5px)` }}
-            />
+            {scrubTime !== null && (
+              <div className="-mt-2 text-center text-xs text-white/80">
+                跳转至 {formatTime(scrubTime)}
+              </div>
+            )}
           </div>
-        </div>}
+        )}
 
         {/* 控制按钮行 */}
         <div className="pointer-events-auto flex items-center justify-between">
