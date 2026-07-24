@@ -256,17 +256,42 @@ async function getDouyinStream(rawRoomId: string) {
 
   const streamUrl = roomData?.stream_url;
   const hlsMap = streamUrl?.hls_pull_url_map || {};
-  // Prefer a stable medium bitrate on mobile networks. ORIGIN/FULL_HD can
-  // resolve correctly but still starve the Tesla browser every few seconds.
+  // Prefer a lower stable bitrate on a moving cellular connection. Every
+  // available quality is returned so the UI can switch without changing rooms.
+  const qualityOrder = ['SD2', 'SD1', 'HD1', 'FULL_HD1', 'ORIGIN'];
   const m3u8Url =
-    hlsMap.HD1 ||
-    hlsMap.SD1 ||
     hlsMap.SD2 ||
+    hlsMap.SD1 ||
+    hlsMap.HD1 ||
     hlsMap.FULL_HD1 ||
     hlsMap.ORIGIN ||
     streamUrl?.hls_pull_url ||
     Object.values(hlsMap)[0] ||
     htmlHls;
+  const alternatives = qualityOrder
+    .filter((quality) => typeof hlsMap[quality] === 'string' && hlsMap[quality])
+    .map((quality) => ({
+      id: quality,
+      label: quality === 'SD2'
+        ? '流畅'
+        : quality === 'SD1'
+          ? '标清'
+          : quality === 'HD1'
+            ? '高清'
+            : quality === 'FULL_HD1'
+              ? '超清'
+              : '原画',
+      url: cleanEscapedUrl(hlsMap[quality]),
+      streamType: 'hls'
+    }));
+  if (alternatives.length === 0 && m3u8Url) {
+    alternatives.push({
+      id: 'AUTO',
+      label: '自动线路',
+      url: cleanEscapedUrl(String(m3u8Url)),
+      streamType: 'hls'
+    });
+  }
 
   if (!m3u8Url || typeof m3u8Url !== 'string') {
     throw new Error(
@@ -277,7 +302,8 @@ async function getDouyinStream(rawRoomId: string) {
   return {
     url: cleanEscapedUrl(m3u8Url),
     name: jsonData?.data?.user?.nickname || '',
-    title: roomData?.title || ''
+    title: roomData?.title || '',
+    alternatives
   };
 }
 
@@ -309,42 +335,60 @@ export async function GET(request: NextRequest) {
 
       const jsonData = JSON.parse(match[1] + '}');
       const gameLiveInfo = jsonData.data?.[0]?.gameLiveInfo;
-      const streamInfo = jsonData.data?.[0]?.gameStreamInfoList?.[0];
+      const streamInfoList = jsonData.data?.[0]?.gameStreamInfoList || [];
 
-      if (!streamInfo) {
+      if (streamInfoList.length === 0) {
         return NextResponse.json({ error: '直播未开启' }, { status: 404 });
       }
 
-      const {
-        sFlvUrl,
-        sFlvUrlSuffix,
-        sFlvAntiCode,
-        sHlsUrl,
-        sHlsUrlSuffix,
-        sHlsAntiCode,
-        sStreamName
-      } = streamInfo;
+      // Huya normally exposes several CDN lines. Return all valid lines so a
+      // frozen picture can switch CDN without asking the user to edit admin data.
+      const alternatives = streamInfoList.flatMap((streamInfo: any, index: number) => {
+        try {
+          const {
+            sFlvUrl,
+            sFlvUrlSuffix,
+            sFlvAntiCode,
+            sHlsUrl,
+            sHlsUrlSuffix,
+            sHlsAntiCode,
+            sStreamName
+          } = streamInfo;
+          const hasHls = Boolean(sHlsUrl && sHlsUrlSuffix && sHlsAntiCode);
+          const antiCode = getAntiCode(
+            hasHls ? sHlsAntiCode : sFlvAntiCode,
+            sStreamName
+          );
+          const originalUrl = hasHls
+            ? `${sHlsUrl}/${sStreamName}.${sHlsUrlSuffix}?${antiCode}`
+            : `${sFlvUrl}/${sStreamName}.${sFlvUrlSuffix}?${antiCode}`;
+          const streamType = hasHls ? 'hls' : 'flv';
+          return [{
+            id: `line-${index + 1}`,
+            label: `线路 ${index + 1}${hasHls ? ' · HLS' : ' · FLV'}`,
+            url: `/api/web-live/proxy/proxy.${hasHls ? 'm3u8' : 'flv'}?url=${encodeURIComponent(originalUrl)}&platform=huya`,
+            originalUrl,
+            streamType
+          }];
+        } catch (error) {
+          console.warn('[web-live] skip invalid Huya line:', error);
+          return [];
+        }
+      });
 
-      // Vercel serverless functions are a poor fit for one long FLV response.
-      // Prefer segmented HLS so brief network drops can refill the buffer.
-      const hasHls = Boolean(sHlsUrl && sHlsUrlSuffix && sHlsAntiCode);
-      const antiCode = getAntiCode(
-        hasHls ? sHlsAntiCode : sFlvAntiCode,
-        sStreamName
-      );
-      const streamUrl = hasHls
-        ? `${sHlsUrl}/${sStreamName}.${sHlsUrlSuffix}?${antiCode}`
-        : `${sFlvUrl}/${sStreamName}.${sFlvUrlSuffix}?${antiCode}`;
-      const streamType = hasHls ? 'hls' : 'flv';
-      const proxyUrl = `/api/web-live/proxy/proxy.${hasHls ? 'm3u8' : 'flv'}?url=${encodeURIComponent(streamUrl)}&platform=huya`;
+      if (alternatives.length === 0) {
+        return NextResponse.json({ error: '虎牙未返回可用播放线路' }, { status: 502 });
+      }
 
+      const selected = alternatives.find((item: any) => item.streamType === 'hls') || alternatives[0];
       return NextResponse.json({
-        url: proxyUrl,
-        originalUrl: streamUrl,
+        url: selected.url,
+        originalUrl: selected.originalUrl,
         name: gameLiveInfo?.nick || '',
         title: gameLiveInfo?.introduction || '',
-        streamType,
+        streamType: selected.streamType,
         quality: 'stable',
+        alternatives,
         live: true
       });
     }
@@ -359,6 +403,13 @@ export async function GET(request: NextRequest) {
         name: streamData.name,
         title: streamData.title,
         streamType: 'hls',
+        alternatives: [{
+          id: 'line-1',
+          label: '默认线路',
+          url: proxyUrl,
+          originalUrl: streamData.url,
+          streamType: 'hls'
+        }],
         live: true
       });
     }
@@ -366,6 +417,11 @@ export async function GET(request: NextRequest) {
     if (platform === 'douyin') {
       const streamData = await getDouyinStream(roomId);
       const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}&platform=douyin`;
+      const alternatives = streamData.alternatives.map((item: any) => ({
+        ...item,
+        originalUrl: item.url,
+        url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(item.url)}&platform=douyin`
+      }));
 
       return NextResponse.json({
         url: proxyUrl,
@@ -373,6 +429,7 @@ export async function GET(request: NextRequest) {
         name: streamData.name,
         title: streamData.title,
         streamType: 'hls',
+        alternatives,
         live: true
       });
     }
