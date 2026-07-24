@@ -39,7 +39,7 @@ interface TeslaPlayerProps {
   onPlaybackError?: (message: string) => void;
 }
 
-const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
@@ -139,7 +139,7 @@ export default function TeslaPlayer({
   const [playbackSession, setPlaybackSession] = useState(0);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
 
-  const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'video' : defaultModeProp));
+  const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'webcodecs' : defaultModeProp));
 
   const reportPlaybackReady = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -214,7 +214,7 @@ export default function TeslaPlayer({
   }, [requestReconnect]);
 
   useEffect(() => {
-    setMode(getInitialMode(live ? 'video' : defaultModeProp));
+    setMode(getInitialMode(live ? 'webcodecs' : defaultModeProp));
     setError(null);
     setReconnectMessage('');
     playbackReadyReportedRef.current = false;
@@ -422,7 +422,6 @@ export default function TeslaPlayer({
         setLoading(false);
         clearBufferingTimeout();
         automaticReconnectAttemptsRef.current = 0;
-        reportPlaybackReady();
       }
     };
     const onPause = () => {
@@ -463,6 +462,10 @@ export default function TeslaPlayer({
       setAudioUnlockRequired(videoEl.muted);
       setBuffering(false);
       clearBufferingTimeout();
+      if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        setLoading(false);
+        reportPlaybackReady();
+      }
     };
     const onEnded = () => {
       if (destroyed) return;
@@ -496,6 +499,9 @@ export default function TeslaPlayer({
       if (destroyed) return;
       lastVideoFrameAt = Date.now();
       lastVideoMediaTime = metadata?.mediaTime ?? videoEl.currentTime;
+      setLoading(false);
+      setBuffering(false);
+      reportPlaybackReady();
       videoFrameCallbackId = (videoEl as any).requestVideoFrameCallback(observeVideoFrame);
     };
     if (supportsVideoFrameCallback) {
@@ -683,8 +689,8 @@ export default function TeslaPlayer({
 
     try {
       const player = new WebCodecsPlayer(canvasRef.current, {
-        onTime: (t) => { if (!destroyed) setCurrentTime(t); },
-        onDurationChange: (d) => { if (!destroyed) { setDuration(d); setLoading(false); } },
+        onTime: (t) => { if (!destroyed) { currentTimeRef.current = t; setCurrentTime(t); } },
+        onDurationChange: (d) => { if (!destroyed) setDuration(d); },
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
@@ -713,7 +719,14 @@ export default function TeslaPlayer({
         },
         onError: (msg) => {
           if (destroyed) return;
-          console.warn('[TeslaPlayer] WebCodecs failed, falling back to native video:', msg);
+          console.warn('[TeslaPlayer] WebCodecs playback failed:', msg);
+          if (live) {
+            setLoading(false);
+            setBuffering(false);
+            setError(msg);
+            reportPlaybackError(msg);
+            return;
+          }
           setError(null);
           setLoading(true);
           setMode('video');
@@ -726,7 +739,15 @@ export default function TeslaPlayer({
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
         if (destroyed) return;
-        console.warn('[TeslaPlayer] WebCodecs load failed, falling back to native video:', e);
+        const message = e instanceof Error ? e.message : '兼容播放器加载失败';
+        console.warn('[TeslaPlayer] WebCodecs load failed:', e);
+        if (live) {
+          setLoading(false);
+          setBuffering(false);
+          setError(message);
+          reportPlaybackError(message);
+          return;
+        }
         setError(null);
         setLoading(true);
         setMode('video');
@@ -738,12 +759,20 @@ export default function TeslaPlayer({
         playbackReadyReportedRef.current ||
         (typeof navigator !== 'undefined' && !navigator.onLine)
       ) return;
-        console.warn('[TeslaPlayer] WebCodecs produced no playable frame, falling back to native video');
+        const message = '兼容模式未在限定时间内产生有效画面';
+        console.warn('[TeslaPlayer]', message);
+        if (live) {
+          setLoading(false);
+          setBuffering(false);
+          setError(message);
+          reportPlaybackError(message);
+          return;
+        }
         setReconnectMessage('兼容模式未产生画面，正在切换通用播放器…');
         setError(null);
         setLoading(true);
         setMode('video');
-      }, 12000);
+      }, live ? 18000 : 12000);
 
       const statsTimer = window.setInterval(() => {
         if (showDebug && !destroyed) {
@@ -760,10 +789,18 @@ export default function TeslaPlayer({
         wcPlayerRef.current = null;
       };
     } catch (e: any) {
-      console.warn('[TeslaPlayer] WebCodecs initialization failed, falling back to native video:', e);
-      setError(null);
-      setLoading(true);
-      setMode('video');
+      const message = e?.message || '兼容播放器初始化失败';
+      console.warn('[TeslaPlayer] WebCodecs initialization failed:', e);
+      if (live) {
+        setLoading(false);
+        setBuffering(false);
+        setError(message);
+        reportPlaybackError(message);
+      } else {
+        setError(null);
+        setLoading(true);
+        setMode('video');
+      }
       return () => { destroyed = true; };
     }
   }, [url, mode, playbackSession]);
@@ -982,24 +1019,24 @@ export default function TeslaPlayer({
               {live ? '直播中' : `${formatTime(currentTime)} / ${formatTime(duration)}`}
             </div>
 
-            {/* 倍速仅在点播的原生回退模式可用 */}
-            {!live && mode !== 'webcodecs' && (
+            {/* 点播倍速同时支持原生与 WebCodecs 兼容内核。 */}
+            {!live && (
               <div className="relative ml-1">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setShowRateMenu(!showRateMenu); }}
-                  className="px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
+                  className="min-h-11 min-w-14 rounded px-3 py-2 text-sm text-white/90 hover:bg-white/10 transition-colors"
                 >
                   {rate}x
                 </button>
                 {showRateMenu && (
-                  <div className="absolute bottom-full left-0 mb-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[80px]">
+                  <div className="absolute bottom-full left-0 z-20 mb-2 min-w-[112px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur">
                     {PLAYBACK_RATES.map((r) => (
                       <button
                         key={r}
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setPlaybackRate(r); }}
-                        className={`block w-full rounded px-2 py-1 text-xs text-left ${rate === r ? 'bg-green-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                        className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${rate === r ? 'bg-green-500 text-white' : 'text-gray-200 hover:bg-white/10'}`}
                       >
                         {r}x
                       </button>
