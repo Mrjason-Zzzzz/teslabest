@@ -169,9 +169,12 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
-      maxBufferLength: 45,
-      maxMaxBufferLength: 90,
-      backBufferLength: 20,
+      maxBufferLength: 36,
+      maxMaxBufferLength: 72,
+      backBufferLength: 16,
+      startLevel: 0,
+      capLevelToPlayerSize: true,
+      testBandwidth: false,
       fragLoadingTimeOut: 30000,
       manifestLoadingTimeOut: 20000,
       levelLoadingTimeOut: 20000,
@@ -190,6 +193,11 @@ export class WebCodecsPlayer {
       if (this.destroyed || generation !== this.loadGeneration) return;
       const details = data.details;
       this.isLivePlaylist = Boolean(details?.live);
+      if (this.hls?.config && this.isLivePlaylist) {
+        this.hls.config.maxBufferLength = 24;
+        this.hls.config.maxMaxBufferLength = 48;
+        this.hls.config.backBufferLength = 8;
+      }
       this.debugStats.hlsState = 'level-loaded';
       this.debugStats.currentLevel = data.level;
 
@@ -613,8 +621,7 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const MAX_OUTSTANDING = 50;
-    const MIN_QUEUE_FOR_PAUSE_DEMUX = 80;
+    const MAX_OUTSTANDING = this.isLivePlaylist ? 18 : 50;
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
@@ -665,8 +672,8 @@ export class WebCodecsPlayer {
   }
 
   private maybePrime() {
-    const minVideoFrames = this.canvasSized ? 12 : 6;
-    const minAudioFrames = this.canvasSized ? 24 : 12;
+    const minVideoFrames = this.isLivePlaylist ? 3 : (this.canvasSized ? 12 : 6);
+    const minAudioFrames = this.isLivePlaylist ? 6 : (this.canvasSized ? 24 : 12);
     const audioPipelineActive =
       this.audioConfig !== null ||
       this.debugStats.audioSamples > 0 ||
