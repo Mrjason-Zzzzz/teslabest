@@ -23,11 +23,12 @@ export class WebCodecsPlayer {
   private cb: PlayerCallbacks;
 
   private hls: any = null;
+  private hlsVideoEl: HTMLVideoElement | null = null;
+  private sourceUrl = '';
+  private loadGeneration = 0;
   private segments: Segment[] = [];
   private currentSegIndex = 0;
   private durationSec = 0;
-  private downloading = false;
-  private seekTarget: number | null = null;
 
   private packetStream: any = null;
   private parseStream: any = null;
@@ -107,7 +108,15 @@ export class WebCodecsPlayer {
   }
 
   async load(url: string, startAt = 0): Promise<void> {
+    const generation = ++this.loadGeneration;
     this.teardown();
+    this.teardownAudioGraph();
+    this.destroyed = false;
+    this.sourceUrl = url;
+    this.segments = [];
+    this.currentSegIndex = 0;
+    this.videoConfig = null;
+    this.audioConfig = null;
     this.baseMediaTime = startAt;
     this.ctxStartTime = null;
     this.nextAudioStartTime = 0;
@@ -119,8 +128,8 @@ export class WebCodecsPlayer {
     console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
 
     this.setupAudioGraph();
-    this.setupDecoders();
-    this.initDemuxPipeline();
+    this.setupDecoders(generation);
+    this.initDemuxPipeline(generation);
 
     if (!Hls.isSupported()) {
       this.fail('hls.js not supported');
@@ -140,12 +149,14 @@ export class WebCodecsPlayer {
     this.hls = hls;
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt: any, data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       this.debugStats.hlsState = 'manifest-parsed';
       this.debugStats.levelCount = data.levels?.length || 0;
       console.log('[WebCodecsPlayer] MANIFEST_PARSED, levels:', data.levels?.length);
     });
 
     hls.on(Hls.Events.LEVEL_LOADED, (_evt: any, data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       const details = data.details;
       this.debugStats.hlsState = 'level-loaded';
       this.debugStats.currentLevel = data.level;
@@ -169,23 +180,18 @@ export class WebCodecsPlayer {
     });
 
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       this.debugStats.fragLoaded++;
       const frag = data.frag;
       const payload = frag?.data || data.payload;
       if (payload && payload.byteLength) {
-        if (this.seekTarget !== null) {
-          const fragStart = frag?.start ?? 0;
-          const fragEnd = fragStart + (frag?.duration ?? 0);
-          if (fragEnd < this.seekTarget) {
-            return;
-          }
-        }
         this.debugStats.bytesLoaded += payload.byteLength;
-        this.feedTsData(new Uint8Array(payload));
+        this.feedTsData(new Uint8Array(payload), generation);
       }
     });
 
     hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       console.warn('[WebCodecsPlayer] HLS ERROR:', data.type, data.details);
       this.debugStats.lastError = data.details || data.type;
       if (data.fatal) {
@@ -196,13 +202,16 @@ export class WebCodecsPlayer {
     hls.loadSource(url);
     const videoEl = document.createElement('video');
     videoEl.style.display = 'none';
+    videoEl.muted = true;
+    videoEl.playsInline = true;
     document.body.appendChild(videoEl);
+    this.hlsVideoEl = videoEl;
     hls.attachMedia(videoEl);
 
     this.loop();
   }
 
-  private initDemuxPipeline() {
+  private initDemuxPipeline(generation = this.loadGeneration) {
     const mp2t = muxjs.mp2t;
 
     this.packetStream = new mp2t.TransportPacketStream();
@@ -217,7 +226,7 @@ export class WebCodecsPlayer {
     });
 
     this.elementaryStream.on('data', (d: any) => {
-      if (this.destroyed) return;
+      if (this.destroyed || generation !== this.loadGeneration) return;
       if (d.type === 'video') {
         this.debugStats.videoPes++;
         this.handleVideoPes(d);
@@ -228,13 +237,14 @@ export class WebCodecsPlayer {
     });
 
     this.elementaryStream.on('error', (err: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       console.warn('[WebCodecsPlayer] demux error:', err);
       this.debugStats.lastError = String(err);
     });
   }
 
-  private feedTsData(data: Uint8Array) {
-    if (this.destroyed || !this.packetStream) return;
+  private feedTsData(data: Uint8Array, generation = this.loadGeneration) {
+    if (this.destroyed || generation !== this.loadGeneration || !this.packetStream) return;
     try {
       this.packetStream.push(data);
       this.packetStream.flush();
@@ -340,15 +350,31 @@ export class WebCodecsPlayer {
     }
   }
 
-  private setupDecoders() {
+  private setupDecoders(generation = this.loadGeneration) {
     this.needVideoKey = true;
     this.videoDecoder = new VideoDecoder({
-      output: (frame) => this.onVideoFrame(frame),
-      error: (e) => this.fail('video decoder: ' + e.message),
+      output: (frame) => {
+        if (this.destroyed || generation !== this.loadGeneration) {
+          frame.close();
+          return;
+        }
+        this.onVideoFrame(frame);
+      },
+      error: (e) => {
+        if (generation === this.loadGeneration) this.fail('video decoder: ' + e.message);
+      },
     });
     this.audioDecoder = new AudioDecoder({
-      output: (data) => this.decodedAudio.push(data),
-      error: (e) => this.fail('audio decoder: ' + e.message),
+      output: (data) => {
+        if (this.destroyed || generation !== this.loadGeneration) {
+          data.close();
+          return;
+        }
+        this.decodedAudio.push(data);
+      },
+      error: (e) => {
+        if (generation === this.loadGeneration) this.fail('audio decoder: ' + e.message);
+      },
     });
   }
 
@@ -423,9 +449,6 @@ export class WebCodecsPlayer {
       if (this.needVideoKey) {
         if (!s.key) continue;
         this.needVideoKey = false;
-        if (this.seekTarget !== null) {
-          this.seekTarget = null;
-        }
       }
       try {
         dec.decode(
@@ -662,61 +685,12 @@ export class WebCodecsPlayer {
 
   async seek(seconds: number) {
     const t = Math.max(0, Math.min(seconds, this.durationSec));
-    console.log('[WebCodecsPlayer] seek to:', t);
+    const url = this.sourceUrl;
+    if (!url) return;
 
-    this.seekTarget = t;
-    this.encodedVideo = [];
-    this.encodedAudio = [];
-    this.vIdx = 0;
-    this.aIdx = 0;
-    this.needVideoKey = true;
-    this.baseMediaTime = t;
-    this.ctxStartTime = null;
-    this.nextAudioStartTime = 0;
-
-    for (const f of this.frameQueue) f.close();
-    this.frameQueue = [];
-    for (const d of this.decodedAudio) d.close();
-    this.decodedAudio = [];
-    for (const src of this.activeSources) {
-      try { src.stop(); } catch {}
-    }
-    this.activeSources.clear();
-
-    try { this.videoDecoder?.reset(); } catch {}
-    try { this.audioDecoder?.reset(); } catch {}
-    if (this.videoConfig) {
-      try {
-        this.videoDecoder?.configure({
-          codec: this.videoConfig.codec,
-          codedWidth: this.videoConfig.codedWidth,
-          codedHeight: this.videoConfig.codedHeight,
-          description: this.videoConfig.description,
-        });
-      } catch {}
-    }
-    if (this.audioConfig) {
-      try {
-        this.audioDecoder?.configure({
-          codec: this.audioConfig.codec,
-          sampleRate: this.audioConfig.sampleRate,
-          numberOfChannels: this.audioConfig.numberOfChannels,
-          description: this.audioConfig.description,
-        });
-      } catch {}
-    }
-
-    this.initDemuxPipeline();
-
-    if (this.hls) {
-      try {
-        this.hls.startLoad(t);
-      } catch (e) {
-          console.warn('[WebCodecsPlayer] hls startLoad failed:', e);
-        }
-    }
-
+    console.log('[WebCodecsPlayer] full pipeline seek to:', t);
     this.setState('buffering');
+    await this.load(url, t);
   }
 
   private teardown() {
@@ -726,6 +700,13 @@ export class WebCodecsPlayer {
     if (this.hls) {
       try { this.hls.destroy(); } catch {}
       this.hls = null;
+    }
+
+    if (this.hlsVideoEl) {
+      try { this.hlsVideoEl.pause(); } catch {}
+      this.hlsVideoEl.removeAttribute('src');
+      this.hlsVideoEl.remove();
+      this.hlsVideoEl = null;
     }
 
     for (const f of this.frameQueue) f.close();
@@ -759,19 +740,36 @@ export class WebCodecsPlayer {
     this.elementaryStream = null;
   }
 
-  destroy() {
-    this.destroyed = true;
-    this.teardown();
+  private teardownAudioGraph() {
+    for (const src of this.activeSources) {
+      try { src.stop(); } catch {}
+    }
+    this.activeSources.clear();
+
     if (this.audioEl) {
       this.audioEl.pause();
       this.audioEl.srcObject = null;
       this.audioEl.remove();
       this.audioEl = null;
     }
-    if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
-      this.audioCtx = null;
+
+    const oldAudioCtx = this.audioCtx;
+    this.audioCtx = null;
+    if (oldAudioCtx && oldAudioCtx.state !== 'closed') {
+      oldAudioCtx.close().catch(() => {});
     }
+
+    this.gain = null;
+    this.mediaDest = null;
+    this.nextAudioStartTime = 0;
+  }
+
+  destroy() {
+    this.destroyed = true;
+    this.loadGeneration++;
+    this.sourceUrl = '';
+    this.teardown();
+    this.teardownAudioGraph();
     this.setState('idle');
   }
 
