@@ -256,12 +256,14 @@ async function getDouyinStream(rawRoomId: string) {
 
   const streamUrl = roomData?.stream_url;
   const hlsMap = streamUrl?.hls_pull_url_map || {};
+  // Prefer a stable medium bitrate on mobile networks. ORIGIN/FULL_HD can
+  // resolve correctly but still starve the Tesla browser every few seconds.
   const m3u8Url =
-    hlsMap.ORIGIN ||
-    hlsMap.FULL_HD1 ||
     hlsMap.HD1 ||
     hlsMap.SD1 ||
     hlsMap.SD2 ||
+    hlsMap.FULL_HD1 ||
+    hlsMap.ORIGIN ||
     streamUrl?.hls_pull_url ||
     Object.values(hlsMap)[0] ||
     htmlHls;
@@ -313,24 +315,43 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: '直播未开启' }, { status: 404 });
       }
 
-      const { sFlvUrl, sStreamName, sFlvUrlSuffix, sFlvAntiCode } = streamInfo;
-      const newAntiCode = getAntiCode(sFlvAntiCode, sStreamName);
-      const streamUrl = `${sFlvUrl}/${sStreamName}.${sFlvUrlSuffix}?${newAntiCode}`;
-      const proxyUrl = `/api/web-live/proxy/proxy.flv?url=${encodeURIComponent(streamUrl)}`;
+      const {
+        sFlvUrl,
+        sFlvUrlSuffix,
+        sFlvAntiCode,
+        sHlsUrl,
+        sHlsUrlSuffix,
+        sHlsAntiCode,
+        sStreamName
+      } = streamInfo;
+
+      // Vercel serverless functions are a poor fit for one long FLV response.
+      // Prefer segmented HLS so brief network drops can refill the buffer.
+      const hasHls = Boolean(sHlsUrl && sHlsUrlSuffix && sHlsAntiCode);
+      const antiCode = getAntiCode(
+        hasHls ? sHlsAntiCode : sFlvAntiCode,
+        sStreamName
+      );
+      const streamUrl = hasHls
+        ? `${sHlsUrl}/${sStreamName}.${sHlsUrlSuffix}?${antiCode}`
+        : `${sFlvUrl}/${sStreamName}.${sFlvUrlSuffix}?${antiCode}`;
+      const streamType = hasHls ? 'hls' : 'flv';
+      const proxyUrl = `/api/web-live/proxy/proxy.${hasHls ? 'm3u8' : 'flv'}?url=${encodeURIComponent(streamUrl)}&platform=huya`;
 
       return NextResponse.json({
         url: proxyUrl,
         originalUrl: streamUrl,
         name: gameLiveInfo?.nick || '',
         title: gameLiveInfo?.introduction || '',
-        streamType: 'flv',
+        streamType,
+        quality: 'stable',
         live: true
       });
     }
 
     if (platform === 'bilibili') {
       const streamData = await getBilibiliStream(roomId);
-      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}`;
+      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}&platform=bilibili`;
 
       return NextResponse.json({
         url: proxyUrl,
@@ -344,7 +365,7 @@ export async function GET(request: NextRequest) {
 
     if (platform === 'douyin') {
       const streamData = await getDouyinStream(roomId);
-      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}`;
+      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}&platform=douyin`;
 
       return NextResponse.json({
         url: proxyUrl,
