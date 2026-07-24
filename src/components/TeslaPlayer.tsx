@@ -33,6 +33,8 @@ interface TeslaPlayerProps {
   onBackToOriginal?: () => void;
   onEnded?: () => void;
   playRecordKey?: string;
+  onPlaybackReady?: () => void;
+  onPlaybackError?: (message: string) => void;
 }
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -74,6 +76,14 @@ function getInitialMode(wanted: PlayMode): PlayMode {
   return 'video';
 }
 
+function getUrlKind(url: string): 'hls' | 'flv' | 'file' | 'unknown' {
+  const clean = url.toLowerCase().split('#')[0];
+  if (clean.includes('.m3u8') || clean.includes('.m3u?') || clean.includes('/m3u8')) return 'hls';
+  if (/\.flv(?:\?|$)/.test(clean)) return 'flv';
+  if (/\.(?:mp4|webm|mov|m4v|mkv|avi)(?:\?|$)/.test(clean)) return 'file';
+  return 'unknown';
+}
+
 export default function TeslaPlayer({
   url,
   title,
@@ -83,6 +93,8 @@ export default function TeslaPlayer({
   onBackToOriginal,
   onEnded: onEndedCallback,
   playRecordKey,
+  onPlaybackReady,
+  onPlaybackError,
 }: TeslaPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -93,6 +105,8 @@ export default function TeslaPlayer({
   const progressSaveTimerRef = useRef<number | null>(null);
   const bufferingTimeoutRef = useRef<number | null>(null);
   const canvasRafRef = useRef<number>(0);
+  const playbackReadyReportedRef = useRef(false);
+  const playbackErrorReportedRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -110,8 +124,21 @@ export default function TeslaPlayer({
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [engineLabel, setEngineLabel] = useState('兼容播放');
 
   const [mode, setMode] = useState<PlayMode>(() => getInitialMode(defaultModeProp));
+
+  const reportPlaybackReady = useCallback(() => {
+    if (playbackReadyReportedRef.current) return;
+    playbackReadyReportedRef.current = true;
+    onPlaybackReady?.();
+  }, [onPlaybackReady]);
+
+  const reportPlaybackError = useCallback((message: string) => {
+    if (playbackErrorReportedRef.current) return;
+    playbackErrorReportedRef.current = true;
+    onPlaybackError?.(message);
+  }, [onPlaybackError]);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -223,10 +250,12 @@ export default function TeslaPlayer({
   const startBufferingTimeout = useCallback(() => {
     clearBufferingTimeout();
     bufferingTimeoutRef.current = window.setTimeout(() => {
-      setError('缓冲超时');
+      const message = '播放持续缓冲，当前资源可能不稳定';
+      setError(message);
       setLoading(false);
-    }, 60000);
-  }, [clearBufferingTimeout]);
+      reportPlaybackError(message);
+    }, 20000);
+  }, [clearBufferingTimeout, reportPlaybackError]);
 
   // ===== 原生 video 回退模式初始化 =====
   useEffect(() => {
@@ -236,6 +265,8 @@ export default function TeslaPlayer({
     if (!container) return;
 
     let destroyed = false;
+    let flvPlayer: any = null;
+    let directFallbackTried = false;
     setLoading(true);
     setError(null);
 
@@ -247,13 +278,22 @@ export default function TeslaPlayer({
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('x-webkit-airplay', 'deny');
     videoEl.crossOrigin = 'anonymous';
+    if (poster) videoEl.poster = poster;
 
     container.insertBefore(videoEl, container.firstChild);
     videoRef.current = videoEl;
 
     const onTimeUpdate = () => { if (!destroyed) setCurrentTime(videoEl.currentTime); };
     const onDuration = () => { if (!destroyed && videoEl.duration > 0) { setDuration(videoEl.duration); setLoading(false); } };
-    const onPlay = () => { if (!destroyed) { setPlaying(true); setBuffering(false); setLoading(false); clearBufferingTimeout(); } };
+    const onPlay = () => {
+      if (!destroyed) {
+        setPlaying(true);
+        setBuffering(false);
+        setLoading(false);
+        clearBufferingTimeout();
+        reportPlaybackReady();
+      }
+    };
     const onPause = () => { if (!destroyed) { setPlaying(false); setBuffering(false); } };
     const onWaiting = () => { if (!destroyed) { setBuffering(true); startBufferingTimeout(); } };
     const onPlaying = () => { if (!destroyed) { setPlaying(true); setBuffering(false); clearBufferingTimeout(); } };
@@ -267,7 +307,9 @@ export default function TeslaPlayer({
     const onVideoError = () => {
       if (destroyed) return;
       const err = videoEl.error;
-      if (err) setError('video error: ' + (err.message || err.code));
+      const message = '当前资源格式不受浏览器支持：' + (err?.message || err?.code || '未知错误');
+      setError(message);
+      reportPlaybackError(message);
     };
 
     videoEl.addEventListener('timeupdate', onTimeUpdate);
@@ -279,39 +321,88 @@ export default function TeslaPlayer({
     videoEl.addEventListener('ended', onEnded);
     videoEl.addEventListener('error', onVideoError);
 
-    // HLS.js
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        autoStartLoad: true,
-        startPosition: seekToTime ?? savedProgress,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-      });
-      hlsRef.current = hls;
-
-      hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
-        if (destroyed) return;
-        if (data.fatal) {
-          setError('hls: ' + (data.details || data.type));
-        }
-      });
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        videoEl.play().catch(() => {});
-      });
-
-      hls.attachMedia(videoEl);
-      hls.loadSource(url);
-    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+    const attachDirectMedia = () => {
+      if (destroyed) return;
+      setEngineLabel('通用播放');
       videoEl.src = url;
+      videoEl.load();
       videoEl.play().catch(() => {});
-    }
+    };
+
+    const initializeVideoEngine = async () => {
+      const kind = getUrlKind(url);
+
+      if (kind === 'flv') {
+        try {
+          const flvModule: any = await import('flv.js');
+          const flvjs = flvModule.default || flvModule;
+          if (!destroyed && flvjs.isSupported()) {
+            setEngineLabel('FLV 兼容');
+            flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: live });
+            flvPlayer.attachMediaElement(videoEl);
+            flvPlayer.load();
+            flvPlayer.play().catch(() => {});
+            return;
+          }
+        } catch (e) {
+          console.warn('[TeslaPlayer] flv.js initialization failed:', e);
+        }
+        attachDirectMedia();
+        return;
+      }
+
+      if ((kind === 'hls' || kind === 'unknown') && Hls.isSupported()) {
+        setEngineLabel('HLS 兼容');
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          autoStartLoad: true,
+          startPosition: seekToTime ?? savedProgress,
+          maxBufferLength: live ? 12 : 30,
+          maxMaxBufferLength: live ? 24 : 60,
+          backBufferLength: live ? 6 : 15,
+        });
+        hlsRef.current = hls;
+
+        hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
+          if (destroyed || !data.fatal) return;
+
+          // Extension-less MP4 endpoints are often mistaken for HLS. Try the
+          // browser directly once before declaring the whole source broken.
+          if (kind === 'unknown' && !directFallbackTried) {
+            directFallbackTried = true;
+            try { hls.destroy(); } catch {}
+            hlsRef.current = null;
+            attachDirectMedia();
+            return;
+          }
+
+          const message = 'HLS 资源无法播放：' + (data.details || data.type);
+          setError(message);
+          reportPlaybackError(message);
+        });
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          videoEl.play().catch(() => {});
+        });
+
+        hls.attachMedia(videoEl);
+        hls.loadSource(url);
+        return;
+      }
+
+      if (kind === 'hls' && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        setEngineLabel('系统 HLS');
+      }
+      attachDirectMedia();
+    };
+
+    initializeVideoEngine();
 
     return () => {
       destroyed = true;
       if (canvasRafRef.current) cancelAnimationFrame(canvasRafRef.current);
+      if (flvPlayer) { try { flvPlayer.destroy(); } catch {} flvPlayer = null; }
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch {} hlsRef.current = null; }
       if (videoEl) {
         videoEl.pause();
@@ -321,11 +412,17 @@ export default function TeslaPlayer({
       }
       videoRef.current = null;
     };
-  }, [url, mode]);
+  }, [url, mode, live, poster, reportPlaybackError, reportPlaybackReady]);
 
   // ===== webcodecs 模式初始化 =====
   useEffect(() => {
     if (mode !== 'webcodecs' || !canvasRef.current) return;
+
+    const kind = getUrlKind(url);
+    if (kind === 'flv' || kind === 'file') {
+      setMode('video');
+      return;
+    }
 
     let destroyed = false;
     setLoading(true);
@@ -337,7 +434,14 @@ export default function TeslaPlayer({
         onDurationChange: (d) => { if (!destroyed) { setDuration(d); setLoading(false); } },
         onStateChange: (s) => {
           if (destroyed) return;
-          if (s === 'playing') { setPlaying(true); setBuffering(false); setLoading(false); clearBufferingTimeout(); }
+          if (s === 'playing') {
+            setPlaying(true);
+            setBuffering(false);
+            setLoading(false);
+            clearBufferingTimeout();
+            setEngineLabel('特斯拉兼容');
+            reportPlaybackReady();
+          }
           else if (s === 'paused') { setPlaying(false); setBuffering(false); }
           else if (s === 'buffering') { setBuffering(true); startBufferingTimeout(); }
           else if (s === 'ended') {
@@ -489,7 +593,7 @@ export default function TeslaPlayer({
         </div>
         <div className="pointer-events-auto flex items-center gap-1">
           <div className="rounded bg-green-500/20 px-2 py-1 text-xs text-green-300">
-            {mode === 'webcodecs' ? '兼容播放' : '自动回退'}
+            {engineLabel}
           </div>
         </div>
       </div>
