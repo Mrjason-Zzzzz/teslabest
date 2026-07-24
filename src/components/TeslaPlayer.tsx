@@ -124,9 +124,10 @@ export default function TeslaPlayer({
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [engineLabel, setEngineLabel] = useState('兼容播放');
 
-  const [mode, setMode] = useState<PlayMode>(() => getInitialMode(defaultModeProp));
+  const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'video' : defaultModeProp));
 
   const reportPlaybackReady = useCallback(() => {
     if (playbackReadyReportedRef.current) return;
@@ -167,18 +168,31 @@ export default function TeslaPlayer({
 
   const togglePlay = useCallback(() => {
     if (mode === 'webcodecs') {
-      wcPlayerRef.current?.unmute();
-      wcPlayerRef.current?.togglePlay();
+      const player = wcPlayerRef.current;
+      if (!player) return;
+      if (muted || !player.isAudioActive()) {
+        setMuted(false);
+        setAudioUnlockRequired(false);
+        player.ensureAudible().then(() => {
+          if (!playing) player.play();
+        }).catch(() => {});
+        return;
+      }
+      player.togglePlay();
     } else if (videoRef.current) {
       const v = videoRef.current;
-      if (v.paused) {
+      if (v.muted || muted) {
         v.muted = false;
+        v.volume = volume;
+        setMuted(false);
+        setAudioUnlockRequired(false);
         v.play().catch(() => {});
-      } else {
-        v.pause();
+        return;
       }
+      if (v.paused) v.play().catch(() => {});
+      else v.pause();
     }
-  }, [mode]);
+  }, [mode, muted, playing, volume]);
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -213,12 +227,16 @@ export default function TeslaPlayer({
     const newMuted = !muted;
     if (mode === 'webcodecs') {
       wcPlayerRef.current?.setMuted(newMuted);
-      if (!newMuted) wcPlayerRef.current?.setVolume(volume);
+      if (!newMuted) {
+        wcPlayerRef.current?.setVolume(volume);
+        wcPlayerRef.current?.ensureAudible().catch(() => {});
+      }
     } else if (videoRef.current) {
       videoRef.current.muted = newMuted;
       if (!newMuted) videoRef.current.volume = volume;
     }
     setMuted(newMuted);
+    setAudioUnlockRequired(false);
   }, [muted, volume, mode]);
 
   const resetControlsTimer = useCallback(() => {
@@ -267,8 +285,11 @@ export default function TeslaPlayer({
     let destroyed = false;
     let flvPlayer: any = null;
     let directFallbackTried = false;
+    let liveRecoveryAttempts = 0;
     setLoading(true);
     setError(null);
+    setMuted(true);
+    setAudioUnlockRequired(true);
 
     // 创建 video 元素
     const videoEl = document.createElement('video');
@@ -288,6 +309,8 @@ export default function TeslaPlayer({
     const onPlay = () => {
       if (!destroyed) {
         setPlaying(true);
+        setMuted(videoEl.muted);
+        setAudioUnlockRequired(videoEl.muted);
         setBuffering(false);
         setLoading(false);
         clearBufferingTimeout();
@@ -296,7 +319,7 @@ export default function TeslaPlayer({
     };
     const onPause = () => { if (!destroyed) { setPlaying(false); setBuffering(false); } };
     const onWaiting = () => { if (!destroyed) { setBuffering(true); startBufferingTimeout(); } };
-    const onPlaying = () => { if (!destroyed) { setPlaying(true); setBuffering(false); clearBufferingTimeout(); } };
+    const onPlaying = () => { if (!destroyed) { liveRecoveryAttempts = 0; setPlaying(true); setMuted(videoEl.muted); setAudioUnlockRequired(videoEl.muted); setBuffering(false); clearBufferingTimeout(); } };
     const onEnded = () => {
       if (destroyed) return;
       setPlaying(false);
@@ -355,9 +378,12 @@ export default function TeslaPlayer({
         setEngineLabel('HLS 兼容');
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: false,
+          lowLatencyMode: live,
           autoStartLoad: true,
-          startPosition: seekToTime ?? savedProgress,
+          startPosition: live ? -1 : (seekToTime ?? savedProgress),
+          liveSyncDurationCount: live ? 3 : undefined,
+          liveMaxLatencyDurationCount: live ? 8 : undefined,
+          maxLiveSyncPlaybackRate: live ? 1.1 : 1,
           maxBufferLength: live ? 12 : 30,
           maxMaxBufferLength: live ? 24 : 60,
           backBufferLength: live ? 6 : 15,
@@ -366,6 +392,18 @@ export default function TeslaPlayer({
 
         hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
           if (destroyed || !data.fatal) return;
+
+          if (live && liveRecoveryAttempts < 2) {
+            liveRecoveryAttempts++;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls.startLoad(-1);
+              return;
+            }
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+              return;
+            }
+          }
 
           // Extension-less MP4 endpoints are often mistaken for HLS. Try the
           // browser directly once before declaring the whole source broken.
@@ -435,7 +473,10 @@ export default function TeslaPlayer({
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
+            const audioActive = player.isAudioActive();
             setPlaying(true);
+            setMuted(!audioActive);
+            setAudioUnlockRequired(!audioActive);
             setBuffering(false);
             setLoading(false);
             clearBufferingTimeout();
@@ -583,6 +624,18 @@ export default function TeslaPlayer({
         </div>
       )}
 
+      {audioUnlockRequired && playing && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-20 z-20 flex justify-center px-4">
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); togglePlay(); }}
+            className="pointer-events-auto rounded-full bg-amber-500 px-4 py-2 text-sm font-medium text-black shadow-lg"
+          >
+            画面已播放，点击开启声音
+          </button>
+        </div>
+      )}
+
       {/* 顶部标题栏 */}
       <div className={`pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/60 to-transparent p-3 md:p-4 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="pointer-events-auto">
@@ -600,8 +653,8 @@ export default function TeslaPlayer({
 
       {/* 底部控制条 */}
       <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-2 pb-2 pt-12 md:px-3 md:pb-3 md:pt-16 transition-opacity duration-200 z-10 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-        {/* 进度条 */}
-        <div className="pointer-events-auto mb-1 md:mb-2 group">
+        {/* 直播没有可拖动的固定时间轴。 */}
+        {!live && <div className="pointer-events-auto mb-1 md:mb-2 group">
           <div
             className="relative h-1 group-hover:h-1.5 cursor-pointer rounded-full bg-white/20 transition-all"
             onClick={(e) => {
@@ -620,12 +673,12 @@ export default function TeslaPlayer({
               style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 5px)` }}
             />
           </div>
-        </div>
+        </div>}
 
         {/* 控制按钮行 */}
         <div className="pointer-events-auto flex items-center justify-between">
           <div className="flex items-center gap-0.5 md:gap-1">
-            <button
+            {!live && <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.max(0, currentTime - 10)); }}
               className="relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
@@ -633,7 +686,7 @@ export default function TeslaPlayer({
             >
               <Rewind className="h-5 w-5" />
               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold">10</span>
-            </button>
+            </button>}
 
             <button
               type="button"
@@ -643,7 +696,7 @@ export default function TeslaPlayer({
               {playing ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
             </button>
 
-            <button
+            {!live && <button
               type="button"
               onClick={(e) => { e.stopPropagation(); seek(Math.min(duration || 1, currentTime + 10)); }}
               className="relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
@@ -651,7 +704,7 @@ export default function TeslaPlayer({
             >
               <FastForward className="h-5 w-5" />
               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold">10</span>
-            </button>
+            </button>}
 
             <button
               type="button"
@@ -662,11 +715,11 @@ export default function TeslaPlayer({
             </button>
 
             <div className="text-xs text-white/70 ml-1">
-              {formatTime(currentTime)} / {formatTime(duration)}
+              {live ? '直播中' : `${formatTime(currentTime)} / ${formatTime(duration)}`}
             </div>
 
-            {/* 倍速仅在原生回退模式可用 */}
-            {mode !== 'webcodecs' && (
+            {/* 倍速仅在点播的原生回退模式可用 */}
+            {!live && mode !== 'webcodecs' && (
               <div className="relative ml-1">
                 <button
                   type="button"
