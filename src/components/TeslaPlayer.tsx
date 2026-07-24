@@ -473,7 +473,7 @@ export default function TeslaPlayer({
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
-            const audioActive = player.isAudioActive();
+            const audioActive = wcPlayerRef.current?.isAudioActive() ?? false;
             setPlaying(true);
             setMuted(!audioActive);
             setAudioUnlockRequired(!audioActive);
