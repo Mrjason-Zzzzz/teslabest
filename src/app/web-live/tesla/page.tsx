@@ -284,7 +284,6 @@ function TeslaWebLivePageInner() {
                 url={videoUrl}
                 title={fullTitle}
                 live
-                defaultMode="video"
                 onBackToOriginal={backToOriginal}
                 onPlaybackReady={() => setPlaybackNotice('')}
                 onPlaybackError={handlePlaybackError}
