@@ -22,7 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
-type PlayMode = 'video' | 'canvas' | 'webcodecs';
+type PlayMode = 'video' | 'webcodecs';
 
 interface TeslaPlayerProps {
   url: string;
@@ -71,16 +71,8 @@ function saveProgress(key: string, time: number): void {
 
 function getInitialMode(wanted: PlayMode): PlayMode {
   if (wanted === 'webcodecs' && WebCodecsPlayer.isSupported()) return 'webcodecs';
-  if (wanted === 'canvas') return 'canvas';
-  if (wanted === 'webcodecs' && Hls.isSupported()) return 'canvas';
   return 'video';
 }
-
-const MODE_LABELS: Record<PlayMode, string> = {
-  video: '原生',
-  canvas: '画布',
-  webcodecs: '硬解',
-};
 
 export default function TeslaPlayer({
   url,
@@ -114,13 +106,12 @@ export default function TeslaPlayer({
   const [isWebFullscreen, setIsWebFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug] = useState(true);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
 
   const [mode, setMode] = useState<PlayMode>(() => getInitialMode(defaultModeProp));
-  const [showModeMenu, setShowModeMenu] = useState(false);
 
   const savedProgress = useMemo(() => {
     if (!playRecordKey) return 0;
@@ -207,9 +198,9 @@ export default function TeslaPlayer({
     if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
     setShowControls(true);
     hideControlsTimerRef.current = window.setTimeout(() => {
-      if (playing && !showRateMenu && !showModeMenu) setShowControls(false);
+      if (playing && !showRateMenu) setShowControls(false);
     }, 3000);
-  }, [playing, showRateMenu, showModeMenu]);
+  }, [playing, showRateMenu]);
 
   useEffect(() => {
     if (playRecordKey) {
@@ -237,12 +228,7 @@ export default function TeslaPlayer({
     }, 60000);
   }, [clearBufferingTimeout]);
 
-  const handleModeSwitch = useCallback((m: PlayMode) => {
-    setMode(m);
-    setShowModeMenu(false);
-  }, []);
-
-  // ===== video / canvas 模式初始化 =====
+  // ===== 原生 video 回退模式初始化 =====
   useEffect(() => {
     if (mode === 'webcodecs') return;
 
@@ -255,9 +241,7 @@ export default function TeslaPlayer({
 
     // 创建 video 元素
     const videoEl = document.createElement('video');
-    videoEl.style.cssText = mode === 'canvas'
-      ? 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:0;'
-      : 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:1;';
+    videoEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:1;';
     videoEl.muted = true;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
@@ -325,43 +309,6 @@ export default function TeslaPlayer({
       videoEl.play().catch(() => {});
     }
 
-    // canvas 模式：drawImage 渲染循环
-    if (mode === 'canvas' && canvasRef.current) {
-      const canvas = canvasRef.current;
-      canvas.style.position = 'absolute';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.zIndex = '1';
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const draw = () => {
-          if (destroyed) return;
-          if (videoEl.readyState >= 2) {
-            if (canvas.width !== videoEl.videoWidth || canvas.height !== videoEl.videoHeight) {
-              canvas.width = videoEl.videoWidth || 1280;
-              canvas.height = videoEl.videoHeight || 720;
-            }
-            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-          }
-          if (showDebug && ctx) {
-            ctx.save();
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(0, 0, 300, 80);
-            ctx.fillStyle = '#0f0';
-            ctx.font = '13px monospace';
-            ctx.fillText(`[Canvas] ${videoEl.videoWidth}x${videoEl.videoHeight}`, 10, 22);
-            ctx.fillText(`[Canvas] t=${videoEl.currentTime.toFixed(1)}s`, 10, 40);
-            ctx.fillText(`[Canvas] buf=${videoEl.buffered?.length ? videoEl.buffered.end(videoEl.buffered.length - 1).toFixed(1) : '0'}s`, 10, 58);
-            ctx.restore();
-          }
-          canvasRafRef.current = requestAnimationFrame(draw);
-        };
-        canvasRafRef.current = requestAnimationFrame(draw);
-      }
-    }
-
     return () => {
       destroyed = true;
       if (canvasRafRef.current) cancelAnimationFrame(canvasRafRef.current);
@@ -400,7 +347,13 @@ export default function TeslaPlayer({
             setTimeout(() => onEndedCallback?.(), 500);
           }
         },
-        onError: (msg) => { if (!destroyed) { setError(msg); setLoading(false); } },
+        onError: (msg) => {
+          if (destroyed) return;
+          console.warn('[TeslaPlayer] WebCodecs failed, falling back to native video:', msg);
+          setError(null);
+          setLoading(true);
+          setMode('video');
+        },
       });
 
       wcPlayerRef.current = player;
@@ -408,7 +361,11 @@ export default function TeslaPlayer({
 
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
-        if (!destroyed) { setError('加载失败: ' + (e?.message || String(e))); setLoading(false); }
+        if (destroyed) return;
+        console.warn('[TeslaPlayer] WebCodecs load failed, falling back to native video:', e);
+        setError(null);
+        setLoading(true);
+        setMode('video');
       });
 
       const statsTimer = window.setInterval(() => {
@@ -425,8 +382,10 @@ export default function TeslaPlayer({
         wcPlayerRef.current = null;
       };
     } catch (e: any) {
-      setError('初始化失败: ' + (e?.message || String(e)));
-      setLoading(false);
+      console.warn('[TeslaPlayer] WebCodecs initialization failed, falling back to native video:', e);
+      setError(null);
+      setLoading(true);
+      setMode('video');
       return () => { destroyed = true; };
     }
   }, [url, mode]);
@@ -446,8 +405,8 @@ export default function TeslaPlayer({
       onTouchStart={resetControlsTimer}
       onClick={togglePlay}
     >
-      {/* Canvas — webcodecs 和 canvas 模式共用 */}
-      {mode !== 'video' && (
+      {/* WebCodecs renders decoded VideoFrames directly to Canvas. */}
+      {mode === 'webcodecs' && (
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full"
@@ -529,36 +488,8 @@ export default function TeslaPlayer({
           </h1>
         </div>
         <div className="pointer-events-auto flex items-center gap-1">
-          {/* 模式切换 */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setShowModeMenu(!showModeMenu); }}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors"
-              title="切换播放模式"
-            >
-              {mode === 'webcodecs' ? <Cpu className="h-3.5 w-3.5" /> : <MonitorPlay className="h-3.5 w-3.5" />}
-              {MODE_LABELS[mode]}
-            </button>
-            {showModeMenu && (
-              <div className="absolute top-full right-0 mt-1 rounded bg-black/90 backdrop-blur p-1 z-20 min-w-[90px]">
-                {(['webcodecs', 'canvas', 'video'] as PlayMode[]).map((m) => {
-                  const disabled = m === 'webcodecs' && !WebCodecsPlayer.isSupported();
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      disabled={disabled}
-                      onClick={(e) => { e.stopPropagation(); if (!disabled) handleModeSwitch(m); }}
-                      className={`block w-full rounded px-2 py-1 text-xs text-left ${mode === m ? 'bg-green-500 text-white' : disabled ? 'text-gray-500 cursor-not-allowed' : 'text-gray-300 hover:bg-white/10'}`}
-                    >
-                      {MODE_LABELS[m]}
-                      {disabled ? ' (不支持)' : ''}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+          <div className="rounded bg-green-500/20 px-2 py-1 text-xs text-green-300">
+            {mode === 'webcodecs' ? '兼容播放' : '自动回退'}
           </div>
         </div>
       </div>
@@ -630,7 +561,7 @@ export default function TeslaPlayer({
               {formatTime(currentTime)} / {formatTime(duration)}
             </div>
 
-            {/* 倍速 — 仅 video/canvas 模式 */}
+            {/* 倍速仅在原生回退模式可用 */}
             {mode !== 'webcodecs' && (
               <div className="relative ml-1">
                 <button
