@@ -172,17 +172,26 @@ function TeslaPlayPageInner() {
 
         setAllSources(filtered);
 
-        let selected: SearchResult | null = null;
-        if (source && id) {
-          selected = filtered.find((s) => s.source === source && s.id === id) || null;
-        }
+        const requestedSource = source && id
+          ? filtered.find((item) => item.source === source && item.id === id) || null
+          : null;
 
-        if (!selected) {
-          if (filtered.length > 1) {
-            setLoadingStage('preferring');
-            await new Promise((r) => setTimeout(r, 500));
+        if (filtered.length > 1) {
+          setLoadingStage('preferring');
+        }
+        const preferredSource = preferBestSource(filtered);
+        let selected: SearchResult | null = preferredSource || requestedSource;
+
+        // Keep the requested source when scores are close. Auto-select only
+        // when the recommended candidate is meaningfully healthier, and keep
+        // the original item available through “恢复原资源”.
+        if (requestedSource && preferredSource) {
+          const requestedScore = getTeslaSourceScore(requestedSource);
+          const preferredScore = getTeslaSourceScore(preferredSource);
+          selected = preferredScore > requestedScore + 5 ? preferredSource : requestedSource;
+          if (selected !== requestedSource) {
+            setSourceNotice(`已优选更稳定的资源：${selected.source_name || selected.source}`);
           }
-          selected = preferBestSource(filtered);
         }
 
         if (!selected) throw new Error('未找到可用的播放源');
