@@ -78,6 +78,11 @@ function TeslaWebLivePageInner() {
   useEffect(() => {
     if (!currentSource) return;
     const controller = new AbortController();
+    let requestTimedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      requestTimedOut = true;
+      controller.abort();
+    }, 16000);
     setLoadingStream(true);
     setError(null);
     setPlaybackNotice('正在解析实时直播流…');
@@ -96,6 +101,7 @@ function TeslaWebLivePageInner() {
     })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
+        window.clearTimeout(timeoutId);
         if (!response.ok) throw new Error(data?.error || `直播流解析失败（${response.status}）`);
         if (!data.url) throw new Error('平台没有返回可播放直播流');
 
@@ -129,12 +135,23 @@ function TeslaWebLivePageInner() {
         setLoadingStream(false);
       })
       .catch((requestError) => {
-        if (requestError?.name === 'AbortError') return;
+        window.clearTimeout(timeoutId);
+        if (requestError?.name === 'AbortError') {
+          if (requestTimedOut) {
+            setError('直播平台响应超时，请点击“重新解析”或切换其他直播间');
+            setPlaybackNotice('');
+            setLoadingStream(false);
+          }
+          return;
+        }
         setError(requestError?.message || '获取直播流失败');
         setPlaybackNotice('');
         setLoadingStream(false);
       });
-    return () => controller.abort();
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [currentSource, streamReloadToken]);
 
   const handleSelectSource = useCallback((source: WebLiveSource) => {
