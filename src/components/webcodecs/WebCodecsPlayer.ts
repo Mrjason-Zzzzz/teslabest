@@ -87,6 +87,7 @@ export class WebCodecsPlayer {
   private ctxStartTime: number | null = null;
   private nextAudioStartTime = 0;
   private volume = 1;
+  private playbackRate = 1;
 
   private debugStats = {
     hlsState: 'init',
@@ -550,7 +551,13 @@ export class WebCodecsPlayer {
       this.frameQueue.length === 0 &&
       (this.videoDecoder?.decodeQueueSize || 0) === 0 &&
       this.vIdx >= this.encodedVideo.length;
+    const audioPipelineActive =
+      this.audioConfig !== null ||
+      this.debugStats.audioSamples > 0 ||
+      this.encodedAudio.length > 0 ||
+      this.decodedAudio.length > 0;
     const noAudioReady =
+      audioPipelineActive &&
       this.decodedAudio.length === 0 &&
       (this.audioDecoder?.decodeQueueSize || 0) === 0 &&
       this.aIdx >= this.encodedAudio.length;
@@ -660,20 +667,25 @@ export class WebCodecsPlayer {
   private maybePrime() {
     const minVideoFrames = this.canvasSized ? 12 : 6;
     const minAudioFrames = this.canvasSized ? 24 : 12;
+    const audioPipelineActive =
+      this.audioConfig !== null ||
+      this.debugStats.audioSamples > 0 ||
+      this.encodedAudio.length > 0 ||
+      this.decodedAudio.length > 0;
     if (
       this.frameQueue.length < minVideoFrames ||
-      this.decodedAudio.length < minAudioFrames ||
+      (audioPipelineActive && this.decodedAudio.length < minAudioFrames) ||
       !this.audioCtx
     ) return;
 
     const firstVideo = this.frameQueue[0];
     const firstAudio = this.decodedAudio[0];
 
-    // HLS starts at the nearest segment/keyframe, which can differ from the
-    // requested seek second. Anchor both streams to the first timestamp that
-    // is actually playable so audio and video start on the same timeline.
+    // Some live channels carry MP2 audio that this WebCodecs AAC pipeline
+    // cannot decode. Start rendering video instead of holding a valid picture
+    // behind an audio gate forever; AAC audio can still join when available.
     const firstVideoSec = firstVideo.timestamp / 1e6;
-    const firstAudioSec = firstAudio.timestamp / 1e6;
+    const firstAudioSec = firstAudio ? firstAudio.timestamp / 1e6 : firstVideoSec;
     this.baseMediaTime = Math.max(this.baseMediaTime, firstVideoSec, firstAudioSec);
     this.ctxStartTime = this.audioCtx.currentTime + 0.15;
     this.nextAudioStartTime = 0;
@@ -726,7 +738,7 @@ export class WebCodecsPlayer {
 
   private getMediaTime(): number {
     if (this.ctxStartTime === null || !this.audioCtx) return this.baseMediaTime;
-    return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime);
+    return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
   }
 
   private scheduleAudio() {
@@ -754,7 +766,7 @@ export class WebCodecsPlayer {
       let startOffsetSec = Math.max(0, mediaNow - headTs);
       startOffsetSec = Math.min(startOffsetSec, headDuration);
       const audibleTs = headTs + startOffsetSec;
-      const idealWhen = this.ctxStartTime + (audibleTs - this.baseMediaTime);
+      const idealWhen = this.ctxStartTime + (audibleTs - this.baseMediaTime) / this.playbackRate;
 
       let when = Math.max(idealWhen, now + 0.03);
       if (this.nextAudioStartTime !== 0) {
@@ -782,12 +794,13 @@ export class WebCodecsPlayer {
 
       const src = this.audioCtx.createBufferSource();
       src.buffer = buffer;
+      src.playbackRate.value = this.playbackRate;
       src.connect(this.gain);
       src.start(when, startOffsetSec);
       this.lastAudioScheduledAtMs = performance.now();
       this.activeSources.add(src);
       src.onended = () => this.activeSources.delete(src);
-      this.nextAudioStartTime = when + Math.max(0, frames / rate - startOffsetSec);
+      this.nextAudioStartTime = when + Math.max(0, frames / rate - startOffsetSec) / this.playbackRate;
       scheduled++;
     }
   }
@@ -881,9 +894,14 @@ export class WebCodecsPlayer {
     return this.audioCtx.state === 'running';
   }
 
-  setPlaybackRate(_rate: number) {
-    // The Web Audio pipeline requires resampling for correct speed changes.
-    console.warn('[WebCodecsPlayer] playbackRate is not supported in compatibility mode');
+  setPlaybackRate(rate: number) {
+    const nextRate = Math.max(0.75, Math.min(2, rate));
+    if (Math.abs(nextRate - this.playbackRate) < 0.001) return;
+    const restartAt = this.getMediaTime();
+    this.playbackRate = nextRate;
+    // Rebuild from a keyframe so the Web Audio clock, scheduled buffers and
+    // Canvas video all restart on the same scaled timeline.
+    void this.seek(restartAt);
   }
 
   async seek(seconds: number) {
