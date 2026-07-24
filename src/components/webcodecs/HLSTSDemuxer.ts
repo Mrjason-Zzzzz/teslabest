@@ -603,6 +603,11 @@ export class HLSTSDemuxer {
   }
 
   seekTo(seconds: number): void {
+    // Invalidate any in-flight segment request from the previous position.
+    // The old loop will exit after its fetch resolves and cannot feed stale
+    // samples into the newly-created parser.
+    this.gen++;
+    const g = this.gen;
     this.currentSegmentIndex = this.findSegmentIndex(seconds);
     this.spsNalu = null;
     this.ppsNalu = null;
@@ -611,6 +616,7 @@ export class HLSTSDemuxer {
     this.lastVideoPts = 0;
     this.lastAudioPts = 0;
     this.initStreams();
+    void this.downloadLoop(g);
   }
 
   destroy(): void {
