@@ -98,9 +98,9 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = streamRes.headers.get('content-type') || '';
-    const filename = request.nextUrl.pathname.split('/').pop()?.toLowerCase() || '';
+    // Always classify the real upstream resource. Nested segment requests use
+    // the same dynamic proxy route and must not inherit the parent .m3u8 label.
     const isM3u8 = target.pathname.toLowerCase().endsWith('.m3u8') ||
-      filename.endsWith('.m3u8') ||
       /mpegurl/i.test(contentType);
 
     if (isM3u8) {
