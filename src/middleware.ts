@@ -14,6 +14,15 @@ export async function middleware(request: NextRequest) {
     return new NextResponse('Not Found', { status: 404 });
   }
 
+  // Tesla recovery branch: make the compatibility player the default point-on-demand
+  // destination while preserving every source/title/episode query parameter.
+  // The production main branch is untouched, and /play/tesla itself is not redirected.
+  if (pathname === '/play') {
+    const teslaUrl = request.nextUrl.clone();
+    teslaUrl.pathname = '/play/tesla';
+    return NextResponse.redirect(teslaUrl);
+  }
+
   // 跳过不需要认证的路径
   if (shouldSkipAuth(pathname)) {
     return NextResponse.next();
