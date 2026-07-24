@@ -733,7 +733,11 @@ export default function TeslaPlayer({
       });
 
       firstFrameTimer = window.setTimeout(() => {
-        if (destroyed || playbackReadyReportedRef.current || networkOffline) return;
+        if (
+        destroyed ||
+        playbackReadyReportedRef.current ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)
+      ) return;
         console.warn('[TeslaPlayer] WebCodecs produced no playable frame, falling back to native video');
         setReconnectMessage('兼容模式未产生画面，正在切换通用播放器…');
         setError(null);
