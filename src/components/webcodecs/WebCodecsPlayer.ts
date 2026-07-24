@@ -29,6 +29,9 @@ export class WebCodecsPlayer {
   private segments: Segment[] = [];
   private currentSegIndex = 0;
   private durationSec = 0;
+  private isLivePlaylist = false;
+  private endedReported = false;
+  private lastRenderedMediaTime = 0;
 
   private packetStream: any = null;
   private parseStream: any = null;
@@ -124,6 +127,9 @@ export class WebCodecsPlayer {
     this.sourceUrl = url;
     this.segments = [];
     this.currentSegIndex = 0;
+    this.isLivePlaylist = false;
+    this.endedReported = false;
+    this.lastRenderedMediaTime = 0;
     this.videoConfig = null;
     this.audioConfig = null;
     this.audioRemainder = new Uint8Array(0);
@@ -172,6 +178,7 @@ export class WebCodecsPlayer {
     hls.on(Hls.Events.LEVEL_LOADED, (_evt: any, data: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
       const details = data.details;
+      this.isLivePlaylist = Boolean(details?.live);
       this.debugStats.hlsState = 'level-loaded';
       this.debugStats.currentLevel = data.level;
 
@@ -458,6 +465,7 @@ export class WebCodecsPlayer {
         const clock = this.getMediaTime();
         this.presentVideo(clock);
         this.reportTime(clock);
+        this.maybeReportEnded(clock);
       }
 
       // Debug information is exposed through getStats(). Never paint it into
@@ -466,6 +474,22 @@ export class WebCodecsPlayer {
     } catch (e) {
       console.error('[WebCodecsPlayer] tick error:', e);
     }
+  }
+
+  private maybeReportEnded(clock: number) {
+    if (
+      this.endedReported ||
+      this.isLivePlaylist ||
+      this.state !== 'playing' ||
+      this.durationSec <= 0 ||
+      clock < this.durationSec - 0.15
+    ) return;
+
+    this.endedReported = true;
+    this.wantPlaying = false;
+    this.cb.onTime?.(this.durationSec);
+    this.setState('ended');
+    this.audioCtx?.suspend().catch(() => {});
   }
 
   private compactEncodedQueues() {
@@ -688,6 +712,7 @@ export class WebCodecsPlayer {
       toDraw = this.frameQueue.shift()!;
     }
     if (toDraw) {
+      this.lastRenderedMediaTime = toDraw.timestamp / 1e6;
       this.drawFrameContained(toDraw);
       toDraw.close();
       this.renderedFrames++;
@@ -747,6 +772,23 @@ export class WebCodecsPlayer {
 
   unmute() {
     if (this.gain) this.gain.gain.value = this.volume;
+  }
+
+  isAudioActive(): boolean {
+    if (!this.audioCtx) return true;
+    return this.audioCtx.state === 'running' && (this.gain?.gain.value || 0) > 0;
+  }
+
+  async ensureAudible(): Promise<boolean> {
+    if (this.gain) this.gain.gain.value = this.volume;
+    if (!this.audioCtx) return true;
+    try {
+      await this.audioCtx.resume();
+      if (this.ctxStartTime !== null && this.state !== 'ended') this.setState('playing');
+    } catch (e) {
+      console.warn('[WebCodecsPlayer] audio activation failed:', e);
+    }
+    return this.audioCtx.state === 'running';
   }
 
   setPlaybackRate(_rate: number) {
