@@ -2,9 +2,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 
-import { ArrowLeft, Loader2, Radio } from 'lucide-react';
+import { ArrowLeft, Loader2, Radio, RotateCcw, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
 
@@ -39,6 +39,8 @@ function TeslaWebLivePageInner() {
   const [streamInfo, setStreamInfo] = useState<{ name?: string; title?: string } | null>(null);
   const [loadingSources, setLoadingSources] = useState(true);
   const [loadingStream, setLoadingStream] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [playbackNotice, setPlaybackNotice] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // 拉取源列表
@@ -90,6 +92,25 @@ function TeslaWebLivePageInner() {
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   }, []);
 
+  const filteredSources = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) return sources;
+    return sources.filter((source) =>
+      source.name.toLowerCase().includes(keyword) ||
+      source.platform.toLowerCase().includes(keyword) ||
+      (source.title || '').toLowerCase().includes(keyword)
+    );
+  }, [sources, searchKeyword]);
+
+  const restoreInitialSource = useCallback(() => {
+    const initial = sources.find(
+      (source) => source.platform === initialPlatform && source.roomId === initialRoomId,
+    ) || sources[0];
+    if (!initial) return;
+    setPlaybackNotice('正在恢复进入页面时的直播间');
+    handleSelectSource(initial);
+  }, [sources, initialPlatform, initialRoomId, handleSelectSource]);
+
   const backToOriginal = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     router.push(`/web-live?${params.toString()}`);
@@ -126,7 +147,18 @@ function TeslaWebLivePageInner() {
             title={fullTitle}
             live
             onBackToOriginal={backToOriginal}
+            onPlaybackReady={() => setPlaybackNotice('')}
+            onPlaybackError={(message) => {
+              setPlaybackNotice(`当前直播流异常：${message}。可选择其他直播间或恢复初始项。`);
+            }}
           />
+        )}
+        {playbackNotice && (
+          <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
+            <div className="max-w-[92%] rounded-full bg-black/80 px-4 py-2 text-center text-xs text-white shadow-lg backdrop-blur">
+              {playbackNotice}
+            </div>
+          </div>
         )}
         {!loadingSources && !error && !videoUrl && loadingStream && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -137,8 +169,8 @@ function TeslaWebLivePageInner() {
       </div>
 
       {/* 源列表 - 底部固定高度，可滚动 */}
-      <div className="flex-shrink-0 max-h-[40vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
-        <div className="flex items-center gap-2 px-4 py-2 text-sm">
+      <div className="flex-shrink-0 max-h-[42vh] border-t border-white/10 bg-zinc-950/95 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm sm:px-4">
           <ArrowLeft
             className="h-4 w-4 cursor-pointer text-white/60 hover:text-white"
             onClick={() => router.back()}
@@ -146,25 +178,47 @@ function TeslaWebLivePageInner() {
           <Radio className="h-4 w-4 text-rose-400" />
           <span className="font-medium">网页直播</span>
           <span className="text-white/40">({sources.length})</span>
+          <div className="relative min-w-[180px] flex-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+            <input
+              type="text"
+              value={searchKeyword}
+              onChange={(event) => setSearchKeyword(event.target.value)}
+              placeholder="搜索平台、主播或标题"
+              className="w-full rounded bg-white/10 py-2 pl-7 pr-2 text-sm outline-none placeholder:text-white/40"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={restoreInitialSource}
+            className="flex items-center gap-1 rounded bg-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/20 hover:text-white"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            恢复
+          </button>
         </div>
         <div className="overflow-y-auto px-2 pb-2" style={{ maxHeight: '32vh' }}>
-          {sources.length === 0 ? (
+          {filteredSources.length === 0 ? (
             <div className="py-4 text-center text-white/40">无源</div>
           ) : (
-            <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4">
-              {sources.map((s) => (
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+              {filteredSources.map((s) => (
                 <button
                   key={s.key}
                   type="button"
                   onClick={() => handleSelectSource(s)}
-                  className={`truncate rounded px-2 py-1.5 text-left text-sm transition-colors ${
+                  disabled={s.status === 'offline'}
+                  className={`min-h-11 rounded px-2.5 py-2 text-left text-sm leading-5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                     currentSource?.key === s.key
                       ? 'bg-rose-600 text-white'
                       : 'bg-white/5 text-white/70 hover:bg-white/15'
                   }`}
                   title={`${s.platform} - ${s.name}`}
                 >
-                  {s.name}
+                  <span className="block line-clamp-2 break-words">{s.name}</span>
+                  <span className="mt-0.5 block truncate text-[10px] text-white/40">
+                    {s.platform}{s.status === 'live' ? ' · 直播中' : s.status === 'offline' ? ' · 未开播' : ''}
+                  </span>
                 </button>
               ))}
             </div>
