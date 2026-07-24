@@ -107,6 +107,8 @@ export default function TeslaPlayer({
   const canvasRafRef = useRef<number>(0);
   const playbackReadyReportedRef = useRef(false);
   const playbackErrorReportedRef = useRef(false);
+  const userPausedRef = useRef(false);
+  const liveStallRecoveryTimerRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -182,6 +184,7 @@ export default function TeslaPlayer({
     } else if (videoRef.current) {
       const v = videoRef.current;
       if (v.muted || muted) {
+        userPausedRef.current = false;
         v.muted = false;
         v.volume = volume;
         setMuted(false);
@@ -189,8 +192,13 @@ export default function TeslaPlayer({
         v.play().catch(() => {});
         return;
       }
-      if (v.paused) v.play().catch(() => {});
-      else v.pause();
+      if (v.paused) {
+        userPausedRef.current = false;
+        v.play().catch(() => {});
+      } else {
+        userPausedRef.current = true;
+        v.pause();
+      }
     }
   }, [mode, muted, playing, volume]);
 
@@ -268,12 +276,14 @@ export default function TeslaPlayer({
   const startBufferingTimeout = useCallback(() => {
     clearBufferingTimeout();
     bufferingTimeoutRef.current = window.setTimeout(() => {
-      const message = '播放持续缓冲，当前资源可能不稳定';
+      const message = live
+        ? '直播持续缓冲，已尝试重新连接；当前线路可能不稳定'
+        : '播放持续缓冲，当前资源可能不稳定';
       setError(message);
       setLoading(false);
       reportPlaybackError(message);
-    }, 20000);
-  }, [clearBufferingTimeout, reportPlaybackError]);
+    }, live ? 45000 : 30000);
+  }, [clearBufferingTimeout, live, reportPlaybackError]);
 
   // ===== 原生 video 回退模式初始化 =====
   useEffect(() => {
@@ -286,6 +296,13 @@ export default function TeslaPlayer({
     let flvPlayer: any = null;
     let directFallbackTried = false;
     let liveRecoveryAttempts = 0;
+
+    const clearLiveStallRecovery = () => {
+      if (liveStallRecoveryTimerRef.current) {
+        clearTimeout(liveStallRecoveryTimerRef.current);
+        liveStallRecoveryTimerRef.current = null;
+      }
+    };
     setLoading(true);
     setError(null);
     setMuted(true);
@@ -308,6 +325,7 @@ export default function TeslaPlayer({
     const onDuration = () => { if (!destroyed && videoEl.duration > 0) { setDuration(videoEl.duration); setLoading(false); } };
     const onPlay = () => {
       if (!destroyed) {
+        userPausedRef.current = false;
         setPlaying(true);
         setMuted(videoEl.muted);
         setAudioUnlockRequired(videoEl.muted);
@@ -317,9 +335,45 @@ export default function TeslaPlayer({
         reportPlaybackReady();
       }
     };
-    const onPause = () => { if (!destroyed) { setPlaying(false); setBuffering(false); } };
-    const onWaiting = () => { if (!destroyed) { setBuffering(true); startBufferingTimeout(); } };
-    const onPlaying = () => { if (!destroyed) { liveRecoveryAttempts = 0; setPlaying(true); setMuted(videoEl.muted); setAudioUnlockRequired(videoEl.muted); setBuffering(false); clearBufferingTimeout(); } };
+    const onPause = () => {
+      if (destroyed) return;
+      if (live && !userPausedRef.current && !videoEl.ended) {
+        // A network stall is buffering, not a user pause. Keep the control bar
+        // in the playing state so the browser can resume as soon as data arrives.
+        setPlaying(true);
+        setBuffering(true);
+        startBufferingTimeout();
+        return;
+      }
+      setPlaying(false);
+      setBuffering(false);
+    };
+    const onWaiting = () => {
+      if (destroyed) return;
+      if (!userPausedRef.current) setPlaying(true);
+      setBuffering(true);
+      startBufferingTimeout();
+
+      if (live) {
+        clearLiveStallRecovery();
+        liveStallRecoveryTimerRef.current = window.setTimeout(() => {
+          if (destroyed || userPausedRef.current || videoEl.readyState >= 3) return;
+          liveRecoveryAttempts++;
+          try { hlsRef.current?.startLoad(-1); } catch {}
+          videoEl.play().catch(() => {});
+        }, 8000);
+      }
+    };
+    const onPlaying = () => {
+      if (destroyed) return;
+      clearLiveStallRecovery();
+      liveRecoveryAttempts = 0;
+      setPlaying(true);
+      setMuted(videoEl.muted);
+      setAudioUnlockRequired(videoEl.muted);
+      setBuffering(false);
+      clearBufferingTimeout();
+    };
     const onEnded = () => {
       if (destroyed) return;
       setPlaying(false);
@@ -378,22 +432,27 @@ export default function TeslaPlayer({
         setEngineLabel('HLS 兼容');
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: live,
+          // Public platform streams are watched over a moving cellular link.
+          // Stability matters more than shaving a few seconds of live latency.
+          lowLatencyMode: false,
           autoStartLoad: true,
           startPosition: live ? -1 : (seekToTime ?? savedProgress),
-          liveSyncDurationCount: live ? 3 : undefined,
-          liveMaxLatencyDurationCount: live ? 8 : undefined,
-          maxLiveSyncPlaybackRate: live ? 1.1 : 1,
-          maxBufferLength: live ? 12 : 30,
-          maxMaxBufferLength: live ? 24 : 60,
-          backBufferLength: live ? 6 : 15,
+          liveSyncDurationCount: live ? 6 : undefined,
+          liveMaxLatencyDurationCount: live ? 18 : undefined,
+          maxLiveSyncPlaybackRate: live ? 1.03 : 1,
+          maxBufferLength: live ? 36 : 45,
+          maxMaxBufferLength: live ? 72 : 90,
+          backBufferLength: live ? 12 : 20,
+          fragLoadingTimeOut: 30000,
+          manifestLoadingTimeOut: 20000,
+          levelLoadingTimeOut: 20000,
         });
         hlsRef.current = hls;
 
         hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
           if (destroyed || !data.fatal) return;
 
-          if (live && liveRecoveryAttempts < 2) {
+          if (live && liveRecoveryAttempts < 5) {
             liveRecoveryAttempts++;
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               hls.startLoad(-1);
@@ -439,6 +498,7 @@ export default function TeslaPlayer({
 
     return () => {
       destroyed = true;
+      clearLiveStallRecovery();
       if (canvasRafRef.current) cancelAnimationFrame(canvasRafRef.current);
       if (flvPlayer) { try { flvPlayer.destroy(); } catch {} flvPlayer = null; }
       if (hlsRef.current) { try { hlsRef.current.destroy(); } catch {} hlsRef.current = null; }
