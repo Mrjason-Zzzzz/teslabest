@@ -140,6 +140,11 @@ function cleanEscapedUrl(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
+function preferHttps(value: string): string {
+  const cleaned = cleanEscapedUrl(value);
+  return cleaned.startsWith('http://') ? `https://${cleaned.slice('http://'.length)}` : cleaned;
+}
+
 function extractCookie(setCookie: string, name: string): string {
   const match = setCookie.match(new RegExp(`${name}=([^;,\\s]+)`, 'i'));
   return match?.[1] || '';
@@ -417,16 +422,41 @@ export async function GET(request: NextRequest) {
 
     if (platform === 'douyin') {
       const streamData = await getDouyinStream(roomId);
-      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(streamData.url)}&platform=douyin`;
-      const alternatives = streamData.alternatives.map((item: any) => ({
-        ...item,
-        originalUrl: item.url,
-        url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(item.url)}&platform=douyin`
-      }));
+      // Douyin's public HLS endpoints accept HTTPS and expose CORS. A direct
+      // first hop removes the 1-3 second serverless relay cost from every 4s
+      // segment, which is decisive on a moving cellular connection.
+      const directAlternatives = streamData.alternatives.map((item: any) => {
+        const directUrl = preferHttps(item.url);
+        return {
+          ...item,
+          id: `direct-${item.id}`,
+          label: `${item.label} · 直连`,
+          originalUrl: directUrl,
+          url: directUrl
+        };
+      });
+      const primary = directAlternatives[0] || {
+        id: 'direct-auto',
+        label: '自动 · 直连',
+        originalUrl: preferHttps(streamData.url),
+        url: preferHttps(streamData.url),
+        streamType: 'hls'
+      };
+      const relayUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(primary.originalUrl)}&platform=douyin`;
+      const alternatives = [
+        ...directAlternatives,
+        {
+          id: 'relay-fallback',
+          label: '云端中转 · 备用',
+          originalUrl: primary.originalUrl,
+          url: relayUrl,
+          streamType: 'hls'
+        }
+      ];
 
       return NextResponse.json({
-        url: proxyUrl,
-        originalUrl: streamData.url,
+        url: primary.url,
+        originalUrl: primary.originalUrl,
         name: streamData.name,
         title: streamData.title,
         streamType: 'hls',
