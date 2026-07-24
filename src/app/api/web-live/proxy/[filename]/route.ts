@@ -80,6 +80,9 @@ export async function GET(request: NextRequest) {
     }
 
     const range = request.headers.get('range');
+    const upstreamController = new AbortController();
+    const upstreamTimeout = setTimeout(() => upstreamController.abort(), 25000);
+    request.signal.addEventListener('abort', () => upstreamController.abort(), { once: true });
     const streamRes = await fetch(target, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
@@ -87,7 +90,8 @@ export async function GET(request: NextRequest) {
         'Accept': '*/*',
         ...(range ? { Range: range } : {})
       },
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: upstreamController.signal
     });
 
     if (!streamRes.ok && streamRes.status !== 206) {
@@ -105,6 +109,7 @@ export async function GET(request: NextRequest) {
 
     if (isM3u8) {
       const content = await streamRes.text();
+      clearTimeout(upstreamTimeout);
       const processedContent = processM3u8Content(content, target.toString(), request, platform);
       return new NextResponse(processedContent, {
         status: streamRes.status,
@@ -118,7 +123,7 @@ export async function GET(request: NextRequest) {
 
     const responseHeaders = new Headers({
       'Content-Type': contentType || 'application/octet-stream',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'public, max-age=30, s-maxage=120, stale-while-revalidate=60',
       'Access-Control-Allow-Origin': '*'
     });
     for (const headerName of ['content-length', 'content-range', 'accept-ranges']) {
@@ -131,9 +136,10 @@ export async function GET(request: NextRequest) {
       headers: responseHeaders
     });
   } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'AbortError' && !request.signal.aborted;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : '代理失败' },
-      { status: 500 }
+      { error: timedOut ? '直播上游响应超时' : (error instanceof Error ? error.message : '代理失败') },
+      { status: timedOut ? 504 : 500 }
     );
   }
 }
