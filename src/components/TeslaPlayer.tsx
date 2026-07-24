@@ -106,7 +106,7 @@ export default function TeslaPlayer({
   const [isWebFullscreen, setIsWebFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
-  const [showDebug] = useState(true);
+  const [showDebug] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
