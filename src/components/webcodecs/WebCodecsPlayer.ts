@@ -55,6 +55,13 @@ export class WebCodecsPlayer {
   private showDebug = false;
   private needVideoKey = true;
   private lastTimeReportMs = 0;
+  private lastHlsClockSyncMs = 0;
+  private lastRenderedAtMs = 0;
+  private recoveryAttempts = 0;
+  private recoveryInFlight = false;
+  private checkedTsContainer = false;
+  private audioRemainder = new Uint8Array(0);
+  private nextAudioPtsSec: number | null = null;
 
   private spsNalu: Uint8Array | null = null;
   private ppsNalu: Uint8Array | null = null;
@@ -108,6 +115,8 @@ export class WebCodecsPlayer {
   }
 
   async load(url: string, startAt = 0): Promise<void> {
+    const isNewSource = this.sourceUrl !== url;
+    if (isNewSource) this.recoveryAttempts = 0;
     const generation = ++this.loadGeneration;
     this.teardown();
     this.teardownAudioGraph();
@@ -117,6 +126,11 @@ export class WebCodecsPlayer {
     this.currentSegIndex = 0;
     this.videoConfig = null;
     this.audioConfig = null;
+    this.audioRemainder = new Uint8Array(0);
+    this.nextAudioPtsSec = null;
+    this.checkedTsContainer = false;
+    this.lastHlsClockSyncMs = 0;
+    this.lastRenderedAtMs = performance.now();
     this.baseMediaTime = startAt;
     this.ctxStartTime = null;
     this.nextAudioStartTime = 0;
@@ -141,9 +155,9 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
-      maxBufferLength: 60,
-      maxMaxBufferLength: 120,
-      backBufferLength: 60,
+      maxBufferLength: 24,
+      maxMaxBufferLength: 48,
+      backBufferLength: 12,
     });
 
     this.hls = hls;
@@ -185,8 +199,16 @@ export class WebCodecsPlayer {
       const frag = data.frag;
       const payload = frag?.data || data.payload;
       if (payload && payload.byteLength) {
+        const bytes = new Uint8Array(payload);
+        if (!this.checkedTsContainer) {
+          this.checkedTsContainer = true;
+          if (!this.isTransportStreamPayload(bytes)) {
+            this.fail('当前源不是兼容的 H.264/AAC TS，正在切换通用播放器');
+            return;
+          }
+        }
         this.debugStats.bytesLoaded += payload.byteLength;
-        this.feedTsData(new Uint8Array(payload), generation);
+        this.feedTsData(bytes, generation);
       }
     });
 
@@ -310,16 +332,24 @@ export class WebCodecsPlayer {
 
   private handleAudioPes(pes: any) {
     const pesData = pes.data;
-    const pts = pes.pts != null ? pes.pts / 90000 : 0;
+    const pesPts = pes.pts != null ? pes.pts / 90000 : 0;
     if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
 
-    const aacFrames = this.splitAdtsFrames(pesData);
-    let frameOffsetSec = 0;
-    for (const frame of aacFrames) {
+    const combined = new Uint8Array(this.audioRemainder.length + pesData.length);
+    combined.set(this.audioRemainder, 0);
+    combined.set(pesData, this.audioRemainder.length);
+    const extracted = this.extractAdtsFrames(combined);
+    this.audioRemainder = extracted.remainder;
+
+    let framePts = this.nextAudioPtsSec !== null && Math.abs(pesPts - this.nextAudioPtsSec) < 0.5
+      ? this.nextAudioPtsSec
+      : pesPts;
+
+    for (const frame of extracted.frames) {
       const adts = this.parseAdts(frame);
       if (!adts) continue;
 
-      if (!this.audioConfig && frame.length > 7) {
+      if (!this.audioConfig) {
         const desc = this.buildAacConfig(adts.sampleRate, adts.channels, adts.profile);
         this.audioConfig = {
           codec: 'mp4a.40.2',
@@ -340,18 +370,17 @@ export class WebCodecsPlayer {
         }
       }
 
-      // One ADTS AAC-LC frame represents 1024 PCM samples. A PES packet can
-      // contain several ADTS frames, so assigning the PES PTS to every frame
-      // makes audio drift. Synthesize a monotonic timestamp for each frame.
+      const headerLength = (frame[1] & 0x01) === 1 ? 7 : 9;
+      if (frame.length <= headerLength) continue;
       const frameDurationSec = 1024 / adts.sampleRate;
-      const rawAac = frame.subarray(7);
       this.encodedAudio.push({
         key: true,
-        timestamp: Math.round((pts + frameOffsetSec) * 1e6),
+        timestamp: Math.round(framePts * 1e6),
         duration: Math.round(frameDurationSec * 1e6),
-        data: rawAac,
+        data: frame.subarray(headerLength),
       });
-      frameOffsetSec += frameDurationSec;
+      framePts += frameDurationSec;
+      this.nextAudioPtsSec = framePts;
       this.debugStats.audioSamples++;
     }
   }
@@ -392,22 +421,18 @@ export class WebCodecsPlayer {
     this.audioCtx = ctx;
     this.gain = ctx.createGain();
     this.gain.gain.value = this.volume;
-    this.mediaDest = ctx.createMediaStreamDestination();
-    this.gain.connect(this.mediaDest);
-
-    const audioEl = document.createElement('audio');
-    audioEl.srcObject = this.mediaDest.stream;
-    audioEl.style.display = 'none';
-    document.body.appendChild(audioEl);
-    this.audioEl = audioEl;
+    // Direct Web Audio output avoids the extra MediaStream -> hidden <audio>
+    // resampling hop that caused static noise and added sync latency.
+    this.gain.connect(ctx.destination);
+    this.mediaDest = null;
+    this.audioEl = null;
   }
 
   private onVideoFrame(frame: VideoFrame) {
     this.decodedFrames++;
-    if (!this.canvasSized) {
-      this.canvas.width = frame.displayWidth;
-      this.canvas.height = frame.displayHeight;
-      this.canvasSized = true;
+    while (this.frameQueue.length >= 60) {
+      this.frameQueue.shift()?.close();
+      this.droppedFrames++;
     }
     this.frameQueue.push(frame);
   }
@@ -423,6 +448,7 @@ export class WebCodecsPlayer {
     try {
       this.pumpVideo();
       this.pumpAudio();
+      this.compactEncodedQueues();
 
       if (this.ctxStartTime === null) {
         this.maybePrime();
@@ -436,9 +462,42 @@ export class WebCodecsPlayer {
 
       // Debug information is exposed through getStats(). Never paint it into
       // the video canvas: that races with VideoFrame rendering and flickers.
+      this.maybeRecoverFromStall();
     } catch (e) {
       console.error('[WebCodecsPlayer] tick error:', e);
     }
+  }
+
+  private compactEncodedQueues() {
+    if (this.vIdx > 600) {
+      this.encodedVideo = this.encodedVideo.slice(this.vIdx);
+      this.vIdx = 0;
+    }
+    if (this.aIdx > 1200) {
+      this.encodedAudio = this.encodedAudio.slice(this.aIdx);
+      this.aIdx = 0;
+    }
+  }
+
+  private maybeRecoverFromStall() {
+    if (
+      this.state !== 'playing' ||
+      this.ctxStartTime === null ||
+      this.recoveryInFlight ||
+      performance.now() - this.lastRenderedAtMs < 8000
+    ) return;
+
+    if (this.recoveryAttempts >= 2) {
+      this.fail('画面持续卡顿，正在切换通用播放器');
+      return;
+    }
+
+    this.recoveryAttempts++;
+    this.recoveryInFlight = true;
+    const restartAt = Math.max(0, this.getMediaTime() + 0.05);
+    Promise.resolve()
+      .then(() => this.seek(restartAt))
+      .finally(() => { this.recoveryInFlight = false; });
   }
 
   private pumpVideo() {
@@ -476,7 +535,8 @@ export class WebCodecsPlayer {
     if (!dec || dec.state !== 'configured') return;
     while (
       this.aIdx < this.encodedAudio.length &&
-      dec.decodeQueueSize < 64
+      dec.decodeQueueSize < 32 &&
+      this.decodedAudio.length + dec.decodeQueueSize < 160
     ) {
       const s = this.encodedAudio[this.aIdx++];
       try {
@@ -514,11 +574,11 @@ export class WebCodecsPlayer {
   }
 
   private resumeAudio() {
-    if (!this.audioCtx || !this.audioEl) return;
-    Promise.all([this.audioCtx.resume(), this.audioEl.play()])
+    if (!this.audioCtx) return;
+    this.audioCtx.resume()
       .then(() => {
-        if (this.audioCtx?.state === 'running' && !this.audioEl?.paused) {
-          if (this.state !== 'ended') this.setState('playing');
+        if (this.audioCtx?.state === 'running' && this.state !== 'ended') {
+          this.setState('playing');
         }
       })
       .catch((e) => console.warn('[WebCodecsPlayer] resume audio failed:', e));
@@ -526,9 +586,29 @@ export class WebCodecsPlayer {
 
   private drawFirstFrame() {
     const f = this.frameQueue[0];
-    if (f) {
-      this.ctx.drawImage(f, 0, 0, this.canvas.width, this.canvas.height);
+    if (f) this.drawFrameContained(f);
+  }
+
+  private drawFrameContained(frame: VideoFrame) {
+    const width = Math.max(1, Math.floor(this.canvas.clientWidth || frame.displayWidth));
+    const height = Math.max(1, Math.floor(this.canvas.clientHeight || frame.displayHeight));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
     }
+
+    const sourceWidth = frame.displayWidth || frame.codedWidth || width;
+    const sourceHeight = frame.displayHeight || frame.codedHeight || height;
+    const scale = Math.min(width / sourceWidth, height / sourceHeight);
+    const drawWidth = Math.round(sourceWidth * scale);
+    const drawHeight = Math.round(sourceHeight * scale);
+    const x = Math.round((width - drawWidth) / 2);
+    const y = Math.round((height - drawHeight) / 2);
+
+    this.ctx.fillStyle = '#000';
+    this.ctx.fillRect(0, 0, width, height);
+    this.ctx.drawImage(frame, x, y, drawWidth, drawHeight);
+    this.canvasSized = true;
   }
 
   private getMediaTime(): number {
@@ -608,9 +688,10 @@ export class WebCodecsPlayer {
       toDraw = this.frameQueue.shift()!;
     }
     if (toDraw) {
-      this.ctx.drawImage(toDraw, 0, 0, this.canvas.width, this.canvas.height);
+      this.drawFrameContained(toDraw);
       toDraw.close();
       this.renderedFrames++;
+      this.lastRenderedAtMs = performance.now();
     }
   }
 
@@ -618,6 +699,19 @@ export class WebCodecsPlayer {
     const now = performance.now();
     if (now - this.lastTimeReportMs < 250) return;
     this.lastTimeReportMs = now;
+
+    // hls.js bases forward loading on the attached media element's currentTime.
+    // Keep the hidden element near the real WebCodecs clock; otherwise loading
+    // stops after its max buffer (the observed ~2 minute stall).
+    if (this.hlsVideoEl && now - this.lastHlsClockSyncMs >= 1000) {
+      this.lastHlsClockSyncMs = now;
+      try {
+        if (Math.abs(this.hlsVideoEl.currentTime - clock) > 1) {
+          this.hlsVideoEl.currentTime = clock;
+        }
+      } catch {}
+    }
+
     this.cb.onTime?.(Math.min(clock, this.durationSec));
   }
 
@@ -625,7 +719,6 @@ export class WebCodecsPlayer {
     this.wantPlaying = true;
     if (this.ctxStartTime === null) {
       if (this.audioCtx) this.audioCtx.resume().catch(() => {});
-      if (this.audioEl) this.audioEl.play().catch(() => {});
       return;
     }
     this.resumeAudio();
@@ -696,6 +789,8 @@ export class WebCodecsPlayer {
     this.vIdx = 0;
     this.aIdx = 0;
     this.canvasSized = false;
+    this.audioRemainder = new Uint8Array(0);
+    this.nextAudioPtsSec = null;
     this.spsNalu = null;
     this.ppsNalu = null;
 
@@ -731,6 +826,9 @@ export class WebCodecsPlayer {
       this.audioEl = null;
     }
 
+    if (this.gain) {
+      try { this.gain.gain.value = 0; } catch {}
+    }
     const oldAudioCtx = this.audioCtx;
     this.audioCtx = null;
     if (oldAudioCtx && oldAudioCtx.state !== 'closed') {
@@ -925,23 +1023,48 @@ export class WebCodecsPlayer {
     return nalu;
   }
 
-  private splitAdtsFrames(data: Uint8Array): Uint8Array[] {
+  private extractAdtsFrames(data: Uint8Array): { frames: Uint8Array[]; remainder: Uint8Array } {
     const frames: Uint8Array[] = [];
     let i = 0;
-    const len = data.length;
 
-    while (i + 7 <= len) {
-      if (data[i] === 0xff && (data[i + 1] & 0xf0) === 0xf0) {
-        const frameLen = ((data[i + 3] & 0x03) << 11) | (data[i + 4] << 3) | ((data[i + 5] & 0xe0) >> 5);
-        if (frameLen < 7 || i + frameLen > len) break;
-        frames.push(data.subarray(i, i + frameLen));
-        i += frameLen;
-      } else {
+    while (i + 7 <= data.length) {
+      if (data[i] !== 0xff || (data[i + 1] & 0xf0) !== 0xf0) {
         i++;
+        continue;
       }
+
+      const headerLength = (data[i + 1] & 0x01) === 1 ? 7 : 9;
+      if (i + headerLength > data.length) break;
+      const frameLength =
+        ((data[i + 3] & 0x03) << 11) |
+        (data[i + 4] << 3) |
+        ((data[i + 5] & 0xe0) >> 5);
+
+      if (frameLength < headerLength || frameLength > 8191) {
+        i++;
+        continue;
+      }
+      if (i + frameLength > data.length) {
+        return { frames, remainder: data.slice(i) };
+      }
+
+      frames.push(data.subarray(i, i + frameLength));
+      i += frameLength;
     }
 
-    return frames;
+    const remainder = i < data.length
+      ? data.slice(Math.max(i, data.length - 8191))
+      : new Uint8Array(0);
+    return { frames, remainder };
+  }
+
+  private isTransportStreamPayload(data: Uint8Array): boolean {
+    const limit = Math.min(188, data.length);
+    for (let offset = 0; offset < limit; offset++) {
+      if (data[offset] !== 0x47) continue;
+      if (offset + 188 >= data.length || data[offset + 188] === 0x47) return true;
+    }
+    return false;
   }
 
   private parseAdts(data: Uint8Array): { sampleRate: number; channels: number; profile: number } | null {
