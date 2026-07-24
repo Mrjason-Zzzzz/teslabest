@@ -170,6 +170,20 @@ function normalizeRoomId(platform: string, input: string): string {
   return value;
 }
 
+async function fetchWithTimeout(
+  input: string | URL,
+  init: RequestInit = {},
+  timeoutMs = 12000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function extractDouyinHlsFromHtml(html: string): string {
   const normalized = cleanEscapedUrl(html);
   const matches = normalized.match(/https?:[^"'\\s]+?\.m3u8[^"'\\s<]*/gi) || [];
@@ -188,11 +202,10 @@ async function getDouyinStream(rawRoomId: string) {
 
   // Bootstrap a fresh visitor cookie on every server-side resolution. The old
   // implementation used one hard-coded ttwid, so it inevitably expired.
-  const roomPage = await fetch(`https://live.douyin.com/${roomId}`, {
+  const roomPage = await fetchWithTimeout(`https://live.douyin.com/${roomId}`, {
     headers: baseHeaders,
     cache: 'no-store',
-    redirect: 'follow',
-    signal: AbortSignal.timeout(12000)
+    redirect: 'follow'
   });
   const roomHtml = await roomPage.text();
   const setCookie = roomPage.headers.get('set-cookie') || '';
@@ -221,13 +234,12 @@ async function getDouyinStream(rawRoomId: string) {
 
   let jsonData: any = null;
   try {
-    const response = await fetch(`https://live.douyin.com/webcast/room/web/enter/?${params.toString()}`, {
+    const response = await fetchWithTimeout(`https://live.douyin.com/webcast/room/web/enter/?${params.toString()}`, {
       headers: {
         ...baseHeaders,
         ...(cookie ? { Cookie: cookie } : {})
       },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(12000)
+      cache: 'no-store'
     });
     const responseText = await response.text();
     if (response.ok && responseText.trim().startsWith('{')) {
