@@ -750,17 +750,92 @@ export class WebCodecsPlayer {
     return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
   }
 
+  private canBuildPitchWindow(minDurationSec = 0.08): boolean {
+    const first = this.decodedAudio[0];
+    if (!first) return false;
+
+    const sampleRate = first.sampleRate;
+    const channels = first.numberOfChannels;
+    let durationSec = 0;
+    let expectedTimestamp: number | null = null;
+
+    for (const audio of this.decodedAudio) {
+      if (audio.sampleRate !== sampleRate || audio.numberOfChannels !== channels) break;
+      const timestamp = audio.timestamp / 1e6;
+      if (expectedTimestamp !== null && Math.abs(timestamp - expectedTimestamp) > 0.035) break;
+      durationSec += audio.numberOfFrames / sampleRate;
+      if (durationSec >= minDurationSec) return true;
+      expectedTimestamp = timestamp + audio.numberOfFrames / sampleRate;
+    }
+    return false;
+  }
+
+  /**
+   * AudioDecoder normally returns AAC in ~23 ms pieces. Stretching every tiny
+   * piece creates an audible grain edge on Tesla's output path, so collect a
+   * short, timestamp-contiguous window before applying overlap-add.
+   */
+  private takePitchWindow(startOffsetSec: number, targetDurationSec = 0.12): AudioBuffer | null {
+    if (!this.audioCtx || !this.decodedAudio.length) return null;
+
+    const first = this.decodedAudio[0];
+    const sampleRate = first.sampleRate;
+    const channels = first.numberOfChannels;
+    const chunks: Array<{ audio: AudioData; offsetFrames: number }> = [];
+    let totalFrames = 0;
+    let expectedTimestamp: number | null = null;
+
+    while (this.decodedAudio.length && totalFrames / sampleRate < targetDurationSec) {
+      const audio = this.decodedAudio[0];
+      if (audio.sampleRate !== sampleRate || audio.numberOfChannels !== channels) break;
+
+      const timestamp = audio.timestamp / 1e6;
+      if (expectedTimestamp !== null && Math.abs(timestamp - expectedTimestamp) > 0.035) break;
+
+      const offsetFrames = chunks.length === 0
+        ? Math.max(0, Math.min(audio.numberOfFrames, Math.floor(startOffsetSec * sampleRate)))
+        : 0;
+      const usableFrames = audio.numberOfFrames - offsetFrames;
+      if (usableFrames <= 0) {
+        this.decodedAudio.shift();
+        audio.close();
+        continue;
+      }
+
+      chunks.push({ audio, offsetFrames });
+      this.decodedAudio.shift();
+      totalFrames += usableFrames;
+      expectedTimestamp = timestamp + audio.numberOfFrames / sampleRate;
+    }
+
+    if (!chunks.length || !totalFrames) return null;
+
+    const buffer = this.audioCtx.createBuffer(channels, totalFrames, sampleRate);
+    let destinationOffset = 0;
+    for (const { audio, offsetFrames } of chunks) {
+      try {
+        for (let channel = 0; channel < channels; channel++) {
+          const samples = new Float32Array(audio.numberOfFrames);
+          audio.copyTo(samples, { planeIndex: channel, format: 'f32-planar' });
+          buffer.copyToChannel(samples.subarray(offsetFrames), channel, destinationOffset);
+        }
+      } finally {
+        audio.close();
+      }
+      destinationOffset += audio.numberOfFrames - offsetFrames;
+    }
+
+    return buffer;
+  }
+
   private scheduleAudio() {
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    // Granular time stretching creates more short source nodes than 1x playback.
-    // Keep its scheduled horizon short so the vehicle CPU stays responsive and
-    // a rate change can re-anchor without a long stale-audio tail.
-    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.65;
+    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.7;
     if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > maxLeadSec) return;
 
     let scheduled = 0;
-    const maxChunks = this.playbackRate === 1 ? 10 : 6;
+    const maxChunks = this.playbackRate === 1 ? 10 : 4;
     while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
@@ -769,8 +844,6 @@ export class WebCodecsPlayer {
       const headDuration = head.numberOfFrames / sampleRate;
       const mediaNow = this.getMediaTime();
 
-      // Drop audio that is already too old for the current master clock.
-      // Keeping it would make sound lag farther behind after stalls or seek.
       if (headTs + headDuration < mediaNow - 0.08) {
         this.decodedAudio.shift();
         head.close();
@@ -789,17 +862,29 @@ export class WebCodecsPlayer {
           ? Math.max(idealWhen, now + 0.03)
           : Math.max(this.nextAudioStartTime, now + 0.03);
       }
-
       if (when > now + maxLeadSec + 0.12) break;
 
-      const frames = head.numberOfFrames;
+      if (this.playbackRate !== 1) {
+        // Keep a sufficiently long analysis window. Do not produce a noisy
+        // one-AAC-frame grain while the decoder is still filling the queue.
+        if (!this.canBuildPitchWindow()) break;
+        const buffer = this.takePitchWindow(startOffsetSec);
+        if (!buffer) break;
+
+        this.schedulePitchPreservedBuffer(buffer, when);
+        this.lastAudioScheduledAtMs = performance.now();
+        this.nextAudioStartTime = when + buffer.duration / this.playbackRate;
+        scheduled++;
+        continue;
+      }
+
       let buffer: AudioBuffer;
       try {
-        buffer = this.audioCtx.createBuffer(channels, frames, sampleRate);
-        for (let ch = 0; ch < channels; ch++) {
-          const dest = new Float32Array(frames);
-          head.copyTo(dest, { planeIndex: ch, format: 'f32-planar' });
-          buffer.copyToChannel(dest, ch);
+        buffer = this.audioCtx.createBuffer(channels, head.numberOfFrames, sampleRate);
+        for (let channel = 0; channel < channels; channel++) {
+          const dest = new Float32Array(head.numberOfFrames);
+          head.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
+          buffer.copyToChannel(dest, channel);
         }
       } finally {
         head.close();
@@ -808,17 +893,18 @@ export class WebCodecsPlayer {
 
       this.schedulePitchPreservedBuffer(buffer, when, startOffsetSec);
       this.lastAudioScheduledAtMs = performance.now();
-      this.nextAudioStartTime = when + Math.max(0, headDuration - startOffsetSec) / this.playbackRate;
+      this.nextAudioStartTime = when + Math.max(0, headDuration - startOffsetSec);
       scheduled++;
     }
   }
 
   /**
-   * Web Audio's playbackRate changes pitch. This overlap-add path keeps every
-   * grain at 1x pitch and changes only the distance between grains. It is
-   * intentionally bounded to 0.75x–2x and a short lead window for Tesla CPU.
+   * Use a long, 50%-overlapped window rather than a per-AAC-frame envelope.
+   * Every source node remains at 1x pitch; playback speed comes only from the
+   * distance between windows. This avoids the scratchy edge modulation heard
+   * with short 20–40 ms grains.
    */
-  private schedulePitchPreservedBuffer(buffer: AudioBuffer, when: number, startOffsetSec: number) {
+  private schedulePitchPreservedBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0) {
     if (!this.audioCtx || !this.gain) return;
 
     if (this.playbackRate === 1) {
@@ -831,22 +917,35 @@ export class WebCodecsPlayer {
       return;
     }
 
-    const grainDuration = Math.min(0.04, Math.max(0.012, buffer.duration - startOffsetSec));
-    const outputHop = Math.min(0.02, grainDuration / 2);
+    const usableDuration = Math.max(0, buffer.duration - startOffsetSec);
+    const outputDuration = usableDuration / this.playbackRate;
+    const grainDuration = Math.min(0.12, Math.max(0.08, usableDuration));
+    const outputHop = grainDuration / 2;
     const inputHop = outputHop * this.playbackRate;
-    const fade = Math.min(0.008, grainDuration / 3);
     let inputOffset = startOffsetSec;
     let outputOffset = 0;
 
-    while (inputOffset < buffer.duration - 0.003) {
-      const duration = Math.min(grainDuration, buffer.duration - inputOffset);
+    while (
+      inputOffset < buffer.duration - 0.003 &&
+      outputOffset < outputDuration - 0.002
+    ) {
+      const remainingOutput = outputDuration - outputOffset;
+      const duration = Math.min(
+        grainDuration,
+        buffer.duration - inputOffset,
+        remainingOutput,
+      );
+      if (duration <= 0.002) break;
+
       const grainWhen = when + outputOffset;
       const src = this.audioCtx.createBufferSource();
       const envelope = this.audioCtx.createGain();
       src.buffer = buffer;
+
+      // Full 50% crossfade: no hard plateau or abrupt edge between grains.
+      const half = duration / 2;
       envelope.gain.setValueAtTime(0, grainWhen);
-      envelope.gain.linearRampToValueAtTime(1, grainWhen + Math.min(fade, duration / 2));
-      envelope.gain.setValueAtTime(1, Math.max(grainWhen + Math.min(fade, duration / 2), grainWhen + duration - fade));
+      envelope.gain.linearRampToValueAtTime(1, grainWhen + half);
       envelope.gain.linearRampToValueAtTime(0, grainWhen + duration);
       src.connect(envelope);
       envelope.connect(this.gain);
