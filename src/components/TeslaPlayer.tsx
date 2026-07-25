@@ -23,6 +23,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
+import {
+  getTeslaAudioSession,
+  unlockTeslaAudioSession,
+  updateTeslaAudioSession,
+} from '@/lib/tesla/audio-session';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -131,8 +136,8 @@ export default function TeslaPlayer({
   const [showDebug] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
-  const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [audioUnlockRequired, setAudioUnlockRequired] = useState(true);
   const [engineLabel, setEngineLabel] = useState('兼容播放');
   const [networkOffline, setNetworkOffline] = useState(false);
   const [reconnectMessage, setReconnectMessage] = useState('');
@@ -140,6 +145,13 @@ export default function TeslaPlayer({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
 
   const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'webcodecs' : defaultModeProp));
+
+  useEffect(() => {
+    const session = getTeslaAudioSession();
+    setVolume(session.volume);
+    setMuted(session.muted || !session.unlocked);
+    setAudioUnlockRequired(!session.unlocked && !session.muted);
+  }, []);
 
   const reportPlaybackReady = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -248,27 +260,40 @@ export default function TeslaPlayer({
   }, [mode]);
 
   const togglePlay = useCallback(() => {
+    const unlockAndRemember = async () => {
+      const unlocked = await unlockTeslaAudioSession();
+      if (!unlocked) return false;
+      updateTeslaAudioSession({ unlocked: true, muted: false, volume });
+      setMuted(false);
+      setAudioUnlockRequired(false);
+      return true;
+    };
+
     if (mode === 'webcodecs') {
       const player = wcPlayerRef.current;
       if (!player) return;
-      if (muted || !player.isAudioActive()) {
-        setMuted(false);
-        setAudioUnlockRequired(false);
-        player.ensureAudible().then(() => {
-          if (!playing) player.play();
-        }).catch(() => {});
+      const session = getTeslaAudioSession();
+      if (!session.unlocked || muted || !player.isAudioActive()) {
+        unlockAndRemember()
+          .then((unlocked) => unlocked && player.ensureAudible())
+          .then(() => {
+            if (!playing) player.play();
+          })
+          .catch(() => {});
         return;
       }
       player.togglePlay();
     } else if (videoRef.current) {
       const v = videoRef.current;
-      if (v.muted || muted) {
+      const session = getTeslaAudioSession();
+      if (!session.unlocked || v.muted || muted) {
         userPausedRef.current = false;
-        v.muted = false;
-        v.volume = volume;
-        setMuted(false);
-        setAudioUnlockRequired(false);
-        v.play().catch(() => {});
+        unlockAndRemember().then((unlocked) => {
+          if (!unlocked) return;
+          v.muted = false;
+          v.volume = volume;
+          v.play().catch(() => {});
+        });
         return;
       }
       if (v.paused) {
@@ -302,9 +327,20 @@ export default function TeslaPlayer({
 
   const setPlaybackRate = useCallback((r: number) => {
     if (mode === 'webcodecs') {
-      wcPlayerRef.current?.setPlaybackRate(r);
-    } else if (videoRef.current) {
-      videoRef.current.playbackRate = r;
+      // Web Audio playbackRate also changes pitch. Keep the vehicle-compatible
+      // Canvas engine at 1x until a real time-stretch processor is validated.
+      setRate(1);
+      setShowRateMenu(false);
+      return;
+    }
+
+    if (videoRef.current) {
+      const media = videoRef.current as HTMLVideoElement & {
+        webkitPreservesPitch?: boolean;
+      };
+      media.preservesPitch = true;
+      media.webkitPreservesPitch = true;
+      media.playbackRate = r;
     }
     setRate(r);
     setShowRateMenu(false);
@@ -312,15 +348,30 @@ export default function TeslaPlayer({
 
   const toggleMute = useCallback(() => {
     const newMuted = !muted;
+    updateTeslaAudioSession({ muted: newMuted, volume });
     if (mode === 'webcodecs') {
       wcPlayerRef.current?.setMuted(newMuted);
       if (!newMuted) {
-        wcPlayerRef.current?.setVolume(volume);
-        wcPlayerRef.current?.ensureAudible().catch(() => {});
+        unlockTeslaAudioSession()
+          .then((unlocked) => {
+            if (!unlocked) return;
+            updateTeslaAudioSession({ unlocked: true, muted: false, volume });
+            wcPlayerRef.current?.setVolume(volume);
+            return wcPlayerRef.current?.ensureAudible();
+          })
+          .catch(() => {});
       }
     } else if (videoRef.current) {
       videoRef.current.muted = newMuted;
-      if (!newMuted) videoRef.current.volume = volume;
+      if (!newMuted) {
+        unlockTeslaAudioSession().then((unlocked) => {
+          if (!unlocked || !videoRef.current) return;
+          updateTeslaAudioSession({ unlocked: true, muted: false, volume });
+          videoRef.current.volume = volume;
+          videoRef.current.muted = false;
+          videoRef.current.play().catch(() => {});
+        });
+      }
     }
     setMuted(newMuted);
     setAudioUnlockRequired(false);
@@ -390,13 +441,21 @@ export default function TeslaPlayer({
     };
     setLoading(true);
     setError(null);
-    setMuted(true);
-    setAudioUnlockRequired(true);
+    const audioSession = getTeslaAudioSession();
+    const shouldStartMuted = audioSession.muted || !audioSession.unlocked;
+    setVolume(audioSession.volume);
+    setMuted(shouldStartMuted);
+    setAudioUnlockRequired(!audioSession.unlocked && !audioSession.muted);
 
     // 创建 video 元素
-    const videoEl = document.createElement('video');
+    const videoEl = document.createElement('video') as HTMLVideoElement & {
+      webkitPreservesPitch?: boolean;
+    };
     videoEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;z-index:1;';
-    videoEl.muted = true;
+    videoEl.muted = shouldStartMuted;
+    videoEl.volume = audioSession.volume;
+    videoEl.preservesPitch = true;
+    videoEl.webkitPreservesPitch = true;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('x-webkit-airplay', 'deny');
@@ -416,8 +475,9 @@ export default function TeslaPlayer({
       if (!destroyed) {
         userPausedRef.current = false;
         setPlaying(true);
+        const session = getTeslaAudioSession();
         setMuted(videoEl.muted);
-        setAudioUnlockRequired(videoEl.muted);
+        setAudioUnlockRequired(videoEl.muted && !session.muted && !session.unlocked);
         setBuffering(false);
         setLoading(false);
         clearBufferingTimeout();
@@ -458,8 +518,9 @@ export default function TeslaPlayer({
       clearLiveStallRecovery();
       liveRecoveryAttempts = 0;
       setPlaying(true);
+      const session = getTeslaAudioSession();
       setMuted(videoEl.muted);
-      setAudioUnlockRequired(videoEl.muted);
+      setAudioUnlockRequired(videoEl.muted && !session.muted && !session.unlocked);
       setBuffering(false);
       clearBufferingTimeout();
       if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
@@ -698,10 +759,15 @@ export default function TeslaPlayer({
               clearTimeout(firstFrameTimer);
               firstFrameTimer = null;
             }
+            const session = getTeslaAudioSession();
             const audioActive = wcPlayerRef.current?.isAudioActive() ?? false;
+            const shouldBeMuted = session.muted || !session.unlocked;
             setPlaying(true);
-            setMuted(!audioActive);
-            setAudioUnlockRequired(!audioActive);
+            setMuted(shouldBeMuted || !audioActive);
+            setAudioUnlockRequired(!session.muted && !session.unlocked);
+            if (session.unlocked && !session.muted && !audioActive) {
+              wcPlayerRef.current?.ensureAudible().catch(() => {});
+            }
             setBuffering(false);
             setLoading(false);
             clearBufferingTimeout();
@@ -735,6 +801,9 @@ export default function TeslaPlayer({
 
       wcPlayerRef.current = player;
       player.setShowDebug(showDebug);
+      const audioSession = getTeslaAudioSession();
+      player.setVolume(audioSession.volume);
+      player.setMuted(audioSession.muted || !audioSession.unlocked);
 
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
@@ -1019,8 +1088,9 @@ export default function TeslaPlayer({
               {live ? '直播中' : `${formatTime(currentTime)} / ${formatTime(duration)}`}
             </div>
 
-            {/* 点播倍速同时支持原生与 WebCodecs 兼容内核。 */}
-            {!live && (
+            {/* Native media preserves pitch. Canvas/WebCodecs stays at 1x
+                until a vehicle-safe time-stretch processor is validated. */}
+            {!live && mode === 'video' && (
               <div className="relative ml-1">
                 <button
                   type="button"
