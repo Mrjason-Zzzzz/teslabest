@@ -394,6 +394,7 @@ export async function GET(request: NextRequest) {
         title: gameLiveInfo?.introduction || '',
         streamType: selected.streamType,
         quality: 'stable',
+        qualities: [{ id: 'AUTO', label: '自动', transports: alternatives }],
         alternatives,
         live: true
       });
@@ -409,6 +410,17 @@ export async function GET(request: NextRequest) {
         name: streamData.name,
         title: streamData.title,
         streamType: 'hls',
+        qualities: [{
+          id: 'AUTO',
+          label: '自动',
+          transports: [{
+            id: 'line-1',
+            label: '默认线路',
+            url: proxyUrl,
+            originalUrl: streamData.url,
+            streamType: 'hls'
+          }]
+        }],
         alternatives: [{
           id: 'line-1',
           label: '默认线路',
@@ -422,37 +434,52 @@ export async function GET(request: NextRequest) {
 
     if (platform === 'douyin') {
       const streamData = await getDouyinStream(roomId);
-      // Douyin's public HLS endpoints accept HTTPS and expose CORS. A direct
-      // first hop removes the 1-3 second serverless relay cost from every 4s
-      // segment, which is decisive on a moving cellular connection.
-      const directAlternatives = streamData.alternatives.map((item: any) => {
+      // The user chooses quality. Direct CDN and the relay are hidden
+      // transports inside each quality and fail over automatically.
+      const qualities = streamData.alternatives.map((item: any) => {
         const directUrl = preferHttps(item.url);
         return {
-          ...item,
-          id: `direct-${item.id}`,
-          label: `${item.label} · 直连`,
-          originalUrl: directUrl,
-          url: directUrl
+          id: String(item.id),
+          label: String(item.label),
+          transports: [
+            {
+              id: `direct-${item.id}`,
+              label: '直连',
+              originalUrl: directUrl,
+              url: directUrl,
+              streamType: 'hls'
+            },
+            {
+              id: `relay-${item.id}`,
+              label: '云端中转',
+              originalUrl: directUrl,
+              url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(directUrl)}&platform=douyin`,
+              streamType: 'hls'
+            }
+          ]
         };
       });
-      const primary = directAlternatives[0] || {
-        id: 'direct-auto',
-        label: '自动 · 直连',
-        originalUrl: preferHttps(streamData.url),
-        url: preferHttps(streamData.url),
-        streamType: 'hls'
-      };
-      const relayUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(primary.originalUrl)}&platform=douyin`;
-      const alternatives = [
-        ...directAlternatives,
-        {
-          id: 'relay-fallback',
-          label: '云端中转 · 备用',
-          originalUrl: primary.originalUrl,
-          url: relayUrl,
-          streamType: 'hls'
-        }
-      ];
+
+      if (qualities.length === 0) {
+        const directUrl = preferHttps(streamData.url);
+        qualities.push({
+          id: 'AUTO',
+          label: '自动',
+          transports: [
+            { id: 'direct-auto', label: '直连', originalUrl: directUrl, url: directUrl, streamType: 'hls' },
+            {
+              id: 'relay-auto',
+              label: '云端中转',
+              originalUrl: directUrl,
+              url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(directUrl)}&platform=douyin`,
+              streamType: 'hls'
+            }
+          ]
+        });
+      }
+
+      const alternatives = qualities.flatMap((item: any) => item.transports);
+      const primary = qualities[0].transports[0];
 
       return NextResponse.json({
         url: primary.url,
@@ -460,6 +487,7 @@ export async function GET(request: NextRequest) {
         name: streamData.name,
         title: streamData.title,
         streamType: 'hls',
+        qualities,
         alternatives,
         live: true
       });
