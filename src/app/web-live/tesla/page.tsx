@@ -18,12 +18,18 @@ interface WebLiveSource {
   status?: 'live' | 'offline';
 }
 
-interface StreamOption {
+interface StreamTransport {
   id: string;
   label: string;
   url: string;
   originalUrl?: string;
   streamType?: 'hls' | 'flv';
+}
+
+interface StreamQuality {
+  id: string;
+  label: string;
+  transports: StreamTransport[];
 }
 
 function TeslaWebLivePageInner() {
@@ -34,8 +40,9 @@ function TeslaWebLivePageInner() {
 
   const [sources, setSources] = useState<WebLiveSource[]>([]);
   const [currentSource, setCurrentSource] = useState<WebLiveSource | null>(null);
-  const [streamOptions, setStreamOptions] = useState<StreamOption[]>([]);
-  const [activeOptionId, setActiveOptionId] = useState('');
+  const [qualityOptions, setQualityOptions] = useState<StreamQuality[]>([]);
+  const [activeQualityId, setActiveQualityId] = useState('');
+  const [activeTransportId, setActiveTransportId] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [streamInfo, setStreamInfo] = useState<{ name?: string; title?: string } | null>(null);
   const [loadingSources, setLoadingSources] = useState(true);
@@ -43,9 +50,8 @@ function TeslaWebLivePageInner() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [playbackNotice, setPlaybackNotice] = useState('');
   const [streamReloadToken, setStreamReloadToken] = useState(0);
-  const [rightTab, setRightTab] = useState<'rooms' | 'lines'>('rooms');
   const [error, setError] = useState<string | null>(null);
-  const triedLineIdsRef = useRef(new Set<string>());
+  const triedTransportIdsRef = useRef(new Set<string>());
 
   const loadSources = useCallback(() => {
     setLoadingSources(true);
@@ -87,9 +93,10 @@ function TeslaWebLivePageInner() {
     setError(null);
     setPlaybackNotice('正在解析实时直播流…');
     setVideoUrl('');
-    setStreamOptions([]);
-    setActiveOptionId('');
-    triedLineIdsRef.current.clear();
+    setQualityOptions([]);
+    setActiveQualityId('');
+    setActiveTransportId('');
+    triedTransportIdsRef.current.clear();
 
     const params = new URLSearchParams({
       platform: currentSource.platform,
@@ -105,34 +112,54 @@ function TeslaWebLivePageInner() {
         if (!response.ok) throw new Error(data?.error || `直播流解析失败（${response.status}）`);
         if (!data.url) throw new Error('平台没有返回可播放直播流');
 
-        const parsedOptions: StreamOption[] = Array.isArray(data.alternatives)
-          ? data.alternatives.filter((item: any) => item?.url).map((item: any, index: number) => ({
-              id: String(item.id || `line-${index + 1}`),
-              label: String(item.label || `线路 ${index + 1}`),
-              url: String(item.url),
-              originalUrl: item.originalUrl,
-              streamType: item.streamType,
-            }))
+        const parsedQualities: StreamQuality[] = Array.isArray(data.qualities)
+          ? data.qualities.map((quality: any, qualityIndex: number) => ({
+              id: String(quality.id || `quality-${qualityIndex + 1}`),
+              label: String(quality.label || `清晰度 ${qualityIndex + 1}`),
+              transports: Array.isArray(quality.transports)
+                ? quality.transports.filter((item: any) => item?.url).map((item: any, transportIndex: number) => ({
+                    id: String(item.id || `transport-${transportIndex + 1}`),
+                    label: String(item.label || `备用线路 ${transportIndex + 1}`),
+                    url: String(item.url),
+                    originalUrl: item.originalUrl,
+                    streamType: item.streamType,
+                  }))
+                : [],
+            })).filter((quality: StreamQuality) => quality.transports.length > 0)
           : [];
-        if (!parsedOptions.some((item) => item.url === data.url)) {
-          parsedOptions.unshift({
-            id: 'default',
-            label: '默认线路',
-            url: data.url,
-            originalUrl: data.originalUrl,
-            streamType: data.streamType,
-          });
+
+        // Backward compatibility for old resolver responses.
+        if (parsedQualities.length === 0) {
+          const transports: StreamTransport[] = Array.isArray(data.alternatives)
+            ? data.alternatives.filter((item: any) => item?.url).map((item: any, index: number) => ({
+                id: String(item.id || `transport-${index + 1}`),
+                label: String(item.label || `备用线路 ${index + 1}`),
+                url: String(item.url),
+                originalUrl: item.originalUrl,
+                streamType: item.streamType,
+              }))
+            : [];
+          if (!transports.some((item) => item.url === data.url)) {
+            transports.unshift({
+              id: 'default',
+              label: '默认线路',
+              url: String(data.url),
+              originalUrl: data.originalUrl,
+              streamType: data.streamType,
+            });
+          }
+          parsedQualities.push({ id: 'AUTO', label: '自动', transports });
         }
 
-        const firstOption = parsedOptions[0];
-        setStreamOptions(parsedOptions);
-        setActiveOptionId(firstOption.id);
-        setVideoUrl(firstOption.url);
-        triedLineIdsRef.current.add(firstOption.id);
+        const firstQuality = parsedQualities[0];
+        const firstTransport = firstQuality.transports[0];
+        setQualityOptions(parsedQualities);
+        setActiveQualityId(firstQuality.id);
+        setActiveTransportId(firstTransport.id);
+        setVideoUrl(firstTransport.url);
+        triedTransportIdsRef.current.add(firstTransport.id);
         setStreamInfo({ name: data.name, title: data.title });
-        setPlaybackNotice(`已解析 ${parsedOptions.length} 条线路，正在连接…`);
-        setRightTab(parsedOptions.length > 1 ? 'lines' : 'rooms');
-        setLoadingStream(false);
+        setPlaybackNotice(`已加载 ${parsedQualities.length} 档清晰度，线路将自动择优`);        setLoadingStream(false);
       })
       .catch((requestError) => {
         window.clearTimeout(timeoutId);
@@ -156,35 +183,53 @@ function TeslaWebLivePageInner() {
 
   const handleSelectSource = useCallback((source: WebLiveSource) => {
     setCurrentSource(source);
-    setRightTab('lines');
     const params = new URLSearchParams();
     params.set('platform', source.platform);
     params.set('roomId', source.roomId);
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   }, []);
 
-  const handleSelectLine = useCallback((option: StreamOption) => {
-    if (option.id === activeOptionId) return;
-    triedLineIdsRef.current.add(option.id);
-    setActiveOptionId(option.id);
-    setVideoUrl(option.url);
+  const activateQuality = useCallback((quality: StreamQuality, notice?: string) => {
+    const firstTransport = quality.transports[0];
+    if (!firstTransport) return;
+    triedTransportIdsRef.current.clear();
+    triedTransportIdsRef.current.add(firstTransport.id);
+    setActiveQualityId(quality.id);
+    setActiveTransportId(firstTransport.id);
+    setVideoUrl(firstTransport.url);
     setError(null);
-    setPlaybackNotice(`已切换：${option.label}`);
-  }, [activeOptionId]);
+    setPlaybackNotice(notice || `已切换清晰度：${quality.label}`);
+  }, []);
+
+  const handleSelectQuality = useCallback((qualityId: string) => {
+    const quality = qualityOptions.find((item) => item.id === qualityId);
+    if (!quality || quality.id === activeQualityId) return;
+    activateQuality(quality);
+  }, [qualityOptions, activeQualityId, activateQuality]);
 
   const handlePlaybackError = useCallback((message: string) => {
-    const next = streamOptions.find((option) => !triedLineIdsRef.current.has(option.id));
-    if (next) {
-      triedLineIdsRef.current.add(next.id);
-      setActiveOptionId(next.id);
-      setVideoUrl(next.url);
-      setPlaybackNotice(`当前线路异常，已自动切换到 ${next.label}`);
-      setRightTab('lines');
+    const activeQuality = qualityOptions.find((item) => item.id === activeQualityId);
+    const nextTransport = activeQuality?.transports.find(
+      (transport) => !triedTransportIdsRef.current.has(transport.id),
+    );
+    if (nextTransport) {
+      triedTransportIdsRef.current.add(nextTransport.id);
+      setActiveTransportId(nextTransport.id);
+      setVideoUrl(nextTransport.url);
+      setPlaybackNotice('当前链路异常，系统已自动切换备用通道');
       return;
     }
-    setPlaybackNotice(`所有线路均出现异常：${message}。可点击“重新解析”获取新地址。`);
-    setRightTab('lines');
-  }, [streamOptions]);
+
+    const activeIndex = qualityOptions.findIndex((item) => item.id === activeQualityId);
+    if (activeIndex > 0) {
+      const lowerQuality = qualityOptions[activeIndex - 1];
+      activateQuality(lowerQuality, `网络波动，已自动降至 ${lowerQuality.label}`);
+      return;
+    }
+
+    setPlaybackNotice(`当前最低清晰度仍不稳定：${message}。正在重新解析直播地址…`);
+    window.setTimeout(() => setStreamReloadToken((value) => value + 1), 1200);
+  }, [qualityOptions, activeQualityId, activateQuality]);
 
   const filteredSources = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
@@ -211,7 +256,7 @@ function TeslaWebLivePageInner() {
   }, [router, searchParams]);
 
   const fullTitle = useMemoTitle(streamInfo, currentSource);
-  const activeOption = streamOptions.find((option) => option.id === activeOptionId) || null;
+  const activeQuality = qualityOptions.find((option) => option.id === activeQualityId) || null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -230,7 +275,7 @@ function TeslaWebLivePageInner() {
             <div className="truncate text-sm font-semibold sm:text-base">{fullTitle}</div>
             <div className="truncate text-xs text-white/45">
               {currentSource ? `${platformLabel(currentSource.platform)} · ${currentSource.name}` : '网络直播'}
-              {activeOption ? ` · ${activeOption.label}` : ''}
+              {activeQuality ? ` · ${activeQuality.label}` : ''}
             </div>
           </div>
           <button
@@ -280,10 +325,13 @@ function TeslaWebLivePageInner() {
 
             {!loadingSources && !error && videoUrl && (
               <TeslaPlayer
-                key={`${currentSource?.key}-${activeOptionId}-${streamReloadToken}`}
+                key={`${currentSource?.key}-${activeTransportId}-${streamReloadToken}`}
                 url={videoUrl}
                 title={fullTitle}
                 live
+                qualityOptions={qualityOptions.map(({ id, label }) => ({ id, label }))}
+                quality={activeQualityId}
+                onQualityChange={handleSelectQuality}
                 onBackToOriginal={backToOriginal}
                 onPlaybackReady={() => setPlaybackNotice('')}
                 onPlaybackError={handlePlaybackError}
@@ -317,10 +365,10 @@ function TeslaWebLivePageInner() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="font-medium">{streamInfo?.name || currentSource?.name || '未选择直播间'}</div>
-                <div className="mt-1 text-xs text-white/45">{streamInfo?.title || '选择右侧直播间和播放线路'}</div>
+                <div className="mt-1 text-xs text-white/45">{streamInfo?.title || '选择右侧直播间，清晰度在播放器内切换'}</div>
               </div>
               <div className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/60">
-                {streamOptions.length} 条可用线路
+                {qualityOptions.length} 档清晰度 · 系统自动换线
               </div>
             </div>
           </div>
@@ -328,113 +376,67 @@ function TeslaWebLivePageInner() {
 
         <aside className="min-w-0 lg:sticky lg:top-[72px] lg:self-start">
           <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/95 shadow-xl">
-            <div className="grid grid-cols-2 border-b border-white/10">
-              <button
-                type="button"
-                onClick={() => setRightTab('rooms')}
-                className={`min-h-12 text-sm font-medium ${rightTab === 'rooms' ? 'border-b-2 border-rose-500 text-rose-400' : 'text-white/55 hover:bg-white/5'}`}
-              >
-                直播间 ({sources.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightTab('lines')}
-                className={`min-h-12 text-sm font-medium ${rightTab === 'lines' ? 'border-b-2 border-emerald-500 text-emerald-400' : 'text-white/55 hover:bg-white/5'}`}
-              >
-                播放线路 ({streamOptions.length})
-              </button>
+            <div className="flex min-h-12 items-center justify-between border-b border-white/10 px-4">
+              <div>
+                <div className="text-sm font-medium">直播间 ({sources.length})</div>
+                <div className="mt-0.5 text-[11px] text-white/40">清晰度在播放器内选择，线路由系统自动切换</div>
+              </div>
+              <Radio className="h-4 w-4 text-rose-400" />
             </div>
 
-            {rightTab === 'rooms' && (
-              <div>
-                <div className="border-b border-white/10 p-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
-                    <input
-                      type="text"
-                      value={searchKeyword}
-                      onChange={(event) => setSearchKeyword(event.target.value)}
-                      placeholder="搜索平台、主播或标题"
-                      className="h-11 w-full rounded-lg bg-white/10 pl-9 pr-3 text-sm outline-none placeholder:text-white/35 focus:ring-1 focus:ring-rose-500"
-                    />
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={loadSources}
-                      className="min-h-10 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
-                    >
-                      刷新列表
-                    </button>
-                    <button
-                      type="button"
-                      onClick={restoreInitialSource}
-                      className="flex min-h-10 items-center justify-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      恢复进入项
-                    </button>
-                  </div>
-                </div>
-                <div className="max-h-[58vh] space-y-2 overflow-y-auto p-2">
-                  {filteredSources.length === 0 ? (
-                    <div className="py-8 text-center text-sm text-white/40">暂无其他直播间</div>
-                  ) : filteredSources.map((source) => {
-                    const active = currentSource?.key === source.key;
-                    return (
-                      <button
-                        key={source.key}
-                        type="button"
-                        onClick={() => handleSelectSource(source)}
-                        className={`flex min-h-14 w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-rose-600 text-white' : 'bg-white/5 text-white/75 hover:bg-white/10'}`}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{source.name}</span>
-                          <span className={`mt-0.5 block text-xs ${active ? 'text-white/75' : 'text-white/40'}`}>
-                            {platformLabel(source.platform)}{source.status === 'live' ? ' · 直播中' : source.status === 'offline' ? ' · 状态待刷新' : ''}
-                          </span>
-                        </span>
-                        {active && <span className="ml-2 text-xs">当前</span>}
-                      </button>
-                    );
-                  })}
-                </div>
+            <div className="border-b border-white/10 p-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(event) => setSearchKeyword(event.target.value)}
+                  placeholder="搜索平台、主播或标题"
+                  className="h-11 w-full rounded-lg bg-white/10 pl-9 pr-3 text-sm outline-none placeholder:text-white/35 focus:ring-1 focus:ring-rose-500"
+                />
               </div>
-            )}
-
-            {rightTab === 'lines' && (
-              <div className="max-h-[68vh] space-y-2 overflow-y-auto p-3">
-                {streamOptions.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-white/40">选择直播间后显示播放线路</div>
-                ) : streamOptions.map((option) => {
-                  const active = option.id === activeOptionId;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => handleSelectLine(option)}
-                      className={`flex min-h-14 w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/75 hover:bg-white/10'}`}
-                    >
-                      <span>
-                        <span className="block text-sm font-medium">{option.label}</span>
-                        <span className={`mt-0.5 block text-xs ${active ? 'text-white/75' : 'text-white/40'}`}>
-                          {(option.streamType || 'hls').toUpperCase()} · 点击立即换线
-                        </span>
-                      </span>
-                      {active && <span className="text-xs">当前</span>}
-                    </button>
-                  );
-                })}
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setStreamReloadToken((value) => value + 1)}
-                  className="mt-2 flex min-h-12 w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 text-sm text-white/65 hover:bg-white/10"
+                  onClick={loadSources}
+                  className="min-h-10 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
                 >
-                  <RefreshCw className="h-4 w-4" />
-                  重新解析全部线路
+                  刷新列表
+                </button>
+                <button
+                  type="button"
+                  onClick={restoreInitialSource}
+                  className="flex min-h-10 items-center justify-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  恢复进入项
                 </button>
               </div>
-            )}
+            </div>
+
+            <div className="max-h-[62vh] space-y-2 overflow-y-auto p-2">
+              {filteredSources.length === 0 ? (
+                <div className="py-8 text-center text-sm text-white/40">暂无其他直播间</div>
+              ) : filteredSources.map((source) => {
+                const active = currentSource?.key === source.key;
+                return (
+                  <button
+                    key={source.key}
+                    type="button"
+                    onClick={() => handleSelectSource(source)}
+                    className={`flex min-h-14 w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-rose-600 text-white' : 'bg-white/5 text-white/75 hover:bg-white/10'}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{source.name}</span>
+                      <span className={`mt-0.5 block text-xs ${active ? 'text-white/75' : 'text-white/40'}`}>
+                        {platformLabel(source.platform)}{source.status === 'live' ? ' · 直播中' : source.status === 'offline' ? ' · 状态待刷新' : ''}
+                      </span>
+                    </span>
+                    {active && <span className="ml-2 text-xs">当前</span>}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </aside>
       </main>
