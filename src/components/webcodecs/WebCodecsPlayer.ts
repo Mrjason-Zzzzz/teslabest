@@ -929,6 +929,7 @@ export class WebCodecsPlayer {
     this.wantPlaying = false;
     if (this.audioCtx) this.audioCtx.suspend().catch(() => {});
     if (this.audioEl) this.audioEl.pause();
+    if (this.useNativePitchPreservingAudio) this.hlsVideoEl?.pause();
     if (this.state !== 'ended' && this.state !== 'error') this.setState('paused');
   }
 
