@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import Hls from 'hls.js';
 
 const AD_KEYWORDS = [
