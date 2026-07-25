@@ -90,6 +90,9 @@ export class WebCodecsPlayer {
   private nextAudioStartTime = 0;
   private volume = 1;
   private playbackRate = 1;
+  // At non-1x use the browser media path for audio when it exposes a
+  // pitch-preservation flag. Canvas/WebCodecs still renders the video.
+  private useNativePitchPreservingAudio = false;
 
   private debugStats = {
     hlsState: 'init',
@@ -133,6 +136,8 @@ export class WebCodecsPlayer {
     this.teardownAudioGraph();
     this.destroyed = false;
     this.sourceUrl = url;
+    this.useNativePitchPreservingAudio =
+      this.playbackRate !== 1 && this.canUseNativePitchPreservingAudio();
     this.segments = [];
     this.currentSegIndex = 0;
     this.isLivePlaylist = false;
@@ -248,17 +253,9 @@ export class WebCodecsPlayer {
         this.hlsNetworkRecoveryTimer = null;
       }
 
-      // FRAG_LOADED is encrypted bytes for AES-128 streams. Feeding those
-      // into the TS detector incorrectly forces a native-video fallback.
-      // Wait for FRAG_DECRYPTED, whose payload is the clear segment.
-      if (data.frag?.encrypted) return;
-      feedCompatibleFragment(data);
-    });
-
-    hls.on(Hls.Events.FRAG_DECRYPTED, (_evt: any, data: any) => {
-      // hls.js exposes the decrypted payload here. TS/H.264/AAC sources can
-      // now stay in the Canvas/WebCodecs path; fMP4 and other containers still
-      // fail the same explicit compatibility check and safely fall back.
+      // Keep the established container check on downloaded fragments. Sources
+      // that are not directly compatible must fall back promptly instead of
+      // waiting in the experimental decrypted-fragment path.
       feedCompatibleFragment(data);
     });
 
@@ -298,8 +295,8 @@ export class WebCodecsPlayer {
     hls.loadSource(url);
     const videoEl = document.createElement('video');
     videoEl.style.display = 'none';
-    videoEl.muted = true;
     videoEl.playsInline = true;
+    this.configureNativePitchAudio(videoEl);
     document.body.appendChild(videoEl);
     this.hlsVideoEl = videoEl;
     hls.attachMedia(videoEl);
@@ -726,6 +723,7 @@ export class WebCodecsPlayer {
     this.audioCtx.resume()
       .then(() => {
         if (this.audioCtx?.state === 'running' && this.state !== 'ended') {
+          this.startNativePitchAudio();
           this.bufferingStartedAtMs = 0;
           this.lastRenderedAtMs = performance.now();
           this.lastAudioScheduledAtMs = performance.now();
@@ -762,6 +760,44 @@ export class WebCodecsPlayer {
     this.canvasSized = true;
   }
 
+  private canUseNativePitchPreservingAudio(): boolean {
+    if (typeof HTMLMediaElement === 'undefined') return false;
+    const proto: any = HTMLMediaElement.prototype;
+    return 'preservesPitch' in proto || 'webkitPreservesPitch' in proto || 'mozPreservesPitch' in proto;
+  }
+
+  private configureNativePitchAudio(video: HTMLVideoElement) {
+    video.volume = this.volume;
+    video.muted = !this.useNativePitchPreservingAudio;
+    if (!this.useNativePitchPreservingAudio) return;
+
+    const media: any = video;
+    media.preservesPitch = true;
+    media.webkitPreservesPitch = true;
+    media.mozPreservesPitch = true;
+    video.defaultPlaybackRate = this.playbackRate;
+    video.playbackRate = this.playbackRate;
+  }
+
+  private startNativePitchAudio() {
+    if (!this.useNativePitchPreservingAudio || !this.hlsVideoEl) return;
+    const video = this.hlsVideoEl;
+    this.configureNativePitchAudio(video);
+
+    const target = Math.max(0, this.baseMediaTime);
+    try {
+      if (Math.abs(video.currentTime - target) > 0.4) video.currentTime = target;
+    } catch {}
+
+    video.play().catch((e) => {
+      // If a browser refuses this hidden-media path, retain audible playback
+      // through the proven WebAudio scheduler rather than leaving the user silent.
+      console.warn('[WebCodecsPlayer] native pitch audio unavailable:', e);
+      this.useNativePitchPreservingAudio = false;
+      video.muted = true;
+    });
+  }
+
   private getMediaTime(): number {
     if (this.ctxStartTime === null || !this.audioCtx) return this.baseMediaTime;
     return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
@@ -774,6 +810,7 @@ export class WebCodecsPlayer {
    * small timestamp discontinuity cannot silence the whole player.
    */
   private scheduleAudio() {
+    if (this.useNativePitchPreservingAudio) return;
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
     const maxLeadSec = this.playbackRate === 1 ? 2 : 0.7;
@@ -903,14 +940,17 @@ export class WebCodecsPlayer {
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
     if (this.gain) this.gain.gain.value = this.volume;
+    if (this.hlsVideoEl) this.hlsVideoEl.volume = this.volume;
   }
 
   setMuted(muted: boolean) {
     if (this.gain) this.gain.gain.value = muted ? 0 : this.volume;
+    if (this.hlsVideoEl) this.hlsVideoEl.muted = muted || !this.useNativePitchPreservingAudio;
   }
 
   unmute() {
     if (this.gain) this.gain.gain.value = this.volume;
+    if (this.hlsVideoEl && this.useNativePitchPreservingAudio) this.hlsVideoEl.muted = false;
   }
 
   isAudioActive(): boolean {
@@ -923,6 +963,7 @@ export class WebCodecsPlayer {
     if (!this.audioCtx) return true;
     try {
       await this.audioCtx.resume();
+      this.startNativePitchAudio();
       if (this.ctxStartTime !== null && this.state !== 'ended') this.setState('playing');
     } catch (e) {
       console.warn('[WebCodecsPlayer] audio activation failed:', e);
