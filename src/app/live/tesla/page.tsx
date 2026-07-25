@@ -78,13 +78,14 @@ function TeslaLivePageInner() {
   const [activeGroup, setActiveGroup] = useState('全部');
   const [panel, setPanel] = useState<'sources' | 'channels'>('channels');
   const [playbackNotice, setPlaybackNotice] = useState('');
+  const [playbackIssue, setPlaybackIssue] = useState(false);
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const channelCacheRef = useRef(new Map<string, LiveChannel[]>());
   const preferredChannelRef = useRef<{ id?: string; tvgId?: string; name?: string }>({
     id: initialChannelId || undefined,
   });
-  const failedSourcesRef = useRef(new Set<string>());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -195,13 +196,13 @@ function TeslaLivePageInner() {
 
   const selectChannel = useCallback((channel: LiveChannel) => {
     if (!currentSource) return;
-    failedSourcesRef.current.clear();
     preferredChannelRef.current = {
       id: channel.id,
       tvgId: channel.tvgId,
       name: channel.name,
     };
     setCurrentChannel(channel);
+    setPlaybackIssue(false);
     setPlaybackNotice('');
     syncUrl(currentSource, channel);
   }, [currentSource, syncUrl]);
@@ -210,49 +211,26 @@ function TeslaLivePageInner() {
     preferredChannelRef.current = currentChannel
       ? { tvgId: currentChannel.tvgId, name: currentChannel.name }
       : preferredChannelRef.current;
-    failedSourcesRef.current.clear();
+    setPlaybackIssue(false);
     setPlaybackNotice(`正在从 ${source.name} 查找同名频道…`);
     setCurrentChannel(null);
     setCurrentSource(source);
     setPanel('channels');
   }, [currentChannel]);
 
-  const tryNextSource = useCallback((message: string) => {
-    if (!currentSource || !sources.length) return;
-    failedSourcesRef.current.add(currentSource.key);
-    preferredChannelRef.current = currentChannel
-      ? { tvgId: currentChannel.tvgId, name: currentChannel.name }
-      : preferredChannelRef.current;
+  const handlePlaybackError = useCallback((message: string) => {
+    setPlaybackIssue(true);
+    setPlaybackNotice(`当前源暂时无法播放：${message}。请重试当前源，或手动选择其他直播源。`);
+  }, []);
 
-    const currentIndex = Math.max(0, sources.findIndex((source) => source.key === currentSource.key));
-    const next = sources
-      .map((_, offset) => sources[(currentIndex + offset + 1) % sources.length])
-      .find((source) => !failedSourcesRef.current.has(source.key));
-
-    if (!next) {
-      setPlaybackNotice(`所有直播源均未产生有效画面：${message}。请手动选择源或频道。`);
-      setPanel('sources');
-      return;
-    }
-
-    setPlaybackNotice(`当前线路无有效画面，正在自动尝试 ${next.name}…`);
-    setCurrentChannel(null);
-    setCurrentSource(next);
-  }, [currentSource, currentChannel, sources]);
-
-  useEffect(() => {
-    if (
-      !currentSource ||
-      loadingChannels ||
-      currentChannel ||
-      !channels.length ||
-      !preferredChannelRef.current.name
-    ) return;
-    tryNextSource(`${currentSource.name} 没有同名频道`);
-  }, [currentSource, currentChannel, channels, loadingChannels, tryNextSource]);
+  const retryCurrentPlayback = useCallback(() => {
+    if (!currentSource || !currentChannel) return;
+    setPlaybackIssue(false);
+    setPlaybackNotice('正在重试当前源…');
+    setPlaybackAttempt((attempt) => attempt + 1);
+  }, [currentSource, currentChannel]);
 
   const restoreInitialChannel = useCallback(() => {
-    failedSourcesRef.current.clear();
     preferredChannelRef.current = { id: initialChannelId || undefined };
     const source = sources.find((item) => item.key === initialSourceKey) || sources[0];
     if (!source) return;
@@ -308,18 +286,18 @@ function TeslaLivePageInner() {
           )}
           {!loadingSources && currentChannel && playUrl && (
             <TeslaPlayer
-              key={`${currentSource?.key}-${currentChannel.id}`}
+              key={`${currentSource?.key}-${currentChannel.id}-${playbackAttempt}`}
               url={playUrl}
               title={`${currentSource?.name || ''} · ${currentChannel.name}`}
               poster={currentChannel.logo}
               live
               onBackToOriginal={backToOriginal}
               onPlaybackReady={() => {
-                failedSourcesRef.current.clear();
+                setPlaybackIssue(false);
                 setPlaybackNotice('');
                 if (currentSource && currentChannel) syncUrl(currentSource, currentChannel);
               }}
-              onPlaybackError={tryNextSource}
+              onPlaybackError={handlePlaybackError}
             />
           )}
           {!loadingSources && !currentChannel && (
@@ -329,9 +307,27 @@ function TeslaLivePageInner() {
             </div>
           )}
           {playbackNotice && (
-            <div className="pointer-events-none absolute inset-x-0 top-4 z-30 flex justify-center px-4">
-              <div className="max-w-[92%] rounded-full bg-black/85 px-4 py-2 text-center text-xs shadow-xl backdrop-blur">
-                {playbackNotice}
+            <div className="absolute inset-x-0 top-4 z-30 flex justify-center px-4">
+              <div className="max-w-[92%] rounded-2xl bg-black/85 px-4 py-3 text-center text-xs shadow-xl backdrop-blur">
+                <p>{playbackNotice}</p>
+                {playbackIssue && (
+                  <div className="mt-3 flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={retryCurrentPlayback}
+                      className="min-h-11 rounded-xl bg-emerald-500 px-4 font-medium text-black active:scale-95"
+                    >
+                      重试当前源
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPanel('sources')}
+                      className="min-h-11 rounded-xl bg-white/12 px-4 text-white active:scale-95"
+                    >
+                      手动换源
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -373,7 +369,7 @@ function TeslaLivePageInner() {
           {panel === 'sources' ? (
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <p className="mb-3 text-xs leading-5 text-white/45">
-                车机不再使用系统下拉框。点击任意大按钮即可换源，播放失败会自动尝试下一源。
+                车机不再使用系统下拉框。点击任意大按钮即可手动换源；播放失败时不会自动跳转，方便你判断当前源与网络情况。
               </p>
               <div className="grid grid-cols-2 gap-2">
                 {sources.map((source) => (
