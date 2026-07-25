@@ -899,11 +899,8 @@ export class WebCodecsPlayer {
     }
   }
 
-  /**
-   * Use a long, 50%-overlapped window rather than a per-AAC-frame envelope.
-   * Every source node remains at 1x pitch; playback speed comes only from the
-   * distance between windows. This avoids the scratchy edge modulation heard
-   * with sho  private scheduleAudioBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0) {
+  /** Schedule one fully rendered PCM buffer with no per-grain node overlap. */
+  private scheduleAudioBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0) {
     if (!this.audioCtx || !this.gain) return;
     const src = this.audioCtx.createBufferSource();
     src.buffer = buffer;
