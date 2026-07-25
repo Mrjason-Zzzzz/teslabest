@@ -653,7 +653,9 @@ export default function TeslaPlayer({
           enableWorker: true,
           // The native fallback reads the same filtered playlist as the
           // WebCodecs path, so either player keeps an identical timeline.
-          pLoader: createAdFilteringPlaylistLoader(),
+          // hls.js exposes this constructor type internally; the loader keeps
+          // the same runtime contract and is intentionally adapted here.
+          pLoader: createAdFilteringPlaylistLoader() as any,
           // Public platform streams are watched over a moving cellular link.
           // Stability matters more than shaving a few seconds of live latency.
           lowLatencyMode: false,
