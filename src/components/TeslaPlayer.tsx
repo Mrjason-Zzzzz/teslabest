@@ -953,43 +953,7 @@ export default function TeslaPlayer({
                 <RefreshCw className="h-4 w-4" />
                 重新连接
               </button>
-              {live && qualityOptions.length > 1 && onQualityChange && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowRateMenu(false);
-                    setShowQualityMenu((visible) => !visible);
-                  }}
-                  className="min-h-11 min-w-16 rounded-lg px-3 py-2 text-xs font-medium text-white/90 hover:bg-white/10"
-                  aria-label="切换直播清晰度"
-                >
-                  {qualityOptions.find((item) => item.id === quality)?.label || '自动'}
-                </button>
-                {showQualityMenu && (
-                  <div className="absolute bottom-full right-0 z-30 mb-2 min-w-[132px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur">
-                    <div className="px-3 py-1.5 text-[11px] text-white/40">直播清晰度</div>
-                    {qualityOptions.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowQualityMenu(false);
-                          onQualityChange(item.id);
-                        }}
-                        className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${quality === item.id ? 'bg-emerald-500 text-white' : 'text-gray-200 hover:bg-white/10'}`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {onBackToOriginal && (
+              {onBackToOriginal && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onBackToOriginal(); }}
@@ -1161,6 +1125,42 @@ export default function TeslaPlayer({
           </div>
 
           <div className="flex items-center gap-0.5 md:gap-1">
+            {live && qualityOptions.length > 1 && onQualityChange && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowRateMenu(false);
+                    setShowQualityMenu((visible) => !visible);
+                  }}
+                  className="min-h-11 min-w-16 rounded-lg px-3 py-2 text-xs font-medium text-white/90 hover:bg-white/10"
+                  aria-label="切换直播清晰度"
+                >
+                  {qualityOptions.find((item) => item.id === quality)?.label || '自动'}
+                </button>
+                {showQualityMenu && (
+                  <div className="absolute bottom-full right-0 z-30 mb-2 min-w-[132px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur">
+                    <div className="px-3 py-1.5 text-[11px] text-white/40">直播清晰度</div>
+                    {qualityOptions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowQualityMenu(false);
+                          onQualityChange(item.id);
+                        }}
+                        className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${quality === item.id ? 'bg-emerald-500 text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {onBackToOriginal && (
               <button
                 type="button"
