@@ -334,9 +334,10 @@ export default function TeslaPlayer({
 
   const setPlaybackRate = useCallback((r: number) => {
     if (mode === 'webcodecs') {
-      // Web Audio playbackRate also changes pitch. Keep the vehicle-compatible
-      // Canvas engine at 1x until a real time-stretch processor is validated.
-      setRate(1);
+      // WebCodecs replays from the current media position with overlap-add
+      // time stretching, so speed changes keep pitch and A/V in one timeline.
+      wcPlayerRef.current?.setPlaybackRate(r);
+      setRate(r);
       setShowRateMenu(false);
       return;
     }
@@ -1095,9 +1096,9 @@ export default function TeslaPlayer({
               {live ? '直播中' : `${formatTime(currentTime)} / ${formatTime(duration)}`}
             </div>
 
-            {/* Native media preserves pitch. Canvas/WebCodecs stays at 1x
-                until a vehicle-safe time-stretch processor is validated. */}
-            {!live && mode === 'video' && (
+            {/* Both engines expose the same 0.75x–2x menu. WebCodecs uses
+                pitch-preserving overlap-add rather than playbackRate. */}
+            {!live && (
               <div className="relative ml-1">
                 <button
                   type="button"
