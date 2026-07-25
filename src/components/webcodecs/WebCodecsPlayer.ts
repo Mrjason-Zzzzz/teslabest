@@ -813,7 +813,7 @@ export class WebCodecsPlayer {
         buffer = this.audioCtx.createBuffer(channels, head.numberOfFrames, sampleRate);
         for (let channel = 0; channel < channels; channel++) {
           const dest = new Float32Array(head.numberOfFrames);
-          head.copyTo(dest, { planeIndex: 'f32-planar' });
+          head.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
           buffer.copyToChannel(dest, channel);
         }
       } finally {
