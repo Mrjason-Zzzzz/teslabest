@@ -2,6 +2,8 @@
 import Hls from 'hls.js';
 import * as muxjs from 'mux.js';
 
+import { getTeslaAudioContext } from '@/lib/tesla/audio-session';
+
 export type PlayerState = 'idle' | 'buffering' | 'playing' | 'paused' | 'ended' | 'error';
 
 export interface PlayerCallbacks {
@@ -469,15 +471,15 @@ export class WebCodecsPlayer {
   }
 
   private setupAudioGraph() {
-    const Ctor = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!Ctor) return;
+    const ctx = getTeslaAudioContext();
+    if (!ctx) return;
 
-    const ctx = new Ctor({ latencyHint: 'playback' });
+    // Reuse one document-level AudioContext across source/episode/quality
+    // changes. Recreating the context on every player mount loses the browser's
+    // previous user-gesture unlock and is the main cause of silent source swaps.
     this.audioCtx = ctx;
     this.gain = ctx.createGain();
     this.gain.gain.value = this.volume;
-    // Direct Web Audio output avoids the extra MediaStream -> hidden <audio>
-    // resampling hop that caused static noise and added sync latency.
     this.gain.connect(ctx.destination);
     this.mediaDest = null;
     this.audioEl = null;
@@ -901,14 +903,11 @@ export class WebCodecsPlayer {
     return this.audioCtx.state === 'running';
   }
 
-  setPlaybackRate(rate: number) {
-    const nextRate = Math.max(0.75, Math.min(2, rate));
-    if (Math.abs(nextRate - this.playbackRate) < 0.001) return;
-    const restartAt = this.getMediaTime();
-    this.playbackRate = nextRate;
-    // Rebuild from a keyframe so the Web Audio clock, scheduled buffers and
-    // Canvas video all restart on the same scaled timeline.
-    void this.seek(restartAt);
+  setPlaybackRate(_rate: number) {
+    // AudioBufferSourceNode.playbackRate changes pitch together with speed.
+    // Keep the Canvas/WebCodecs engine at 1x until a real time-stretch
+    // AudioWorklet is validated on the vehicle CPU.
+    this.playbackRate = 1;
   }
 
   async seek(seconds: number) {
@@ -988,14 +987,14 @@ export class WebCodecsPlayer {
     }
 
     if (this.gain) {
-      try { this.gain.gain.value = 0; } catch {}
+      try {
+        this.gain.gain.value = 0;
+        this.gain.disconnect();
+      } catch {}
     }
-    const oldAudioCtx = this.audioCtx;
+    // The AudioContext is owned by the page-level audio session. Keep it alive
+    // so a source switch does not discard the user's sound unlock.
     this.audioCtx = null;
-    if (oldAudioCtx && oldAudioCtx.state !== 'closed') {
-      oldAudioCtx.close().catch(() => {});
-    }
-
     this.gain = null;
     this.mediaDest = null;
     this.nextAudioStartTime = 0;
