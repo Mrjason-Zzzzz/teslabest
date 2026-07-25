@@ -167,7 +167,7 @@ export class WebCodecsPlayer {
     }
 
     const hls = new Hls({
-      enableWorker: false,
+      enableWorker: true,
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
