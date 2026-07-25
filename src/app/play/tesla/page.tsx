@@ -110,10 +110,13 @@ function TeslaPlayPageInner() {
   const currentSource = currentDetail?.source || '';
   const currentId = currentDetail?.id || '';
 
-  const searchSources = useCallback(async (query: string): Promise<SearchResult[]> => {
+  const searchSources = useCallback(async (
+    query: string,
+    background = false,
+  ): Promise<SearchResult[]> => {
     if (!query) return [];
     const seq = ++searchSeqRef.current;
-    setLoadingStage('searching');
+    if (!background) setLoadingStage('searching');
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query.trim())}`);
       if (!res.ok) throw new Error('搜索失败');
@@ -144,47 +147,81 @@ function TeslaPlayPageInner() {
 
   useEffect(() => {
     let cancelled = false;
+
+    const filterSearchResults = (allResults: SearchResult[], active?: SearchResult) => {
+      const stypeParam = stype || (year ? 'tv' : undefined);
+      let filtered = filterSourcesForCurrentVideo(allResults, initialTitle, year, stypeParam);
+
+      if (filtered.length === 0) {
+        const normalizedCurrent = normalizeTitle(initialTitle);
+        filtered = allResults.filter((item) => normalizeTitle(item.title) === normalizedCurrent);
+      }
+
+      if (filtered.length === 0 && source && id) {
+        const current = allResults.find((item) => item.source === source && item.id === id);
+        if (current) filtered = [current];
+      }
+
+      if (filtered.length === 0) filtered = allResults;
+      if (
+        active &&
+        !filtered.some((item) => item.source === active.source && item.id === active.id)
+      ) {
+        filtered = [active, ...filtered];
+      }
+      return filtered;
+    };
+
+    const loadCandidatesInBackground = (active: SearchResult) => {
+      searchSources(initialTitle, true)
+        .then((results) => {
+          if (cancelled || results.length === 0) return;
+          setAllSources(filterSearchResults(results, active));
+        })
+        .catch((error) => {
+          console.warn('[TeslaPlay] background source search failed:', error);
+        });
+    };
+
     const init = async () => {
       setErrorMsg(null);
       try {
         if (!initialTitle) throw new Error('缺少必要参数：title');
 
+        // Fast path: the search result already supplied an exact source and id.
+        // Start fetching its detail immediately; candidate discovery must never
+        // let the slowest downstream source block first playback.
+        if (source && id) {
+          try {
+            setLoadingStage('fetching');
+            const directDetail = await fetchDetail(source, id, initialTitle);
+            if (cancelled) return;
+            setCurrentDetail(directDetail);
+            setAllSources([directDetail]);
+            const directEpisode =
+              initialEpisode < (directDetail.episodes?.length || 0) ? initialEpisode : 0;
+            setCurrentEpisodeIndex(directEpisode);
+            setLoadingStage('ready');
+            loadCandidatesInBackground(directDetail);
+            return;
+          } catch (directError) {
+            console.warn('[TeslaPlay] direct detail failed, falling back to source search:', directError);
+          }
+        }
+
         const allResults = await searchSources(initialTitle);
         if (allResults.length === 0) throw new Error('未找到匹配的播放源');
-
-        const stypeParam = stype || (year ? 'tv' : undefined);
-        let filtered = filterSourcesForCurrentVideo(allResults, initialTitle, year, stypeParam);
-
-        if (filtered.length === 0) {
-          const normalizedCurrent = normalizeTitle(initialTitle);
-          filtered = allResults.filter((s) => normalizeTitle(s.title) === normalizedCurrent);
-        }
-
-        if (filtered.length === 0 && source && id) {
-          const current = allResults.find((s) => s.source === source && s.id === id);
-          if (current) filtered = [current];
-        }
-
-        if (filtered.length === 0) {
-          console.warn('[TeslaPlay] 未找到匹配的源，使用所有搜索结果');
-          filtered = allResults;
-        }
-
+        const filtered = filterSearchResults(allResults);
         setAllSources(filtered);
 
         const requestedSource = source && id
           ? filtered.find((item) => item.source === source && item.id === id) || null
           : null;
 
-        if (filtered.length > 1) {
-          setLoadingStage('preferring');
-        }
+        if (filtered.length > 1) setLoadingStage('preferring');
         const preferredSource = preferBestSource(filtered);
         let selected: SearchResult | null = preferredSource || requestedSource;
 
-        // Keep the requested source when scores are close. Auto-select only
-        // when the recommended candidate is meaningfully healthier, and keep
-        // the original item available through “恢复原资源”.
         if (requestedSource && preferredSource) {
           const requestedScore = getTeslaSourceScore(requestedSource);
           const preferredScore = getTeslaSourceScore(preferredSource);
@@ -195,7 +232,6 @@ function TeslaPlayPageInner() {
         }
 
         if (!selected) throw new Error('未找到可用的播放源');
-
         setLoadingStage('fetching');
         const detail = await fetchDetail(selected.source, selected.id, initialTitle);
 
@@ -211,6 +247,7 @@ function TeslaPlayPageInner() {
         setLoadingStage('error');
       }
     };
+
     init();
     return () => { cancelled = true; };
   }, [source, id, initialTitle, initialEpisode, year, stype, fetchDetail, searchSources, preferBestSource]);
