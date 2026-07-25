@@ -753,15 +753,20 @@ export class WebCodecsPlayer {
   private scheduleAudio() {
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > 2) return;
+    // Granular time stretching creates more short source nodes than 1x playback.
+    // Keep its scheduled horizon short so the vehicle CPU stays responsive and
+    // a rate change can re-anchor without a long stale-audio tail.
+    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.65;
+    if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > maxLeadSec) return;
 
     let scheduled = 0;
-    while (this.decodedAudio.length && scheduled < 10) {
+    const maxChunks = this.playbackRate === 1 ? 10 : 6;
+    while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
-      const rate = head.sampleRate;
+      const sampleRate = head.sampleRate;
       const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
-      const headDuration = head.numberOfFrames / rate;
+      const headDuration = head.numberOfFrames / sampleRate;
       const mediaNow = this.getMediaTime();
 
       // Drop audio that is already too old for the current master clock.
@@ -785,12 +790,12 @@ export class WebCodecsPlayer {
           : Math.max(this.nextAudioStartTime, now + 0.03);
       }
 
-      if (when > now + 2.5) break;
+      if (when > now + maxLeadSec + 0.12) break;
 
       const frames = head.numberOfFrames;
       let buffer: AudioBuffer;
       try {
-        buffer = this.audioCtx.createBuffer(channels, frames, rate);
+        buffer = this.audioCtx.createBuffer(channels, frames, sampleRate);
         for (let ch = 0; ch < channels; ch++) {
           const dest = new Float32Array(frames);
           head.copyTo(dest, { planeIndex: ch, format: 'f32-planar' });
@@ -801,19 +806,61 @@ export class WebCodecsPlayer {
         this.decodedAudio.shift();
       }
 
-      const src = this.audioCtx.createBufferSource();
-      src.buffer = buffer;
-      src.playbackRate.value = this.playbackRate;
-      src.connect(this.gain);
-      src.start(when, startOffsetSec);
+      this.schedulePitchPreservedBuffer(buffer, when, startOffsetSec);
       this.lastAudioScheduledAtMs = performance.now();
-      this.activeSources.add(src);
-      src.onended = () => this.activeSources.delete(src);
-      this.nextAudioStartTime = when + Math.max(0, frames / rate - startOffsetSec) / this.playbackRate;
+      this.nextAudioStartTime = when + Math.max(0, headDuration - startOffsetSec) / this.playbackRate;
       scheduled++;
     }
   }
 
+  /**
+   * Web Audio's playbackRate changes pitch. This overlap-add path keeps every
+   * grain at 1x pitch and changes only the distance between grains. It is
+   * intentionally bounded to 0.75x–2x and a short lead window for Tesla CPU.
+   */
+  private schedulePitchPreservedBuffer(buffer: AudioBuffer, when: number, startOffsetSec: number) {
+    if (!this.audioCtx || !this.gain) return;
+
+    if (this.playbackRate === 1) {
+      const src = this.audioCtx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(this.gain);
+      src.start(when, startOffsetSec);
+      this.activeSources.add(src);
+      src.onended = () => this.activeSources.delete(src);
+      return;
+    }
+
+    const grainDuration = Math.min(0.04, Math.max(0.012, buffer.duration - startOffsetSec));
+    const outputHop = Math.min(0.02, grainDuration / 2);
+    const inputHop = outputHop * this.playbackRate;
+    const fade = Math.min(0.008, grainDuration / 3);
+    let inputOffset = startOffsetSec;
+    let outputOffset = 0;
+
+    while (inputOffset < buffer.duration - 0.003) {
+      const duration = Math.min(grainDuration, buffer.duration - inputOffset);
+      const grainWhen = when + outputOffset;
+      const src = this.audioCtx.createBufferSource();
+      const envelope = this.audioCtx.createGain();
+      src.buffer = buffer;
+      envelope.gain.setValueAtTime(0, grainWhen);
+      envelope.gain.linearRampToValueAtTime(1, grainWhen + Math.min(fade, duration / 2));
+      envelope.gain.setValueAtTime(1, Math.max(grainWhen + Math.min(fade, duration / 2), grainWhen + duration - fade));
+      envelope.gain.linearRampToValueAtTime(0, grainWhen + duration);
+      src.connect(envelope);
+      envelope.connect(this.gain);
+      src.start(grainWhen, inputOffset, duration);
+      this.activeSources.add(src);
+      src.onended = () => {
+        this.activeSources.delete(src);
+        try { envelope.disconnect(); } catch {}
+      };
+
+      inputOffset += inputHop;
+      outputOffset += outputHop;
+    }
+  }
   private presentVideo(clock: number) {
     let toDraw: VideoFrame | null = null;
     while (this.frameQueue.length && this.frameQueue[0].timestamp / 1e6 <= clock) {
@@ -903,11 +950,24 @@ export class WebCodecsPlayer {
     return this.audioCtx.state === 'running';
   }
 
-  setPlaybackRate(_rate: number) {
-    // AudioBufferSourceNode.playbackRate changes pitch together with speed.
-    // Keep the Canvas/WebCodecs engine at 1x until a real time-stretch
-    // AudioWorklet is validated on the vehicle CPU.
-    this.playbackRate = 1;
+  setPlaybackRate(rate: number) {
+    const nextRate = Math.max(0.75, Math.min(2, Number.isFinite(rate) ? rate : 1));
+    if (Math.abs(nextRate - this.playbackRate) < 0.001) return;
+
+    // A full reload from the current media time clears already scheduled
+    // 1x/old-rate grains. That makes video, media clock and new audio timeline
+    // start from the same keyframe instead of drifting after a rate change.
+    const restartAt = Math.max(0, this.getMediaTime());
+    this.playbackRate = nextRate;
+    this.nextAudioStartTime = 0;
+    for (const source of this.activeSources) {
+      try { source.stop(); } catch {}
+    }
+    this.activeSources.clear();
+
+    if (!this.sourceUrl) return;
+    this.wantPlaying = true;
+    void this.load(this.sourceUrl, restartAt);
   }
 
   async seek(seconds: number) {
