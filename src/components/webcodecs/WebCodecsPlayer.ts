@@ -221,6 +221,24 @@ export class WebCodecsPlayer {
       }
     });
 
+    const feedCompatibleFragment = (data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
+      const frag = data.frag;
+      const payload = data.payload || frag?.data;
+      if (!payload || !payload.byteLength) return;
+
+      const bytes = new Uint8Array(payload);
+      if (!this.checkedTsContainer) {
+        this.checkedTsContainer = true;
+        if (!this.isTransportStreamPayload(bytes)) {
+          this.fail('当前源不是兼容的 H.264/AAC TS，正在切换通用播放器');
+          return;
+        }
+      }
+      this.debugStats.bytesLoaded += bytes.byteLength;
+      this.feedTsData(bytes, generation);
+    };
+
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
       this.debugStats.fragLoaded++;
@@ -229,20 +247,19 @@ export class WebCodecsPlayer {
         clearTimeout(this.hlsNetworkRecoveryTimer);
         this.hlsNetworkRecoveryTimer = null;
       }
-      const frag = data.frag;
-      const payload = frag?.data || data.payload;
-      if (payload && payload.byteLength) {
-        const bytes = new Uint8Array(payload);
-        if (!this.checkedTsContainer) {
-          this.checkedTsContainer = true;
-          if (!this.isTransportStreamPayload(bytes)) {
-            this.fail('当前源不是兼容的 H.264/AAC TS，正在切换通用播放器');
-            return;
-          }
-        }
-        this.debugStats.bytesLoaded += payload.byteLength;
-        this.feedTsData(bytes, generation);
-      }
+
+      // FRAG_LOADED is encrypted bytes for AES-128 streams. Feeding those
+      // into the TS detector incorrectly forces a native-video fallback.
+      // Wait for FRAG_DECRYPTED, whose payload is the clear segment.
+      if (data.frag?.encrypted) return;
+      feedCompatibleFragment(data);
+    });
+
+    hls.on(Hls.Events.FRAG_DECRYPTED, (_evt: any, data: any) => {
+      // hls.js exposes the decrypted payload here. TS/H.264/AAC sources can
+      // now stay in the Canvas/WebCodecs path; fMP4 and other containers still
+      // fail the same explicit compatibility check and safely fall back.
+      feedCompatibleFragment(data);
     });
 
     hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
