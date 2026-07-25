@@ -2,6 +2,7 @@
 import Hls from 'hls.js';
 import * as muxjs from 'mux.js';
 
+import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import { getTeslaAudioContext } from '@/lib/tesla/audio-session';
 
 export type PlayerState = 'idle' | 'buffering' | 'playing' | 'paused' | 'ended' | 'error';
@@ -173,6 +174,9 @@ export class WebCodecsPlayer {
 
     const hls = new Hls({
       enableWorker: true,
+      // Filter only text playlists before hls.js and the Canvas demuxer see
+      // them. Segment bytes and HLS timing metadata remain untouched.
+      pLoader: createAdFilteringPlaylistLoader(),
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: startAt,
