@@ -576,7 +576,7 @@ export class WebCodecsPlayer {
     // of the A/V pipeline has actually been empty for a moment.
     const now = performance.now();
     const videoStarved = noVideoReady && now - this.lastRenderedAtMs >= 700;
-    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= 700;
+    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= (this.playbackRate === 1 ? 700 : 1500);
     if (!videoStarved && !audioStarved) return;
 
     const clock = this.getMediaTime();
@@ -750,7 +750,7 @@ export class WebCodecsPlayer {
     return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
   }
 
-  private canBuildPitchWindow(minDurationSec = 0.28): boolean {
+  private canBuildAudioWindow(minDurationSec = 0.12, startOffsetSec = 0): boolean {
     const first = this.decodedAudio[0];
     if (!first) return false;
 
@@ -759,11 +759,16 @@ export class WebCodecsPlayer {
     let durationSec = 0;
     let expectedTimestamp: number | null = null;
 
-    for (const audio of this.decodedAudio) {
+    for (let index = 0; index < this.decodedAudio.length; index++) {
+      const audio = this.decodedAudio[index];
       if (audio.sampleRate !== sampleRate || audio.numberOfChannels !== channels) break;
       const timestamp = audio.timestamp / 1e6;
       if (expectedTimestamp !== null && Math.abs(timestamp - expectedTimestamp) > 0.035) break;
-      durationSec += audio.numberOfFrames / sampleRate;
+
+      const offset = index === 0
+        ? Math.max(0, Math.min(audio.numberOfFrames, Math.floor(startOffsetSec * sampleRate)))
+        : 0;
+      durationSec += Math.max(0, audio.numberOfFrames - offset) / sampleRate;
       if (durationSec >= minDurationSec) return true;
       expectedTimestamp = timestamp + audio.numberOfFrames / sampleRate;
     }
@@ -771,11 +776,11 @@ export class WebCodecsPlayer {
   }
 
   /**
-   * AudioDecoder normally returns AAC in ~23 ms pieces. Stretching every tiny
-   * piece creates an audible grain edge on Tesla's output path, so collect a
-   * short, timestamp-contiguous window before applying overlap-add.
+   * Combine short AAC decode outputs before scheduling them. This intentionally
+   * avoids the expensive time-stretch calculation that previously ran in the
+   * render loop and caused both audio gaps and Canvas frame flashes.
    */
-  private takePitchWindow(startOffsetSec: number, targetDurationSec = 0.42): AudioBuffer | null {
+  private takeAudioWindow(startOffsetSec: number, targetDurationSec = 0.24): AudioBuffer | null {
     if (!this.audioCtx || !this.decodedAudio.length) return null;
 
     const first = this.decodedAudio[0];
@@ -824,22 +829,19 @@ export class WebCodecsPlayer {
       }
       destinationOffset += audio.numberOfFrames - offsetFrames;
     }
-
     return buffer;
   }
 
   private scheduleAudio() {
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.7;
+    const maxLeadSec = 1.4;
     if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > maxLeadSec) return;
 
     let scheduled = 0;
-    const maxChunks = this.playbackRate === 1 ? 10 : 4;
-    while (this.decodedAudio.length && scheduled < maxChunks) {
+    while (this.decodedAudio.length && scheduled < 8) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
-      const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
       const headDuration = head.numberOfFrames / sampleRate;
       const mediaNow = this.getMediaTime();
@@ -850,8 +852,7 @@ export class WebCodecsPlayer {
         continue;
       }
 
-      let startOffsetSec = Math.max(0, mediaNow - headTs);
-      startOffsetSec = Math.min(startOffsetSec, headDuration);
+      const startOffsetSec = Math.min(Math.max(0, mediaNow - headTs), headDuration);
       const audibleTs = headTs + startOffsetSec;
       const idealWhen = this.ctxStartTime + (audibleTs - this.baseMediaTime) / this.playbackRate;
 
@@ -864,150 +865,27 @@ export class WebCodecsPlayer {
       }
       if (when > now + maxLeadSec + 0.12) break;
 
-      if (this.playbackRate !== 1) {
-        // Keep a sufficiently long analysis window. Do not produce a noisy
-        // one-AAC-frame grain while the decoder is still filling the queue.
-        if (!this.canBuildPitchWindow()) break;
-        const buffer = this.takePitchWindow(startOffsetSec);
-        if (!buffer) break;
+      if (!this.canBuildAudioWindow(0.12, startOffsetSec)) break;
+      const buffer = this.takeAudioWindow(startOffsetSec);
+      if (!buffer) break;
 
-        const stretched = this.timeStretchBuffer(buffer);
-        this.scheduleAudioBuffer(stretched, when);
-        this.lastAudioScheduledAtMs = performance.now();
-        this.nextAudioStartTime = when + stretched.duration;
-        scheduled++;
-        continue;
-      }
-
-      let buffer: AudioBuffer;
-      try {
-        buffer = this.audioCtx.createBuffer(channels, head.numberOfFrames, sampleRate);
-        for (let channel = 0; channel < channels; channel++) {
-          const dest = new Float32Array(head.numberOfFrames);
-          head.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
-          buffer.copyToChannel(dest, channel);
-        }
-      } finally {
-        head.close();
-        this.decodedAudio.shift();
-      }
-
-      this.scheduleAudioBuffer(buffer, when, startOffsetSec);
+      this.scheduleAudioBuffer(buffer, when, 0, this.playbackRate);
       this.lastAudioScheduledAtMs = performance.now();
-      this.nextAudioStartTime = when + Math.max(0, headDuration - startOffsetSec);
+      this.nextAudioStartTime = when + buffer.duration / this.playbackRate;
       scheduled++;
     }
   }
 
-  /** Schedule one fully rendered PCM buffer with no per-grain node overlap. */
-  private scheduleAudioBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0) {
+  /** Schedule an ordinary PCM window at the shared A/V rate. */
+  private scheduleAudioBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0, rate = 1) {
     if (!this.audioCtx || !this.gain) return;
     const src = this.audioCtx.createBufferSource();
     src.buffer = buffer;
+    src.playbackRate.value = rate;
     src.connect(this.gain);
     src.start(when, startOffsetSec);
     this.activeSources.add(src);
     src.onended = () => this.activeSources.delete(src);
-  }
-
-  /**
-   * Windowed synchronous overlap-add (WSOLA-lite) on PCM, before scheduling.
-   * The former implementation scheduled each 20–40 ms grain as a separate
-   * Web Audio node. AAC frames are commonly only ~23 ms, so their envelopes
-   * modulated each other and produced a scratchy sound. Here the overlap-add
-   * is rendered into one buffer with weight normalization, then played by one
-   * ordinary node; output length is exact, so the media clock stays in sync.
-   */
-  private timeStretchBuffer(input: AudioBuffer): AudioBuffer {
-    if (!this.audioCtx || this.playbackRate === 1) return input;
-
-    const outputFrames = Math.max(1, Math.round(input.length / this.playbackRate));
-    const output = this.audioCtx.createBuffer(
-      input.numberOfChannels,
-      outputFrames,
-      input.sampleRate,
-    );
-    const grainFrames = Math.min(
-      4096,
-      Math.max(1024, Math.floor(input.sampleRate * 0.055)),
-      input.length,
-    );
-    const outputHop = Math.max(1, Math.floor(grainFrames / 2));
-    const expectedInputHop = Math.max(1, Math.round(outputHop * this.playbackRate));
-    const searchRadius = Math.min(Math.floor(input.sampleRate * 0.008), Math.floor(grainFrames / 4));
-    const searchStep = Math.max(8, Math.floor(input.sampleRate / 4000));
-    const weights = new Float32Array(outputFrames);
-    const sourceChannels = Array.from(
-      { length: input.numberOfChannels },
-      (_, channel) => input.getChannelData(channel),
-    );
-    const outputChannels = Array.from(
-      { length: input.numberOfChannels },
-      (_, channel) => output.getChannelData(channel),
-    );
-
-    let inputStart = 0;
-    let previousInputStart = -1;
-    let outputStart = 0;
-
-    while (outputStart < outputFrames && inputStart < input.length) {
-      if (previousInputStart >= 0 && searchRadius > 0) {
-        const expected = Math.min(
-          Math.max(0, previousInputStart + expectedInputHop),
-          Math.max(0, input.length - grainFrames),
-        );
-        const referenceStart = previousInputStart + outputHop;
-        const overlapFrames = Math.min(
-          grainFrames - outputHop,
-          input.length - referenceStart,
-        );
-        let bestStart = expected;
-        let bestScore = Number.NEGATIVE_INFINITY;
-
-        for (
-          let candidate = Math.max(0, expected - searchRadius);
-          candidate <= Math.min(input.length - grainFrames, expected + searchRadius);
-          candidate += searchStep
-        ) {
-          let score = 0;
-          for (let frame = 0; frame < overlapFrames; frame += 16) {
-            score += sourceChannels[0][referenceStart + frame] * sourceChannels[0][candidate + frame];
-          }
-          if (score > bestScore) {
-            bestScore = score;
-            bestStart = candidate;
-          }
-        }
-        inputStart = bestStart;
-      }
-
-      const frames = Math.min(grainFrames, input.length - inputStart, outputFrames - outputStart);
-      if (frames <= 0) break;
-      for (let frame = 0; frame < frames; frame++) {
-        // Raised-cosine window eliminates hard boundaries; normalize after all
-        // grains so overlapping windows retain the original amplitude.
-        const weight = Math.sin((Math.PI * (frame + 0.5)) / frames);
-        weights[outputStart + frame] += weight;
-        for (let channel = 0; channel < outputChannels.length; channel++) {
-          outputChannels[channel][outputStart + frame] +=
-            sourceChannels[channel][inputStart + frame] * weight;
-        }
-      }
-
-      previousInputStart = inputStart;
-      inputStart += expectedInputHop;
-      outputStart += outputHop;
-    }
-
-    for (let frame = 0; frame < outputFrames; frame++) {
-      const weight = weights[frame];
-      if (!weight) continue;
-      for (let channel = 0; channel < outputChannels.length; channel++) {
-        outputChannels[channel][frame] /= weight;
-      }
-    }
-
-    return output;
   }
 
   private presentVideo(clock: number) {
