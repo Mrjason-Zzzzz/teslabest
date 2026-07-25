@@ -593,7 +593,7 @@ export class WebCodecsPlayer {
     // of the A/V pipeline has actually been empty for a moment.
     const now = performance.now();
     const videoStarved = noVideoReady && now - this.lastRenderedAtMs >= 700;
-    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= (this.playbackRate === 1 ? 700 : 1500);
+    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= 1000;
     if (!videoStarved && !audioStarved) return;
 
     const clock = this.getMediaTime();
@@ -767,98 +767,24 @@ export class WebCodecsPlayer {
     return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
   }
 
-  private canBuildAudioWindow(minDurationSec = 0.12, startOffsetSec = 0): boolean {
-    const first = this.decodedAudio[0];
-    if (!first) return false;
-
-    const sampleRate = first.sampleRate;
-    const channels = first.numberOfChannels;
-    let durationSec = 0;
-    let expectedTimestamp: number | null = null;
-
-    for (let index = 0; index < this.decodedAudio.length; index++) {
-      const audio = this.decodedAudio[index];
-      if (audio.sampleRate !== sampleRate || audio.numberOfChannels !== channels) break;
-      const timestamp = audio.timestamp / 1e6;
-      if (expectedTimestamp !== null && Math.abs(timestamp - expectedTimestamp) > 0.035) break;
-
-      const offset = index === 0
-        ? Math.max(0, Math.min(audio.numberOfFrames, Math.floor(startOffsetSec * sampleRate)))
-        : 0;
-      durationSec += Math.max(0, audio.numberOfFrames - offset) / sampleRate;
-      if (durationSec >= minDurationSec) return true;
-      expectedTimestamp = timestamp + audio.numberOfFrames / sampleRate;
-    }
-    return false;
-  }
-
   /**
-   * Combine short AAC decode outputs before scheduling them. This intentionally
-   * avoids the expensive time-stretch calculation that previously ran in the
-   * render loop and caused both audio gaps and Canvas frame flashes.
+   * Stable speed path: use the decoder's native AAC frame boundaries and one
+   * ordinary AudioBufferSourceNode per frame. It is deliberately simple:
+   * no buffering gate, no DSP search and no resampling work in RAF, so a
+   * small timestamp discontinuity cannot silence the whole player.
    */
-  private takeAudioWindow(startOffsetSec: number, targetDurationSec = 0.24): AudioBuffer | null {
-    if (!this.audioCtx || !this.decodedAudio.length) return null;
-
-    const first = this.decodedAudio[0];
-    const sampleRate = first.sampleRate;
-    const channels = first.numberOfChannels;
-    const chunks: Array<{ audio: AudioData; offsetFrames: number }> = [];
-    let totalFrames = 0;
-    let expectedTimestamp: number | null = null;
-
-    while (this.decodedAudio.length && totalFrames / sampleRate < targetDurationSec) {
-      const audio = this.decodedAudio[0];
-      if (audio.sampleRate !== sampleRate || audio.numberOfChannels !== channels) break;
-
-      const timestamp = audio.timestamp / 1e6;
-      if (expectedTimestamp !== null && Math.abs(timestamp - expectedTimestamp) > 0.035) break;
-
-      const offsetFrames = chunks.length === 0
-        ? Math.max(0, Math.min(audio.numberOfFrames, Math.floor(startOffsetSec * sampleRate)))
-        : 0;
-      const usableFrames = audio.numberOfFrames - offsetFrames;
-      if (usableFrames <= 0) {
-        this.decodedAudio.shift();
-        audio.close();
-        continue;
-      }
-
-      chunks.push({ audio, offsetFrames });
-      this.decodedAudio.shift();
-      totalFrames += usableFrames;
-      expectedTimestamp = timestamp + audio.numberOfFrames / sampleRate;
-    }
-
-    if (!chunks.length || !totalFrames) return null;
-
-    const buffer = this.audioCtx.createBuffer(channels, totalFrames, sampleRate);
-    let destinationOffset = 0;
-    for (const { audio, offsetFrames } of chunks) {
-      try {
-        for (let channel = 0; channel < channels; channel++) {
-          const samples = new Float32Array(audio.numberOfFrames);
-          audio.copyTo(samples, { planeIndex: channel, format: 'f32-planar' });
-          buffer.copyToChannel(samples.subarray(offsetFrames), channel, destinationOffset);
-        }
-      } finally {
-        audio.close();
-      }
-      destinationOffset += audio.numberOfFrames - offsetFrames;
-    }
-    return buffer;
-  }
-
   private scheduleAudio() {
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    const maxLeadSec = 1.4;
+    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.7;
     if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > maxLeadSec) return;
 
     let scheduled = 0;
-    while (this.decodedAudio.length && scheduled < 8) {
+    const maxChunks = this.playbackRate === 1 ? 10 : 8;
+    while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
+      const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
       const headDuration = head.numberOfFrames / sampleRate;
       const mediaNow = this.getMediaTime();
@@ -882,18 +808,28 @@ export class WebCodecsPlayer {
       }
       if (when > now + maxLeadSec + 0.12) break;
 
-      if (!this.canBuildAudioWindow(0.12, startOffsetSec)) break;
-      const buffer = this.takeAudioWindow(startOffsetSec);
-      if (!buffer) break;
+      let buffer: AudioBuffer;
+      try {
+        buffer = this.audioCtx.createBuffer(channels, head.numberOfFrames, sampleRate);
+        for (let channel = 0; channel < channels; channel++) {
+          const dest = new Float32Array(head.numberOfFrames);
+          head.copyTo(dest, { planeIndex: 'f32-planar' });
+          buffer.copyToChannel(dest, channel);
+        }
+      } finally {
+        head.close();
+        this.decodedAudio.shift();
+      }
 
-      this.scheduleAudioBuffer(buffer, when, 0, this.playbackRate);
+      this.scheduleAudioBuffer(buffer, when, startOffsetSec, this.playbackRate);
       this.lastAudioScheduledAtMs = performance.now();
-      this.nextAudioStartTime = when + buffer.duration / this.playbackRate;
+      this.nextAudioStartTime =
+        when + Math.max(0, headDuration - startOffsetSec) / this.playbackRate;
       scheduled++;
     }
   }
 
-  /** Schedule an ordinary PCM window at the shared A/V rate. */
+  /** Schedule one decoded AAC frame at the shared A/V rate. */
   private scheduleAudioBuffer(buffer: AudioBuffer, when: number, startOffsetSec = 0, rate = 1) {
     if (!this.audioCtx || !this.gain) return;
     const src = this.audioCtx.createBufferSource();
