@@ -1009,9 +1009,7 @@ export class WebCodecsPlayer {
 
     return output;
   }
-t += outputHop;
-    }
-  }
+
   private presentVideo(clock: number) {
     let toDraw: VideoFrame | null = null;
     while (this.frameQueue.length && this.frameQueue[0].timestamp / 1e6 <= clock) {
