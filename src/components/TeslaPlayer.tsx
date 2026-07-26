@@ -800,16 +800,12 @@ export default function TeslaPlayer({
         onError: (msg) => {
           if (destroyed) return;
           console.warn('[TeslaPlayer] WebCodecs playback failed:', msg);
-          if (live) {
-            setLoading(false);
-            setBuffering(false);
-            setError(msg);
-            reportPlaybackError(msg);
-            return;
-          }
-          setError(null);
-          setLoading(true);
-          setMode('video');
+          // Keep all Tesla entrypoints on Canvas/WebCodecs. Native video can
+          // become invisible while the vehicle is moving.
+          setLoading(false);
+          setBuffering(false);
+          setError(msg);
+          reportPlaybackError(msg);
         },
       });
 
@@ -824,16 +820,10 @@ export default function TeslaPlayer({
         if (destroyed) return;
         const message = e instanceof Error ? e.message : '兼容播放器加载失败';
         console.warn('[TeslaPlayer] WebCodecs load failed:', e);
-        if (live) {
-          setLoading(false);
-          setBuffering(false);
-          setError(message);
-          reportPlaybackError(message);
-          return;
-        }
-        setError(null);
-        setLoading(true);
-        setMode('video');
+        setLoading(false);
+        setBuffering(false);
+        setError(message);
+        reportPlaybackError(message);
       });
 
       firstFrameTimer = window.setTimeout(() => {
@@ -844,17 +834,10 @@ export default function TeslaPlayer({
       ) return;
         const message = '兼容模式未在限定时间内产生有效画面';
         console.warn('[TeslaPlayer]', message);
-        if (live) {
-          setLoading(false);
-          setBuffering(false);
-          setError(message);
-          reportPlaybackError(message);
-          return;
-        }
-        setReconnectMessage('兼容模式未产生画面，正在切换通用播放器…');
-        setError(null);
-        setLoading(true);
-        setMode('video');
+        setLoading(false);
+        setBuffering(false);
+        setError(message);
+        reportPlaybackError(message);
       }, live ? 18000 : 12000);
 
       const statsTimer = window.setInterval(() => {
@@ -874,16 +857,10 @@ export default function TeslaPlayer({
     } catch (e: any) {
       const message = e?.message || '兼容播放器初始化失败';
       console.warn('[TeslaPlayer] WebCodecs initialization failed:', e);
-      if (live) {
-        setLoading(false);
-        setBuffering(false);
-        setError(message);
-        reportPlaybackError(message);
-      } else {
-        setError(null);
-        setLoading(true);
-        setMode('video');
-      }
+      setLoading(false);
+      setBuffering(false);
+      setError(message);
+      reportPlaybackError(message);
       return () => { destroyed = true; };
     }
   }, [url, mode, playbackSession]);
