@@ -240,12 +240,17 @@ export class WebCodecsPlayer {
       if (!this.checkedTsContainer) {
         this.checkedTsContainer = true;
         if (!this.isTransportStreamPayload(bytes)) {
-          this.fail('当前源不是兼容的 H.264/AAC TS，正在切换通用播放器');
+          this.fail('当前源不是特斯拉模式兼容的 H.264/AAC TS');
           return;
         }
       }
       this.debugStats.bytesLoaded += bytes.byteLength;
       this.feedTsData(bytes, generation);
+    };
+
+    const isEncryptedFragment = (frag: any) => {
+      const method = frag?.decryptdata?.method;
+      return Boolean(method && method !== 'NONE');
     };
 
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
@@ -257,9 +262,17 @@ export class WebCodecsPlayer {
         this.hlsNetworkRecoveryTimer = null;
       }
 
-      // Keep the established container check on downloaded fragments. Sources
-      // that are not directly compatible must fall back promptly instead of
-      // waiting in the experimental decrypted-fragment path.
+      // AES-128 payload is still ciphertext at FRAG_LOADED. Feeding it to the
+      // TS detector produces a false incompatibility result, while hls.js can
+      // play the same source after decryption. Plain fragments keep the fast
+      // path and encrypted fragments are consumed once at FRAG_DECRYPTED.
+      if (!isEncryptedFragment(data.frag)) {
+        feedCompatibleFragment(data);
+      }
+    });
+
+    hls.on(Hls.Events.FRAG_DECRYPTED, (_evt: any, data: any) => {
+      if (this.destroyed || generation !== this.loadGeneration) return;
       feedCompatibleFragment(data);
     });
 
