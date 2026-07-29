@@ -146,7 +146,7 @@ export default function TeslaPlayer({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(true);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(true);
-  const [engineLabel, setEngineLabel] = useState('兼容播放');
+  const [engineLabel, setEngineLabel] = useState('Tesla 播放');
   const [networkOffline, setNetworkOffline] = useState(false);
   const [reconnectMessage, setReconnectMessage] = useState('');
   const [playbackSession, setPlaybackSession] = useState(0);
@@ -619,7 +619,7 @@ export default function TeslaPlayer({
 
     const attachDirectMedia = () => {
       if (destroyed) return;
-      setEngineLabel('通用播放');
+      setEngineLabel('Tesla 播放');
       videoEl.src = url;
       videoEl.load();
       videoEl.play().catch(() => {});
@@ -633,7 +633,7 @@ export default function TeslaPlayer({
           const flvModule: any = await import('flv.js');
           const flvjs = flvModule.default || flvModule;
           if (!destroyed && flvjs.isSupported()) {
-            setEngineLabel('FLV 兼容');
+            setEngineLabel('Tesla 播放');
             flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: live });
             flvPlayer.attachMediaElement(videoEl);
             flvPlayer.load();
@@ -648,7 +648,7 @@ export default function TeslaPlayer({
       }
 
       if ((kind === 'hls' || kind === 'unknown') && Hls.isSupported()) {
-        setEngineLabel('HLS 兼容');
+        setEngineLabel('Tesla 播放');
         const hls = new Hls({
           enableWorker: true,
           // The native fallback reads the same filtered playlist as the
@@ -720,7 +720,7 @@ export default function TeslaPlayer({
       }
 
       if (kind === 'hls' && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-        setEngineLabel('系统 HLS');
+        setEngineLabel('Tesla 播放');
       }
       attachDirectMedia();
     };
@@ -785,7 +785,7 @@ export default function TeslaPlayer({
             setBuffering(false);
             setLoading(false);
             clearBufferingTimeout();
-            setEngineLabel('特斯拉兼容');
+            setEngineLabel('Tesla 播放');
             reportPlaybackReady();
           }
           else if (s === 'paused') { setPlaying(false); setBuffering(false); }
@@ -818,7 +818,7 @@ export default function TeslaPlayer({
       const startPos = seekToTime !== null ? seekToTime : savedProgress;
       player.load(url, startPos).catch((e) => {
         if (destroyed) return;
-        const message = e instanceof Error ? e.message : '兼容播放器加载失败';
+        const message = e instanceof Error ? e.message : 'Tesla 播放器加载失败';
         console.warn('[TeslaPlayer] WebCodecs load failed:', e);
         setLoading(false);
         setBuffering(false);
@@ -832,7 +832,7 @@ export default function TeslaPlayer({
         playbackReadyReportedRef.current ||
         (typeof navigator !== 'undefined' && !navigator.onLine)
       ) return;
-        const message = '兼容模式未在限定时间内产生有效画面';
+        const message = '直播未在限定时间内产生有效画面';
         console.warn('[TeslaPlayer]', message);
         setLoading(false);
         setBuffering(false);
@@ -855,7 +855,7 @@ export default function TeslaPlayer({
         wcPlayerRef.current = null;
       };
     } catch (e: any) {
-      const message = e?.message || '兼容播放器初始化失败';
+      const message = e?.message || 'Tesla 播放器初始化失败';
       console.warn('[TeslaPlayer] WebCodecs initialization failed:', e);
       setLoading(false);
       setBuffering(false);
@@ -985,9 +985,11 @@ export default function TeslaPlayer({
           </h1>
         </div>
         <div className="pointer-events-auto flex items-center gap-1">
-          <div className="rounded bg-green-500/20 px-2 py-1 text-xs text-green-300">
-            {engineLabel}
-          </div>
+          {!live && (
+            <div className="rounded bg-green-500/20 px-2 py-1 text-xs text-green-300">
+              {engineLabel}
+            </div>
+          )}
         </div>
       </div>
 
