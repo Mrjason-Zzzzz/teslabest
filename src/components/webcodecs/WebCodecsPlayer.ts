@@ -240,7 +240,7 @@ export class WebCodecsPlayer {
       if (!this.checkedTsContainer) {
         this.checkedTsContainer = true;
         if (!this.isTransportStreamPayload(bytes)) {
-          this.fail('当前源不是特斯拉模式兼容的 H.264/AAC TS');
+          this.fail('当前直播线路不是 Tesla 播放所需的 H.264/AAC TS');
           return;
         }
       }
@@ -518,7 +518,8 @@ export class WebCodecsPlayer {
 
   private onVideoFrame(frame: VideoFrame) {
     this.decodedFrames++;
-    while (this.frameQueue.length >= 60) {
+    const frameLimit = this.isLivePlaylist ? 24 : 48;
+    while (this.frameQueue.length >= frameLimit) {
       this.frameQueue.shift()?.close();
       this.droppedFrames++;
     }
@@ -606,8 +607,8 @@ export class WebCodecsPlayer {
     // Brief decoder gaps are normal. Freeze the media clock only when one side
     // of the A/V pipeline has actually been empty for a moment.
     const now = performance.now();
-    const videoStarved = noVideoReady && now - this.lastRenderedAtMs >= 700;
-    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= 1000;
+    const videoStarved = noVideoReady && now - this.lastRenderedAtMs >= (this.isLivePlaylist ? 1100 : 700);
+    const audioStarved = noAudioReady && now - this.lastAudioScheduledAtMs >= (this.isLivePlaylist ? 1400 : 1000);
     if (!videoStarved && !audioStarved) return;
 
     const clock = this.getMediaTime();
@@ -639,7 +640,7 @@ export class WebCodecsPlayer {
     if ((!stalledWhilePlaying && !stalledWhileBuffering) || this.recoveryInFlight) return;
 
     if (this.recoveryAttempts >= 3) {
-      this.fail('画面持续卡顿，正在切换通用播放器');
+      this.fail('直播画面持续卡顿，请重试当前线路');
       return;
     }
 
@@ -685,8 +686,8 @@ export class WebCodecsPlayer {
     if (!dec || dec.state !== 'configured') return;
     while (
       this.aIdx < this.encodedAudio.length &&
-      dec.decodeQueueSize < 32 &&
-      this.decodedAudio.length + dec.decodeQueueSize < 160
+      dec.decodeQueueSize < (this.isLivePlaylist ? 24 : 32) &&
+      this.decodedAudio.length + dec.decodeQueueSize < (this.isLivePlaylist ? 96 : 160)
     ) {
       const s = this.encodedAudio[this.aIdx++];
       try {
@@ -705,8 +706,8 @@ export class WebCodecsPlayer {
   }
 
   private maybePrime() {
-    const minVideoFrames = this.isLivePlaylist ? 3 : (this.canvasSized ? 12 : 6);
-    const minAudioFrames = this.isLivePlaylist ? 6 : (this.canvasSized ? 24 : 12);
+    const minVideoFrames = this.isLivePlaylist ? 6 : (this.canvasSized ? 12 : 6);
+    const minAudioFrames = this.isLivePlaylist ? 12 : (this.canvasSized ? 24 : 12);
     const audioPipelineActive =
       this.audioConfig !== null ||
       this.debugStats.audioSamples > 0 ||
@@ -830,11 +831,11 @@ export class WebCodecsPlayer {
     if (this.useNativePitchPreservingAudio) return;
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    const maxLeadSec = this.playbackRate === 1 ? 2 : 0.7;
+    const maxLeadSec = this.isLivePlaylist ? 1.1 : (this.playbackRate === 1 ? 2 : 0.7);
     if (this.nextAudioStartTime !== 0 && this.nextAudioStartTime - now > maxLeadSec) return;
 
     let scheduled = 0;
-    const maxChunks = this.playbackRate === 1 ? 10 : 8;
+    const maxChunks = this.isLivePlaylist ? 8 : (this.playbackRate === 1 ? 10 : 8);
     while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
