@@ -238,128 +238,131 @@ function TeslaLivePageInner() {
     setCurrentSource(source);
   }, [sources, initialSourceKey, initialChannelId]);
 
-  const backToOriginal = useCallback(() => {
-    router.push(`/live?${searchParams.toString()}`);
-  }, [router, searchParams]);
-
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[#090a0d] text-white">
-      <header className="flex h-14 items-center justify-between border-b border-white/10 bg-[#0d0f13] px-3 md:px-5">
+    <div className="fixed inset-0 overflow-hidden bg-[#06080c] text-white">
+      <header className="flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
             onClick={() => router.back()}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/8 text-white/75 active:scale-95"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-white/80 transition active:scale-95"
             aria-label="返回"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-500/15">
+            <Tv className="h-5 w-5 text-rose-400" />
+          </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Radio className="h-4 w-4 shrink-0 text-rose-400" />
-              <h1 className="truncate text-sm font-semibold md:text-base">
-                {currentChannel?.name || '电视直播'}
-              </h1>
-            </div>
-            <p className="truncate text-xs text-white/45">
-              {currentSource?.name || '正在加载直播源'}
+            <h1 className="truncate text-base font-semibold lg:text-lg">
+              {currentChannel?.name || '电视直播'}
+            </h1>
+            <p className="mt-0.5 truncate text-xs text-white/45">
+              {currentSource?.name || '正在载入频道'} · Tesla 直播
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={restoreInitialChannel}
-          className="flex min-h-11 items-center gap-2 rounded-xl bg-white/8 px-3 text-xs text-white/70 active:scale-95"
-        >
-          <RotateCcw className="h-4 w-4" />
-          恢复
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="hidden items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300 sm:flex">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            实时直播
+          </div>
+          <button
+            type="button"
+            onClick={restoreInitialChannel}
+            className="flex min-h-12 items-center gap-2 rounded-2xl bg-white/10 px-4 text-sm text-white/75 transition active:scale-95"
+          >
+            <RotateCcw className="h-4 w-4" />
+            恢复
+          </button>
+        </div>
       </header>
 
-      <main className="grid h-[calc(100%-3.5rem)] min-h-0 lg:grid-cols-[minmax(0,1fr)_390px]">
-        <section className="relative min-h-[42vh] bg-black lg:min-h-0">
-          {loadingSources && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65">
-              <Loader2 className="h-8 w-8 animate-spin text-emerald-400" />
-              <span>正在加载直播源…</span>
-            </div>
-          )}
-          {!loadingSources && currentChannel && playUrl && (
-            <TeslaPlayer
-              key={`${currentSource?.key}-${currentChannel.id}-${playbackAttempt}`}
-              url={playUrl}
-              title={`${currentSource?.name || ''} · ${currentChannel.name}`}
-              poster={currentChannel.logo}
-              live
-              onBackToOriginal={backToOriginal}
-              onPlaybackReady={() => {
-                setPlaybackIssue(false);
-                setPlaybackNotice('');
-                if (currentSource && currentChannel) syncUrl(currentSource, currentChannel);
-              }}
-              onPlaybackError={handlePlaybackError}
-            />
-          )}
-          {!loadingSources && !currentChannel && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/50">
-              <Tv className="h-10 w-10" />
-              <span>请从频道列表选择节目</span>
-            </div>
-          )}
-          {playbackNotice && (
-            <div className="absolute inset-x-0 top-4 z-30 flex justify-center px-4">
-              <div className="max-w-[92%] rounded-2xl bg-black/85 px-4 py-3 text-center text-xs shadow-xl backdrop-blur">
-                <p>{playbackNotice}</p>
-                {playbackIssue && (
-                  <div className="mt-3 flex justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={retryCurrentPlayback}
-                      className="min-h-11 rounded-xl bg-emerald-500 px-4 font-medium text-black active:scale-95"
-                    >
-                      重试当前源
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPanel('sources')}
-                      className="min-h-11 rounded-xl bg-white/12 px-4 text-white active:scale-95"
-                    >
-                      手动换源
-                    </button>
-                  </div>
-                )}
+      <main className="grid h-[calc(100%-4rem)] min-h-0 grid-rows-[minmax(300px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
+        <section className="min-h-0 bg-[#050609] p-2 lg:p-4 lg:pr-2">
+          <div className="relative h-full min-h-[300px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10">
+            {loadingSources && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65">
+                <Loader2 className="h-9 w-9 animate-spin text-rose-400" />
+                <span className="text-sm">正在加载电视直播…</span>
               </div>
-            </div>
-          )}
+            )}
+            {!loadingSources && currentChannel && playUrl && (
+              <TeslaPlayer
+                key={`${currentSource?.key}-${currentChannel.id}-${playbackAttempt}`}
+                url={playUrl}
+                title={currentChannel.name}
+                poster={currentChannel.logo}
+                live
+                onPlaybackReady={() => {
+                  setPlaybackIssue(false);
+                  setPlaybackNotice('');
+                  if (currentSource && currentChannel) syncUrl(currentSource, currentChannel);
+                }}
+                onPlaybackError={handlePlaybackError}
+              />
+            )}
+            {!loadingSources && !currentChannel && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/45">
+                <Tv className="h-11 w-11" />
+                <span>从右侧选择频道开始播放</span>
+              </div>
+            )}
+            {playbackNotice && (
+              <div className="absolute inset-x-0 top-4 z-30 flex justify-center px-4">
+                <div className="max-w-[92%] rounded-2xl border border-white/10 bg-black/85 px-4 py-3 text-center text-sm shadow-2xl backdrop-blur">
+                  <p>{playbackNotice}</p>
+                  {playbackIssue && (
+                    <div className="mt-3 flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={retryCurrentPlayback}
+                        className="min-h-12 rounded-xl bg-rose-500 px-5 font-medium text-white active:scale-95"
+                      >
+                        重试当前频道
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPanel('sources')}
+                        className="min-h-12 rounded-xl bg-white/15 px-5 text-white active:scale-95"
+                      >
+                        选择其他直播源
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col border-t border-white/10 bg-[#101217] lg:border-l lg:border-t-0">
+        <aside className="flex min-h-0 flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10">
           <div className="grid grid-cols-2 gap-2 border-b border-white/10 p-3">
             <button
               type="button"
-              onClick={() => setPanel('sources')}
-              className={`min-h-12 rounded-xl px-3 text-sm font-medium ${panel === 'sources' ? 'bg-rose-600 text-white' : 'bg-white/6 text-white/60'}`}
+              onClick={() => setPanel('channels')}
+              className={`min-h-12 rounded-xl px-3 text-sm font-medium transition ${panel === 'channels' ? 'bg-rose-500 text-white shadow-lg shadow-rose-950/40' : 'bg-white/5 text-white/55'}`}
             >
-              <Server className="mr-2 inline h-4 w-4" />
-              直播源（{sources.length}）
+              <Tv className="mr-2 inline h-4 w-4" />
+              频道 {channels.length}
             </button>
             <button
               type="button"
-              onClick={() => setPanel('channels')}
-              className={`min-h-12 rounded-xl px-3 text-sm font-medium ${panel === 'channels' ? 'bg-rose-600 text-white' : 'bg-white/6 text-white/60'}`}
+              onClick={() => setPanel('sources')}
+              className={`min-h-12 rounded-xl px-3 text-sm font-medium transition ${panel === 'sources' ? 'bg-rose-500 text-white shadow-lg shadow-rose-950/40' : 'bg-white/5 text-white/55'}`}
             >
-              <Tv className="mr-2 inline h-4 w-4" />
-              频道（{channels.length}）
+              <Server className="mr-2 inline h-4 w-4" />
+              来源 {sources.length}
             </button>
           </div>
 
           {error && (
-            <div className="mx-3 mt-3 flex items-start justify-between gap-2 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-100">
-              <span>{error}</span>
+            <div className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-100">
+              <span className="line-clamp-2">{error}</span>
               <button
                 type="button"
                 onClick={() => currentSource && setCurrentSource({ ...currentSource })}
-                className="min-h-9 shrink-0 rounded-lg bg-white/10 px-3"
+                className="min-h-10 shrink-0 rounded-lg bg-white/10 px-3"
               >
                 重试
               </button>
@@ -368,20 +371,20 @@ function TeslaLivePageInner() {
 
           {panel === 'sources' ? (
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <p className="mb-3 text-xs leading-5 text-white/45">
-                车机不再使用系统下拉框。点击任意大按钮即可手动换源；播放失败时不会自动跳转，方便你判断当前源与网络情况。
-              </p>
+              <div className="mb-3 rounded-xl bg-white/5 p-3 text-xs leading-5 text-white/45">
+                切换来源后会优先寻找同名频道。播放失败不会擅自跳到其他来源。
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 {sources.map((source) => (
                   <button
                     key={source.key}
                     type="button"
                     onClick={() => selectSource(source)}
-                    className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm transition active:scale-[0.98] ${currentSource?.key === source.key ? 'border-rose-400 bg-rose-500/20 text-white' : 'border-white/8 bg-white/5 text-white/70'}`}
+                    className={`min-h-16 rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${currentSource?.key === source.key ? 'border-rose-400 bg-rose-500/20 text-white' : 'border-white/10 bg-white/5 text-white/65'}`}
                   >
-                    <span className="block truncate font-medium">{source.name}</span>
+                    <span className="block truncate text-sm font-medium">{source.name}</span>
                     <span className="mt-1 block text-[11px] text-white/35">
-                      {source.channelNumber ? `${source.channelNumber} 个频道` : '点击加载频道'}
+                      {source.channelNumber ? `${source.channelNumber} 个频道` : '点击加载'}
                     </span>
                   </button>
                 ))}
@@ -391,13 +394,13 @@ function TeslaLivePageInner() {
             <>
               <div className="space-y-2 border-b border-white/10 p-3">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                  <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                   <input
                     type="text"
                     value={searchKeyword}
                     onChange={(event) => setSearchKeyword(event.target.value)}
-                    placeholder="搜索频道"
-                    className="min-h-12 w-full rounded-xl bg-white/7 pl-10 pr-3 text-sm outline-none placeholder:text-white/35 focus:ring-1 focus:ring-rose-400"
+                    placeholder="搜索频道或分组"
+                    className="min-h-12 w-full rounded-xl bg-white/10 pl-11 pr-3 text-sm outline-none placeholder:text-white/30 focus:ring-1 focus:ring-rose-400"
                   />
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-1">
@@ -406,14 +409,13 @@ function TeslaLivePageInner() {
                       key={group}
                       type="button"
                       onClick={() => setActiveGroup(group)}
-                      className={`min-h-10 shrink-0 rounded-full px-4 text-xs ${activeGroup === group ? 'bg-white text-black' : 'bg-white/7 text-white/60'}`}
+                      className={`min-h-10 shrink-0 rounded-full px-4 text-xs transition ${activeGroup === group ? 'bg-white text-black' : 'bg-white/5 text-white/55'}`}
                     >
                       {group}
                     </button>
                   ))}
                 </div>
               </div>
-
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
                 {loadingChannels ? (
                   <div className="flex items-center justify-center gap-2 py-10 text-sm text-white/50">
@@ -428,9 +430,10 @@ function TeslaLivePageInner() {
                         key={channel.id}
                         type="button"
                         onClick={() => selectChannel(channel)}
-                        className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm leading-5 transition active:scale-[0.98] ${currentChannel?.id === channel.id ? 'border-rose-400 bg-rose-500/20 text-white' : 'border-white/8 bg-white/5 text-white/70'}`}
+                        className={`min-h-16 rounded-xl border px-3 py-3 text-left text-sm leading-5 transition active:scale-[0.98] ${currentChannel?.id === channel.id ? 'border-rose-400 bg-rose-500/20 text-white' : 'border-white/10 bg-white/5 text-white/65'}`}
                       >
-                        <span className="line-clamp-2 break-words">{channel.name}</span>
+                        <span className="line-clamp-2 break-words font-medium">{channel.name}</span>
+                        <span className="mt-1 block truncate text-[11px] text-white/30">{channel.group || '直播频道'}</span>
                       </button>
                     ))}
                   </div>
