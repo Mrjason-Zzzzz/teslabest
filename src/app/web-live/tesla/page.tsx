@@ -32,6 +32,11 @@ interface StreamQuality {
   transports: StreamTransport[];
 }
 
+function isTeslaStream(item: any): boolean {
+  const url = String(item?.url || '').toLowerCase();
+  return Boolean(item?.url) && item?.streamType !== 'flv' && !/\.flv(?:\?|$)/.test(url);
+}
+
 function TeslaWebLivePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -117,7 +122,7 @@ function TeslaWebLivePageInner() {
               id: String(quality.id || `quality-${qualityIndex + 1}`),
               label: String(quality.label || `清晰度 ${qualityIndex + 1}`),
               transports: Array.isArray(quality.transports)
-                ? quality.transports.filter((item: any) => item?.url).map((item: any, transportIndex: number) => ({
+                ? quality.transports.filter(isTeslaStream).map((item: any, transportIndex: number) => ({
                     id: String(item.id || `transport-${transportIndex + 1}`),
                     label: String(item.label || `备用线路 ${transportIndex + 1}`),
                     url: String(item.url),
@@ -131,7 +136,7 @@ function TeslaWebLivePageInner() {
         // Backward compatibility for old resolver responses.
         if (parsedQualities.length === 0) {
           const transports: StreamTransport[] = Array.isArray(data.alternatives)
-            ? data.alternatives.filter((item: any) => item?.url).map((item: any, index: number) => ({
+            ? data.alternatives.filter(isTeslaStream).map((item: any, index: number) => ({
                 id: String(item.id || `transport-${index + 1}`),
                 label: String(item.label || `备用线路 ${index + 1}`),
                 url: String(item.url),
@@ -139,7 +144,7 @@ function TeslaWebLivePageInner() {
                 streamType: item.streamType,
               }))
             : [];
-          if (!transports.some((item) => item.url === data.url)) {
+          if (isTeslaStream(data) && !transports.some((item) => item.url === data.url)) {
             transports.unshift({
               id: 'default',
               label: '默认线路',
@@ -151,6 +156,10 @@ function TeslaWebLivePageInner() {
           parsedQualities.push({ id: 'AUTO', label: '自动', transports });
         }
 
+        if (parsedQualities.length === 0) {
+          throw new Error('当前直播间没有可用于 Tesla 播放的 HLS 线路');
+        }
+
         const firstQuality = parsedQualities[0];
         const firstTransport = firstQuality.transports[0];
         setQualityOptions(parsedQualities);
@@ -159,7 +168,8 @@ function TeslaWebLivePageInner() {
         setVideoUrl(firstTransport.url);
         triedTransportIdsRef.current.add(firstTransport.id);
         setStreamInfo({ name: data.name, title: data.title });
-        setPlaybackNotice(`已加载 ${parsedQualities.length} 档清晰度，线路将自动择优`);        setLoadingStream(false);
+        setPlaybackNotice(`已加载 ${parsedQualities.length} 档清晰度，线路将自动择优`);
+        setLoadingStream(false);
       })
       .catch((requestError) => {
         window.clearTimeout(timeoutId);
@@ -250,76 +260,67 @@ function TeslaWebLivePageInner() {
     handleSelectSource(initial);
   }, [sources, initialPlatform, initialRoomId, handleSelectSource]);
 
-  const backToOriginal = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    router.push(`/web-live?${params.toString()}`);
-  }, [router, searchParams]);
-
   const fullTitle = useMemoTitle(streamInfo, currentSource);
   const activeQuality = qualityOptions.find((option) => option.id === activeQualityId) || null;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/95 px-3 py-2 backdrop-blur sm:px-5">
-        <div className="mx-auto flex max-w-[1600px] items-center gap-3">
+    <div className="fixed inset-0 overflow-hidden bg-[#06080c] text-white">
+      <header className="flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:px-6">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
             onClick={() => router.back()}
-            className="rounded-lg p-2 text-white/70 hover:bg-white/10 hover:text-white"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-white/80 transition active:scale-95"
             aria-label="返回"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <Radio className="h-5 w-5 text-rose-500" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold sm:text-base">{fullTitle}</div>
-            <div className="truncate text-xs text-white/45">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-500/15">
+            <Radio className="h-5 w-5 text-violet-400" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold lg:text-lg">{fullTitle}</h1>
+            <p className="mt-0.5 truncate text-xs text-white/45">
               {currentSource ? `${platformLabel(currentSource.platform)} · ${currentSource.name}` : '网络直播'}
               {activeQuality ? ` · ${activeQuality.label}` : ''}
-            </div>
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setStreamReloadToken((value) => value + 1)}
-            disabled={!currentSource || loadingStream}
-            className="flex min-h-10 items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs font-medium hover:bg-rose-500 disabled:opacity-40"
-          >
-            <RefreshCw className={`h-4 w-4 ${loadingStream ? 'animate-spin' : ''}`} />
-            重新解析
-          </button>
         </div>
+        <button
+          type="button"
+          onClick={() => setStreamReloadToken((value) => value + 1)}
+          disabled={!currentSource || loadingStream}
+          className="flex min-h-12 items-center gap-2 rounded-2xl bg-violet-500 px-4 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
+        >
+          <RefreshCw className={`h-4 w-4 ${loadingStream ? 'animate-spin' : ''}`} />
+          重新连接
+        </button>
       </header>
 
-      <main className="mx-auto grid max-w-[1600px] grid-cols-1 gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-4">
-        <section className="min-w-0">
-          <div className="relative aspect-video min-h-[260px] overflow-hidden rounded-xl bg-black shadow-2xl ring-1 ring-white/10 sm:min-h-[420px] lg:min-h-0">
+      <main className="grid h-[calc(100%-4rem)] min-h-0 grid-rows-[minmax(300px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
+        <section className="min-h-0 bg-[#050609] p-2 lg:p-4 lg:pr-2">
+          <div className="relative h-full min-h-[300px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10">
             {loadingSources && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="h-8 w-8 animate-spin" />
-                <span>正在加载直播间…</span>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65">
+                <Loader2 className="h-9 w-9 animate-spin text-violet-400" />
+                <span className="text-sm">正在加载网络直播…</span>
               </div>
             )}
 
             {error && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
-                <p className="max-w-xl text-sm text-red-300">{error}</p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => currentSource ? setStreamReloadToken((value) => value + 1) : loadSources()}
-                    className="flex min-h-11 items-center gap-1 rounded-lg bg-rose-600 px-4 py-2 text-sm hover:bg-rose-500"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    重试
-                  </button>
-                  <button
-                    type="button"
-                    onClick={backToOriginal}
-                    className="min-h-11 rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/20"
-                  >
-                    切回原版
-                  </button>
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black px-6 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15">
+                  <Radio className="h-5 w-5 text-red-300" />
                 </div>
+                <p className="max-w-xl text-sm leading-6 text-red-200">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => currentSource ? setStreamReloadToken((value) => value + 1) : loadSources()}
+                  className="flex min-h-12 items-center gap-2 rounded-xl bg-violet-500 px-5 text-sm font-medium active:scale-95"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  重新连接
+                </button>
               </div>
             )}
 
@@ -332,111 +333,105 @@ function TeslaWebLivePageInner() {
                 qualityOptions={qualityOptions.map(({ id, label }) => ({ id, label }))}
                 quality={activeQualityId}
                 onQualityChange={handleSelectQuality}
-                onBackToOriginal={backToOriginal}
                 onPlaybackReady={() => setPlaybackNotice('')}
                 onPlaybackError={handlePlaybackError}
               />
             )}
 
             {!loadingSources && !error && !videoUrl && loadingStream && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="h-8 w-8 animate-spin" />
-                <span>正在获取直播线路…</span>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65">
+                <Loader2 className="h-9 w-9 animate-spin text-violet-400" />
+                <span>正在获取 HLS 直播线路…</span>
               </div>
             )}
 
             {!loadingSources && !error && !currentSource && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-white/60">
-                <Server className="h-10 w-10" />
-                <p>后台暂无可用直播间，请先在控制面板添加直播间。</p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-white/50">
+                <Server className="h-11 w-11" />
+                <p>后台暂无直播间，请先在控制面板添加。</p>
               </div>
             )}
 
             {playbackNotice && (
               <div className="pointer-events-none absolute inset-x-0 top-4 z-30 flex justify-center px-4">
-                <div className="max-w-[92%] rounded-full bg-black/85 px-4 py-2 text-center text-xs text-white shadow-lg backdrop-blur">
+                <div className="max-w-[92%] rounded-2xl border border-white/10 bg-black/85 px-4 py-3 text-center text-sm shadow-2xl backdrop-blur">
                   {playbackNotice}
                 </div>
               </div>
             )}
           </div>
-
-          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="font-medium">{streamInfo?.name || currentSource?.name || '未选择直播间'}</div>
-                <div className="mt-1 text-xs text-white/45">{streamInfo?.title || '选择右侧直播间，清晰度在播放器内切换'}</div>
-              </div>
-              <div className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/60">
-                {qualityOptions.length} 档清晰度 · 系统自动换线
-              </div>
-            </div>
-          </div>
         </section>
 
-        <aside className="min-w-0 lg:sticky lg:top-[72px] lg:self-start">
-          <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/95 shadow-xl">
-            <div className="flex min-h-12 items-center justify-between border-b border-white/10 px-4">
-              <div>
-                <div className="text-sm font-medium">直播间 ({sources.length})</div>
-                <div className="mt-0.5 text-[11px] text-white/40">清晰度在播放器内选择，线路由系统自动切换</div>
-              </div>
-              <Radio className="h-4 w-4 text-rose-400" />
-            </div>
-
-            <div className="border-b border-white/10 p-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
-                <input
-                  type="text"
-                  value={searchKeyword}
-                  onChange={(event) => setSearchKeyword(event.target.value)}
-                  placeholder="搜索平台、主播或标题"
-                  className="h-11 w-full rounded-lg bg-white/10 pl-9 pr-3 text-sm outline-none placeholder:text-white/35 focus:ring-1 focus:ring-rose-500"
-                />
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={loadSources}
-                  className="min-h-10 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
-                >
-                  刷新列表
-                </button>
-                <button
-                  type="button"
-                  onClick={restoreInitialSource}
-                  className="flex min-h-10 items-center justify-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/15"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  恢复进入项
-                </button>
+        <aside className="flex min-h-0 flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10">
+          <div className="flex min-h-16 items-center justify-between border-b border-white/10 px-4">
+            <div>
+              <div className="text-sm font-semibold">直播间 · {sources.length}</div>
+              <div className="mt-1 text-[11px] text-white/40">
+                {activeQuality ? `${activeQuality.label} · 自动择优 HLS 线路` : '选择直播间开始播放'}
               </div>
             </div>
+            <div className="flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Tesla 直播
+            </div>
+          </div>
 
-            <div className="max-h-[62vh] space-y-2 overflow-y-auto p-2">
-              {filteredSources.length === 0 ? (
-                <div className="py-8 text-center text-sm text-white/40">暂无其他直播间</div>
-              ) : filteredSources.map((source) => {
-                const active = currentSource?.key === source.key;
-                return (
-                  <button
-                    key={source.key}
-                    type="button"
-                    onClick={() => handleSelectSource(source)}
-                    className={`flex min-h-14 w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-rose-600 text-white' : 'bg-white/5 text-white/75 hover:bg-white/10'}`}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{source.name}</span>
-                      <span className={`mt-0.5 block text-xs ${active ? 'text-white/75' : 'text-white/40'}`}>
-                        {platformLabel(source.platform)}{source.status === 'live' ? ' · 直播中' : source.status === 'offline' ? ' · 状态待刷新' : ''}
-                      </span>
+          <div className="space-y-2 border-b border-white/10 p-3">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(event) => setSearchKeyword(event.target.value)}
+                placeholder="搜索平台、主播或标题"
+                className="min-h-12 w-full rounded-xl bg-white/10 pl-11 pr-3 text-sm outline-none placeholder:text-white/30 focus:ring-1 focus:ring-violet-400"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={loadSources}
+                className="min-h-12 rounded-xl bg-white/5 px-3 text-sm text-white/65 active:scale-95"
+              >
+                刷新列表
+              </button>
+              <button
+                type="button"
+                onClick={restoreInitialSource}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white/5 px-3 text-sm text-white/65 active:scale-95"
+              >
+                <RotateCcw className="h-4 w-4" />
+                恢复进入项
+              </button>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {filteredSources.length === 0 ? (
+              <div className="py-10 text-center text-sm text-white/40">没有匹配直播间</div>
+            ) : filteredSources.map((source) => {
+              const active = currentSource?.key === source.key;
+              return (
+                <button
+                  key={source.key}
+                  type="button"
+                  onClick={() => handleSelectSource(source)}
+                  className={`flex min-h-16 w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${active ? 'border-violet-400 bg-violet-500/20 text-white' : 'border-white/10 bg-white/5 text-white/65'}`}
+                >
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-violet-400/20' : 'bg-white/5'}`}>
+                    <Radio className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{source.name}</span>
+                    <span className="mt-1 block truncate text-xs text-white/35">
+                      {platformLabel(source.platform)}
+                      {source.status === 'live' ? ' · 直播中' : source.status === 'offline' ? ' · 待刷新' : ''}
                     </span>
-                    {active && <span className="ml-2 text-xs">当前</span>}
-                  </button>
-                );
-              })}
-            </div>
+                  </span>
+                  {active && <span className="rounded-full bg-white/10 px-2 py-1 text-[11px]">当前</span>}
+                </button>
+              );
+            })}
           </div>
         </aside>
       </main>
