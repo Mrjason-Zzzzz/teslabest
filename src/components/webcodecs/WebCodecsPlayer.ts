@@ -72,6 +72,9 @@ export class WebCodecsPlayer {
   private checkedTsContainer = false;
   private audioRemainder = new Uint8Array(0);
   private nextAudioPtsSec: number | null = null;
+  private fragmentTimelineStartSec: number | null = null;
+  private fragmentTimelineOffsetSec: number | null = null;
+  private fragmentContinuityCounter: number | null = null;
 
   private spsNalu: Uint8Array | null = null;
   private ppsNalu: Uint8Array | null = null;
@@ -148,6 +151,9 @@ export class WebCodecsPlayer {
     this.audioConfig = null;
     this.audioRemainder = new Uint8Array(0);
     this.nextAudioPtsSec = null;
+    this.fragmentTimelineStartSec = null;
+    this.fragmentTimelineOffsetSec = null;
+    this.fragmentContinuityCounter = null;
     this.checkedTsContainer = false;
     this.lastHlsClockSyncMs = 0;
     this.lastRenderedAtMs = performance.now();
@@ -245,6 +251,7 @@ export class WebCodecsPlayer {
         }
       }
       this.debugStats.bytesLoaded += bytes.byteLength;
+      this.prepareFragmentTimeline(frag);
       this.feedTsData(bytes, generation);
     };
 
@@ -353,6 +360,39 @@ export class WebCodecsPlayer {
     });
   }
 
+  private prepareFragmentTimeline(frag: any) {
+    const start = Number(frag?.start);
+    const cc = Number(frag?.cc);
+    const hasStart = Number.isFinite(start);
+    const hasCC = Number.isFinite(cc);
+    const continuityChanged =
+      hasCC &&
+      this.fragmentContinuityCounter !== null &&
+      cc !== this.fragmentContinuityCounter;
+
+    if (this.fragmentTimelineOffsetSec === null || continuityChanged) {
+      this.fragmentTimelineStartSec = hasStart ? start : null;
+      this.fragmentTimelineOffsetSec = null;
+      this.audioRemainder = new Uint8Array(0);
+      this.nextAudioPtsSec = null;
+    }
+    if (hasCC) this.fragmentContinuityCounter = cc;
+  }
+
+  private normalizeFragmentPts(rawPtsSec: number): number {
+    if (!Number.isFinite(rawPtsSec)) return 0;
+    if (
+      this.fragmentTimelineOffsetSec === null &&
+      this.fragmentTimelineStartSec !== null
+    ) {
+      // HLS keeps frag.start continuous across EXT-X-DISCONTINUITY while the
+      // underlying MPEG-TS PTS may restart. One shared offset preserves the
+      // original audio/video delta and prevents post-ad timeline overlap.
+      this.fragmentTimelineOffsetSec = this.fragmentTimelineStartSec - rawPtsSec;
+    }
+    return rawPtsSec + (this.fragmentTimelineOffsetSec || 0);
+  }
+
   private feedTsData(data: Uint8Array, generation = this.loadGeneration) {
     if (this.destroyed || generation !== this.loadGeneration || !this.packetStream) return;
     try {
@@ -365,7 +405,8 @@ export class WebCodecsPlayer {
 
   private handleVideoPes(pes: any) {
     const pesData = pes.data;
-    const pts = pes.pts != null ? pes.pts / 90000 : 0;
+    const rawPts = pes.pts != null ? pes.pts / 90000 : 0;
+    const pts = this.normalizeFragmentPts(rawPts);
     if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
 
     const nalus = this.splitNalus(pesData);
@@ -420,7 +461,8 @@ export class WebCodecsPlayer {
 
   private handleAudioPes(pes: any) {
     const pesData = pes.data;
-    const pesPts = pes.pts != null ? pes.pts / 90000 : 0;
+    const rawPesPts = pes.pts != null ? pes.pts / 90000 : 0;
+    const pesPts = this.normalizeFragmentPts(rawPesPts);
     if (!pesData || !(pesData instanceof Uint8Array) || pesData.length === 0) return;
 
     const combined = new Uint8Array(this.audioRemainder.length + pesData.length);
@@ -817,6 +859,18 @@ export class WebCodecsPlayer {
   }
 
   private getMediaTime(): number {
+    // At non-1x the hidden HLS media is the audible, pitch-preserving path.
+    // Drive Canvas from its real currentTime instead of a second estimated
+    // AudioContext clock, so buffering and ad transitions cannot accumulate
+    // an audio/video offset.
+    if (
+      this.useNativePitchPreservingAudio &&
+      this.hlsVideoEl &&
+      this.hlsVideoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      !this.hlsVideoEl.paused
+    ) {
+      return this.hlsVideoEl.currentTime;
+    }
     if (this.ctxStartTime === null || !this.audioCtx) return this.baseMediaTime;
     return this.baseMediaTime + (this.audioCtx.currentTime - this.ctxStartTime) * this.playbackRate;
   }
@@ -857,9 +911,19 @@ export class WebCodecsPlayer {
       let when = Math.max(idealWhen, now + 0.03);
       if (this.nextAudioStartTime !== 0) {
         const driftSec = idealWhen - this.nextAudioStartTime;
-        when = Math.abs(driftSec) > 0.08
-          ? Math.max(idealWhen, now + 0.03)
-          : Math.max(this.nextAudioStartTime, now + 0.03);
+        if (Math.abs(driftSec) > 0.12) {
+          // A discontinuity or ad splice can reset TS timestamps. Never start
+          // the new timeline while old future nodes are still scheduled: that
+          // is the direct cause of overlapping voices after an ad boundary.
+          for (const source of this.activeSources) {
+            try { source.stop(); } catch {}
+          }
+          this.activeSources.clear();
+          this.nextAudioStartTime = 0;
+          when = Math.max(idealWhen, now + 0.03);
+        } else {
+          when = Math.max(this.nextAudioStartTime, now + 0.03);
+        }
       }
       if (when > now + maxLeadSec + 0.12) break;
 
@@ -922,7 +986,11 @@ export class WebCodecsPlayer {
     // hls.js bases forward loading on the attached media element's currentTime.
     // Keep the hidden element near the real WebCodecs clock; otherwise loading
     // stops after its max buffer (the observed ~2 minute stall).
-    if (this.hlsVideoEl && now - this.lastHlsClockSyncMs >= 1000) {
+    if (
+      this.hlsVideoEl &&
+      !this.useNativePitchPreservingAudio &&
+      now - this.lastHlsClockSyncMs >= 1000
+    ) {
       this.lastHlsClockSyncMs = now;
       try {
         if (Math.abs(this.hlsVideoEl.currentTime - clock) > 1) {
