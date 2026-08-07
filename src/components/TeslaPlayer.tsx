@@ -269,13 +269,20 @@ export default function TeslaPlayer({
   }, [playRecordKey, initialTime]);
 
   useEffect(() => {
-    if (savedProgress > 0 && duration > 0 && seekToTime === null) {
-      const progressRatio = savedProgress / duration;
-      if (progressRatio > 0.05 && progressRatio < 0.95) {
-        setSeekToTime(savedProgress);
-      }
+    if (savedProgress <= 0 || duration <= 0) return;
+    const progressRatio = savedProgress / duration;
+    if (progressRatio <= 0.05 || progressRatio >= 0.95) return;
+    if (Math.abs(currentTimeRef.current - savedProgress) < 3) return;
+
+    setSeekToTime(savedProgress);
+    currentTimeRef.current = savedProgress;
+    setCurrentTime(savedProgress);
+    if (mode === 'webcodecs') {
+      wcPlayerRef.current?.seek(savedProgress);
+    } else if (videoRef.current) {
+      videoRef.current.currentTime = savedProgress;
     }
-  }, [savedProgress, duration, seekToTime]);
+  }, [savedProgress, duration, mode]);
 
   // ===== 播放控制（统一接口） =====
 
