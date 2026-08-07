@@ -20,7 +20,7 @@ import {
   RefreshCw,
   WifiOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
@@ -41,6 +41,8 @@ interface TeslaPlayerProps {
   onBackToOriginal?: () => void;
   onEnded?: () => void;
   playRecordKey?: string;
+  initialTime?: number;
+  onProgress?: (currentTime: number, duration: number) => void;
   onPlaybackReady?: () => void;
   onPlaybackError?: (message: string) => void;
   qualityOptions?: Array<{ id: string; label: string }>;
@@ -104,6 +106,8 @@ export default function TeslaPlayer({
   onBackToOriginal,
   onEnded: onEndedCallback,
   playRecordKey,
+  initialTime = 0,
+  onProgress,
   onPlaybackReady,
   onPlaybackError,
   qualityOptions = [],
@@ -126,7 +130,20 @@ export default function TeslaPlayer({
   const reconnectTimerRef = useRef<number | null>(null);
   const automaticReconnectAttemptsRef = useRef(0);
   const currentTimeRef = useRef(0);
+  const durationRef = useRef(0);
+  const playingRef = useRef(false);
   const scrubTimeRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+  const seekGestureRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startTime: number;
+    width: number;
+    active: boolean;
+    cancelled: boolean;
+    targetTime: number;
+  } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [buffering, setBuffering] = useState(false);
@@ -151,6 +168,11 @@ export default function TeslaPlayer({
   const [reconnectMessage, setReconnectMessage] = useState('');
   const [playbackSession, setPlaybackSession] = useState(0);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [seekGesturePreview, setSeekGesturePreview] = useState<{
+    targetTime: number;
+    delta: number;
+  } | null>(null);
+
 
   const [mode, setMode] = useState<PlayMode>(() => getInitialMode(live ? 'webcodecs' : defaultModeProp));
 
@@ -242,9 +264,9 @@ export default function TeslaPlayer({
   }, [url, live, defaultModeProp]);
 
   const savedProgress = useMemo(() => {
-    if (!playRecordKey) return 0;
-    return getSavedProgress(playRecordKey);
-  }, [playRecordKey]);
+    const legacyProgress = playRecordKey ? getSavedProgress(playRecordKey) : 0;
+    return Math.max(legacyProgress, Number.isFinite(initialTime) ? initialTime : 0);
+  }, [playRecordKey, initialTime]);
 
   useEffect(() => {
     if (savedProgress > 0 && duration > 0 && seekToTime === null) {
@@ -386,6 +408,14 @@ export default function TeslaPlayer({
     setAudioUnlockRequired(false);
   }, [muted, volume, mode]);
 
+  useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
+
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+
   const resetControlsTimer = useCallback(() => {
     if (hideControlsTimerRef.current) clearTimeout(hideControlsTimerRef.current);
     setShowControls(true);
@@ -394,16 +424,102 @@ export default function TeslaPlayer({
     }, 3000);
   }, [playing, showRateMenu, showQualityMenu]);
 
+  const persistProgress = useCallback(() => {
+    if (live) return;
+    const time = currentTimeRef.current;
+    const total = durationRef.current;
+    if (!Number.isFinite(time) || !Number.isFinite(total) || time < 1 || total <= 0) return;
+    if (playRecordKey) saveProgress(playRecordKey, time);
+    onProgress?.(time, total);
+  }, [live, onProgress, playRecordKey]);
+
   useEffect(() => {
-    if (playRecordKey) {
-      progressSaveTimerRef.current = window.setInterval(() => {
-        if (playing) saveProgress(playRecordKey, currentTime);
-      }, PROGRESS_SAVE_INTERVAL);
-    }
-    return () => {
-      if (progressSaveTimerRef.current) clearInterval(progressSaveTimerRef.current);
+    if (live) return;
+    progressSaveTimerRef.current = window.setInterval(() => {
+      if (playingRef.current) persistProgress();
+    }, PROGRESS_SAVE_INTERVAL);
+
+    const handlePageHide = () => persistProgress();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') persistProgress();
     };
-  }, [playRecordKey, playing, currentTime]);
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (progressSaveTimerRef.current) {
+        clearInterval(progressSaveTimerRef.current);
+        progressSaveTimerRef.current = null;
+      }
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      persistProgress();
+    };
+  }, [live, persistProgress]);
+
+  const beginSeekGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (live || durationRef.current <= 0 || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('button, input, select, a, [data-no-seek-gesture]')) return;
+    const width = Math.max(1, containerRef.current?.getBoundingClientRect().width || 1);
+    seekGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTime: currentTimeRef.current,
+      width,
+      active: false,
+      cancelled: false,
+      targetTime: currentTimeRef.current,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    resetControlsTimer();
+  }, [live, resetControlsTimer]);
+
+  const updateSeekGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = seekGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.cancelled) return;
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    if (!gesture.active) {
+      if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        gesture.cancelled = true;
+        setSeekGesturePreview(null);
+        return;
+      }
+      gesture.active = true;
+      suppressClickRef.current = true;
+    }
+    event.preventDefault();
+    const delta = Math.max(-300, Math.min(300, (dx / gesture.width) * 240));
+    const targetTime = Math.max(0, Math.min(durationRef.current, gesture.startTime + delta));
+    gesture.targetTime = targetTime;
+    setSeekGesturePreview({ targetTime, delta: targetTime - gesture.startTime });
+  }, []);
+
+  const finishSeekGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = seekGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    seekGestureRef.current = null;
+    setSeekGesturePreview(null);
+    if (gesture.active && !gesture.cancelled) {
+      event.preventDefault();
+      seek(gesture.targetTime);
+      window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+    }
+  }, [seek]);
+
+  const cancelSeekGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = seekGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    seekGestureRef.current = null;
+    setSeekGesturePreview(null);
+    suppressClickRef.current = false;
+  }, []);
 
   const clearBufferingTimeout = useCallback(() => {
     if (bufferingTimeoutRef.current) {
@@ -541,7 +657,8 @@ export default function TeslaPlayer({
       if (destroyed) return;
       setPlaying(false);
       clearBufferingTimeout();
-      if (playRecordKey) saveProgress(playRecordKey, duration || 0);
+      if (playRecordKey) saveProgress(playRecordKey, durationRef.current || 0);
+      if (durationRef.current > 0) onProgress?.(durationRef.current, durationRef.current);
       setTimeout(() => onEndedCallback?.(), 500);
     };
     const onVideoError = () => {
@@ -793,7 +910,8 @@ export default function TeslaPlayer({
           else if (s === 'ended') {
             setPlaying(false);
             clearBufferingTimeout();
-            if (playRecordKey) saveProgress(playRecordKey, duration || 0);
+            if (playRecordKey) saveProgress(playRecordKey, durationRef.current || 0);
+            if (durationRef.current > 0) onProgress?.(durationRef.current, durationRef.current);
             setTimeout(() => onEndedCallback?.(), 500);
           }
         },
@@ -875,10 +993,22 @@ export default function TeslaPlayer({
       className={`relative w-full bg-black transition-all duration-300 ${
         isWebFullscreen ? 'fixed inset-0 z-[9999] h-screen w-screen rounded-none' : 'h-full'
       }`}
-      style={isWebFullscreen ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 } : undefined}
+      style={isWebFullscreen
+        ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, touchAction: 'pan-y' }
+        : { touchAction: 'pan-y' }}
       onMouseMove={resetControlsTimer}
-      onTouchStart={resetControlsTimer}
-      onClick={togglePlay}
+      onPointerDown={beginSeekGesture}
+      onPointerMove={updateSeekGesture}
+      onPointerUp={finishSeekGesture}
+      onPointerCancel={cancelSeekGesture}
+      onClick={(event) => {
+        if (suppressClickRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        togglePlay();
+      }}
     >
       {/* WebCodecs renders decoded VideoFrames directly to Canvas. */}
       {mode === 'webcodecs' && (
@@ -905,6 +1035,26 @@ export default function TeslaPlayer({
           <div className="flex items-center gap-2 rounded-full bg-black/85 px-4 py-2 text-xs text-white shadow-lg backdrop-blur">
             {networkOffline ? <WifiOff className="h-4 w-4 text-amber-400" /> : <RefreshCw className="h-4 w-4 animate-spin text-green-400" />}
             <span>{networkOffline ? '网络已断开，恢复后自动续播' : reconnectMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {seekGesturePreview && !live && (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
+          <div className="rounded-2xl bg-black/80 px-6 py-4 text-center text-white shadow-2xl backdrop-blur">
+            <div className="flex items-center justify-center gap-2 text-lg font-semibold">
+              {seekGesturePreview.delta < 0
+                ? <Rewind className="h-6 w-6" />
+                : <FastForward className="h-6 w-6" />}
+              <span>
+                {seekGesturePreview.delta >= 0 ? '+' : ''}
+                {Math.round(seekGesturePreview.delta)} 秒
+              </span>
+            </div>
+            <div className="mt-1 text-sm text-white/70">
+              {formatTime(seekGesturePreview.targetTime)} / {formatTime(duration)}
+            </div>
+            <div className="mt-2 text-xs text-white/45">松手跳转</div>
           </div>
         </div>
       )}
