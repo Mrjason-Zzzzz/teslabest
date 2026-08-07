@@ -6,6 +6,16 @@ import { ChevronLeft, ChevronRight, Heart, Star, ArrowUpDown, Loader2 } from 'lu
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  generateStorageKey,
+  getAllPlayRecords,
+  savePlayRecord,
+} from '@/lib/db.client';
+import {
+  buildEpisodeProgressContentKey,
+  loadLocalEpisodeProgress,
+  saveLocalEpisodeProgress,
+} from '@/lib/episode-progress';
 import type { SearchResult } from '@/lib/types';
 
 import PageLayout from '@/components/PageLayout';
@@ -27,6 +37,16 @@ const LOADING_STAGES = [
   { key: 'fetching', label: '正在获取视频详情...' },
   { key: 'ready', label: '准备就绪，即将开始播放...' },
 ];
+
+function formatResumeTime(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+    : `${minutes}:${String(secs).padStart(2, '0')}`;
+}
 
 function normalizeTitle(title: string): string {
   return title
@@ -94,6 +114,7 @@ function TeslaPlayPageInner() {
   const [sourceNotice, setSourceNotice] = useState('');
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(initialEpisode);
   const [playUrl, setPlayUrl] = useState('');
+  const [resumeTime, setResumeTime] = useState(0);
   const [isAutoPlayingNext, setIsAutoPlayingNext] = useState(false);
 
   const [rightTab, setRightTab] = useState<'episodes' | 'sources'>('episodes');
@@ -106,9 +127,23 @@ function TeslaPlayPageInner() {
   const searchSeqRef = useRef(0);
   const triedSourceKeysRef = useRef(new Set<string>());
   const playbackLoadStartedRef = useRef(performance.now());
+  const resumeLookupSeqRef = useRef(0);
+  const lastSavedProgressRef = useRef('');
 
   const currentSource = currentDetail?.source || '';
   const currentId = currentDetail?.id || '';
+
+  const episodeProgressContentKey = useMemo(() => buildEpisodeProgressContentKey({
+    doubanId: currentDetail?.douban_id,
+    tmdbId: currentDetail?.tmdb_id,
+    title: initialTitle || currentDetail?.title || '',
+    year: year || currentDetail?.year,
+    searchType: stype,
+  }), [currentDetail?.douban_id, currentDetail?.tmdb_id, currentDetail?.title, currentDetail?.year, initialTitle, stype, year]);
+
+  const getEpisodeResumeTime = useCallback((episodeIndex: number) => {
+    return loadLocalEpisodeProgress(episodeProgressContentKey, episodeIndex) || 0;
+  }, [episodeProgressContentKey]);
 
   const searchSources = useCallback(async (
     query: string,
@@ -253,6 +288,60 @@ function TeslaPlayPageInner() {
   }, [source, id, initialTitle, initialEpisode, year, stype, fetchDetail, searchSources, preferBestSource]);
 
   useEffect(() => {
+    if (!currentDetail?.episodes?.length) {
+      setResumeTime(0);
+      return;
+    }
+
+    const seq = ++resumeLookupSeqRef.current;
+    const explicitEpisode = episodeParam !== null;
+    const requestedIndex = Math.min(
+      Math.max(0, explicitEpisode ? initialEpisode : currentEpisodeIndex),
+      currentDetail.episodes.length - 1,
+    );
+    setResumeTime(getEpisodeResumeTime(requestedIndex));
+
+    getAllPlayRecords()
+      .then((records) => {
+        if (seq !== resumeLookupSeqRef.current) return;
+        const record = records[generateStorageKey(currentDetail.source, currentDetail.id)];
+        let targetIndex = requestedIndex;
+        let targetTime = getEpisodeResumeTime(targetIndex);
+
+        if (record) {
+          const recordIndex = Math.min(
+            Math.max(0, (record.index || 1) - 1),
+            currentDetail.episodes!.length - 1,
+          );
+          if (!explicitEpisode) {
+            targetIndex = recordIndex;
+            targetTime = Math.max(
+              record.play_time || 0,
+              getEpisodeResumeTime(recordIndex),
+            );
+          } else if (recordIndex === targetIndex) {
+            targetTime = Math.max(targetTime, record.play_time || 0);
+          }
+        }
+
+        if (targetIndex !== currentEpisodeIndex) {
+          setCurrentEpisodeIndex(targetIndex);
+          const params = new URLSearchParams(window.location.search);
+          params.set('episode', String(targetIndex + 1));
+          window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+        }
+        setResumeTime(targetTime);
+        if (targetTime > 10) {
+          setSourceNotice(`继续播放：第 ${targetIndex + 1} 集 · ${formatResumeTime(targetTime)}`);
+          window.setTimeout(() => setSourceNotice(''), 4500);
+        }
+      })
+      .catch((error) => {
+        console.warn('[TeslaPlay] load play record failed, using local episode progress:', error);
+      });
+  }, [currentDetail?.source, currentDetail?.id, episodeParam, getEpisodeResumeTime, initialEpisode]);
+
+  useEffect(() => {
     if (!currentDetail || !currentDetail.episodes || currentEpisodeIndex >= currentDetail.episodes.length) {
       setPlayUrl('');
       return;
@@ -287,14 +376,16 @@ function TeslaPlayPageInner() {
 
     setIsAutoPlayingNext(true);
     window.setTimeout(() => {
+      setResumeTime(getEpisodeResumeTime(nextIndex));
       setCurrentEpisodeIndex(nextIndex);
       const params = new URLSearchParams(window.location.search);
       params.set('episode', String(nextIndex + 1));
       window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
     }, 1000);
-  }, [currentDetail, currentEpisodeIndex]);
+  }, [currentDetail, currentEpisodeIndex, getEpisodeResumeTime]);
 
   const handleSelectEpisode = useCallback((index: number) => {
+    setResumeTime(getEpisodeResumeTime(index));
     setCurrentEpisodeIndex(index);
     const params = new URLSearchParams(window.location.search);
     params.set('episode', String(index + 1));
@@ -303,7 +394,7 @@ function TeslaPlayPageInner() {
       params.set('id', currentDetail.id);
     }
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
-  }, [currentDetail]);
+  }, [currentDetail, getEpisodeResumeTime]);
 
   const handleSwitchSource = useCallback(async (src: SearchResult, notice?: string) => {
     if (src.source === currentSource && src.id === currentId) return;
@@ -406,6 +497,42 @@ function TeslaPlayPageInner() {
     if (!currentDetail) return undefined;
     return `${currentDetail.source}_${currentDetail.id}_ep${currentEpisodeIndex}`;
   }, [currentDetail, currentEpisodeIndex]);
+
+  const handlePlaybackProgress = useCallback((time: number, total: number) => {
+    if (!currentDetail || !episodeProgressContentKey || time < 1 || total <= 0) return;
+    const playTime = Math.floor(time);
+    const totalTime = Math.floor(total);
+    const saveIdentity = `${currentDetail.source}|${currentDetail.id}|${currentEpisodeIndex}|${playTime}`;
+    if (lastSavedProgressRef.current === saveIdentity) return;
+    lastSavedProgressRef.current = saveIdentity;
+
+    try {
+      saveLocalEpisodeProgress(
+        episodeProgressContentKey,
+        currentEpisodeIndex,
+        time,
+        total,
+      );
+    } catch (error) {
+      console.warn('[TeslaPlay] save local episode progress failed:', error);
+    }
+
+    void savePlayRecord(currentDetail.source, currentDetail.id, {
+      title: currentDetail.title || initialTitle,
+      source_name: currentDetail.source_name || currentDetail.source,
+      year: String(currentDetail.year || year || ''),
+      cover: currentDetail.poster || '',
+      index: currentEpisodeIndex + 1,
+      total_episodes: currentDetail.episodes?.length || 1,
+      play_time: playTime,
+      total_time: totalTime,
+      save_time: Date.now(),
+      search_title: initialTitle || currentDetail.title,
+      origin: 'vod',
+    }).catch((error) => {
+      console.warn('[TeslaPlay] save unified play record failed:', error);
+    });
+  }, [currentDetail, currentEpisodeIndex, episodeProgressContentKey, initialTitle, year]);
 
   const totalPages = useMemo(() => {
     if (!currentDetail?.episodes) return 0;
@@ -518,6 +645,8 @@ function TeslaPlayPageInner() {
                     onEnded={handlePlayEnded}
                     onBackToOriginal={backToOriginal}
                     playRecordKey={playRecordKey}
+                    initialTime={resumeTime}
+                    onProgress={handlePlaybackProgress}
                     onPlaybackReady={handlePlaybackReady}
                     onPlaybackError={handlePlaybackError}
                   />
