@@ -46,9 +46,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return NextResponse.json(
+      { error: '无法读取请求内容', code: 'INVALID_BODY' },
+      { status: 400, headers: NO_STORE_HEADERS }
+    );
+  }
+
+  if (rawBody.length > 4_096) {
+    return NextResponse.json(
+      { error: '请求内容过大', code: 'PAYLOAD_TOO_LARGE' },
+      { status: 413, headers: NO_STORE_HEADERS }
+    );
+  }
+
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json(
       { error: '请求格式不正确', code: 'INVALID_JSON' },
