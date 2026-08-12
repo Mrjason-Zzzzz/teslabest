@@ -8,7 +8,6 @@ import {
   MessageCircle,
   Play,
   RefreshCw,
-  ServerOff,
   Share2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -37,17 +36,20 @@ function pickMedia(
   return [...item.media]
     .filter(
       (media) =>
-        media.container === "hls" &&
-        media.segmentFormat === "mpegts" &&
         media.videoCodec === "h264" &&
-        media.audioCodec === "aac"
+        media.audioCodec === "aac" &&
+        (media.container === "mp4" ||
+          (media.container === "hls" && media.segmentFormat === "mpegts"))
     )
     .sort((left, right) => {
+      const containerPreference =
+        Number(right.container === "mp4") - Number(left.container === "mp4");
       const leftHeight = left.height || 0;
       const rightHeight = right.height || 0;
       const leftDistance = Math.abs(leftHeight - 720);
       const rightDistance = Math.abs(rightHeight - 720);
       return (
+        containerPreference ||
         leftDistance - rightDistance ||
         (right.bitrate || 0) - (left.bitrate || 0)
       );
@@ -252,30 +254,7 @@ export default function ShortVideoPage() {
         {loading && items.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-white">
             <Loader2 className="h-10 w-10 animate-spin text-green-400" />
-            <p className="text-sm text-white/70">正在准备 Tesla 短视频流…</p>
-          </div>
-        )}
-
-        {!loading && status && !status.configured && (
-          <div className="flex h-full items-center justify-center px-6">
-            <div className="max-w-md rounded-3xl border border-white/10 bg-white/5 p-7 text-center text-white shadow-2xl backdrop-blur">
-              <ServerOff className="mx-auto h-12 w-12 text-amber-400" />
-              <h1 className="mt-4 text-xl font-bold">
-                入口已就位，解析服务待接通
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-white/65">
-                页面已经按抖音式上下刷设计，并固定使用 Tesla Canvas/WebCodecs。
-                接入推荐流服务器后会自动出现持续更新的视频，不依赖昨天的测试链接。
-              </p>
-              <button
-                type="button"
-                onClick={() => void checkStatus()}
-                className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white active:scale-95"
-              >
-                <RefreshCw className="h-4 w-4" />
-                重新检查
-              </button>
-            </div>
+            <p className="text-sm text-white/70">正在加载抖音推荐视频…</p>
           </div>
         )}
 
@@ -357,7 +336,7 @@ export default function ShortVideoPage() {
                     {isActive && (!media || itemErrors[item.id]) && (
                       <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/75 px-8 text-center text-sm text-red-300">
                         {itemErrors[item.id] ||
-                          "该视频没有 Tesla 可播放的 H.264/AAC HLS-TS 档位"}
+                          "该视频没有 Tesla 可播放的 H.264/AAC 档位"}
                       </div>
                     )}
 

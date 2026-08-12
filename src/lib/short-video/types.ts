@@ -65,11 +65,11 @@ export interface ShortVideoFeedResponse {
 export interface ShortVideoResolverStatus {
   configured: boolean;
   contractVersion: typeof SHORT_VIDEO_RESOLVER_CONTRACT_VERSION;
-  mode: "external-resolver";
+  mode: "vercel-direct" | "external-resolver";
   player: "tesla-webcodecs";
   capabilities: {
     resolve: true;
     feed: true;
-    output: "hls-ts-h264-aac";
+    output: "mp4-h264-aac" | "hls-ts-h264-aac";
   };
 }

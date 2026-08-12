@@ -65,6 +65,7 @@
     "@libsql/client": "^0.15.0",
     "lucide-react": "^0.438.0",
     "media-icons": "^1.1.5",
+    "mp4box": "^2.4.1",
     "mux.js": "^6.3.0",
     "nanoid": "^5.1.6",
     "next": "^14.2.33",
