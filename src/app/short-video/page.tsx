@@ -166,7 +166,13 @@ export default function ShortVideoPage() {
   }, [items.length]);
 
   useEffect(() => {
-    if (activeIndex >= items.length - 3) void loadFeed(false);
+    if (
+      status?.configured &&
+      items.length > 0 &&
+      activeIndex >= items.length - 3
+    ) {
+      void loadFeed(false);
+    }
     const current = items[activeIndex];
     if (!current) return;
     try {
@@ -174,7 +180,7 @@ export default function ShortVideoPage() {
     } catch {
       // localStorage may be unavailable in private browsing.
     }
-  }, [activeIndex, items, loadFeed]);
+  }, [activeIndex, items, loadFeed, status?.configured]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
