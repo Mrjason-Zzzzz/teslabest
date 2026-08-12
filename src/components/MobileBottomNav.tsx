@@ -2,7 +2,7 @@
 
 'use client';
 
-import { Blend, Cat, Clover, Container, Film, Globe, Home, Star, Tv, TvMinimalPlay, Users } from 'lucide-react';
+import { Blend, Clapperboard, Cat, Clover, Container, Film, Globe, Home, Star, Tv, TvMinimalPlay, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -54,11 +54,16 @@ const MobileBottomNav = ({ activePath }: MobileBottomNavProps) => {
       label: '综艺',
       href: '/douban?type=show',
     },
-      {
-        icon: TvMinimalPlay,
-        label: '电视直播',
-        href: '/live',
-      },
+    {
+      icon: TvMinimalPlay,
+      label: '电视直播',
+      href: '/live',
+    },
+    {
+      icon: Clapperboard,
+      label: '刷视频',
+      href: '/short-video',
+    },
   ]);
 
   useEffect(() => {
@@ -96,6 +101,11 @@ const MobileBottomNav = ({ activePath }: MobileBottomNavProps) => {
             },
           ]
         : []),
+      {
+        icon: Clapperboard,
+        label: '刷视频',
+        href: '/short-video',
+      },
     ];
 
     // 如果启用网络直播，添加网络直播入口

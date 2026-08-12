@@ -1,86 +1,79 @@
-# Short-video resolver service boundary
+# Short video resolver contract
 
-The Tesla client must always call the same-site gateway:
+The browser only talks to same-origin MoonTVPlus routes. A private resolver is configured with server-only environment variables:
 
-```text
-GET  /api/short-video/resolve
-POST /api/short-video/resolve
-```
+- `SHORT_VIDEO_RESOLVER_BASE_URL`
+- `SHORT_VIDEO_RESOLVER_TOKEN`
+- `SHORT_VIDEO_RESOLVER_TIMEOUT_MS` (optional)
 
-The browser never receives the resolver token and never calls the external
-resolver directly. No navigation item is enabled until a resolver is
-configured.
+The application calls `${SHORT_VIDEO_RESOLVER_BASE_URL}/v1/resolve` for an individual public Douyin link and `${SHORT_VIDEO_RESOLVER_BASE_URL}/v1/feed` for the recommendation feed. Both requests use contract version `1` and a Bearer token.
 
-## Server-only environment variables
+## Recommendation feed
 
-```env
-SHORT_VIDEO_RESOLVER_BASE_URL=https://resolver.example.com/
-SHORT_VIDEO_RESOLVER_TOKEN=replace-with-a-long-random-secret
-SHORT_VIDEO_RESOLVER_TIMEOUT_MS=12000
-```
-
-All variables are server-only. Do not add the `NEXT_PUBLIC_` prefix. Production
-resolver URLs must use HTTPS; plain HTTP is accepted only for localhost
-development.
-
-- `GET /api/short-video/resolve` reports whether the adapter is configured.
-- `POST /api/short-video/resolve` accepts `{"url":"https://v.douyin.com/.../"}`.
-- Both routes require the existing MoonTV login.
-- Only official Douyin HTTPS hosts are accepted.
-- If the server is not configured, POST returns HTTP 503 with
-  `RESOLVER_NOT_CONFIGURED`.
-
-## External resolver contract v1
-
-MoonTV calls `POST {SHORT_VIDEO_RESOLVER_BASE_URL}/v1/resolve` with:
+`POST /v1/feed` receives:
 
 ```json
 {
   "version": "1",
   "provider": "douyin",
-  "url": "https://v.douyin.com/example/",
+  "mode": "recommend",
+  "cursor": "opaque-cursor",
+  "limit": 8,
   "playback": {
-    "preferredContainers": ["hls", "mp4"],
+    "preferredContainers": ["hls"],
     "preferredVideoCodec": "h264",
-    "preferredAudioCodec": "aac"
+    "preferredAudioCodec": "aac",
+    "preferredSegmentFormat": "mpegts"
   }
 }
 ```
 
-The resolver authenticates the request with
-`Authorization: Bearer <SHORT_VIDEO_RESOLVER_TOKEN>` and returns:
+The cursor is opaque. The resolver owns visitor-session maintenance, recommendation pagination, duplicate filtering, rate limiting and refresh of expired platform URLs. The browser must never receive platform cookies or signing tokens.
+
+The response contains complete video items:
 
 ```json
 {
   "version": "1",
   "provider": "douyin",
-  "id": "video-id",
-  "title": "title",
-  "author": "author",
-  "cover": "https://cdn.example.com/cover.jpg",
-  "duration": 32.5,
-  "media": [
+  "items": [
     {
-      "url": "https://cdn.example.com/video.m3u8",
-      "container": "hls",
-      "videoCodec": "h264",
-      "audioCodec": "aac",
-      "width": 1080,
-      "height": 1920,
-      "bitrate": 1800000,
-      "expiresAt": "2026-08-11T12:00:00.000Z"
+      "version": "1",
+      "provider": "douyin",
+      "id": "video-id",
+      "title": "title",
+      "description": "description",
+      "author": "author",
+      "cover": "https://...",
+      "duration": 42.5,
+      "media": [
+        {
+          "url": "https://resolver.example/v1/media/video-id/master.m3u8",
+          "container": "hls",
+          "segmentFormat": "mpegts",
+          "videoCodec": "h264",
+          "audioCodec": "aac",
+          "width": 720,
+          "height": 1280
+        }
+      ]
     }
-  ]
+  ],
+  "nextCursor": "opaque-next-cursor",
+  "hasMore": true
 }
 ```
 
-The gateway rejects malformed responses and media that is not HTTPS,
-H.264/AAC, HLS, or MP4. This keeps the future short-video page aligned with the
-Tesla Canvas/WebCodecs player instead of silently falling back to native video.
+## Tesla media requirement
 
-## Migration path
+Douyin commonly returns separate DASH video and audio tracks and may automatically select HEVC in a desktop browser. The resolver must explicitly choose AVC1/H.264 video plus MP4A/AAC audio, then remux (not transcode) them into MPEG-TS HLS for the existing Tesla Canvas/WebCodecs pipeline. Remuxing should start lazily when the selected HLS URL is requested; generating every feed item's HLS stream in advance wastes bandwidth and CPU.
 
-The website can remain on Vercel while only the resolver runs on a custom
-server. Later, the full Next.js application can move to that server without
-changing browser calls or the resolver contract: copy the same environment
-variables and keep the relative `/api/short-video/resolve` URL.
+Feed items with MP4, fMP4 HLS, HEVC, AV1, missing audio or non-HTTPS media are rejected by the same-origin gateway. No native-video fallback is exposed on the short-video page.
+
+## Browser routes
+
+- `GET /api/short-video/resolve`: authenticated resolver status
+- `POST /api/short-video/resolve`: authenticated single-link resolution
+- `GET /api/short-video/feed?cursor=...&limit=8`: authenticated recommendation pagination
+
+When the resolver is not configured, the `/short-video` entry stays visible and shows a clear setup state instead of a fake feed or a hard-coded list of sample links.

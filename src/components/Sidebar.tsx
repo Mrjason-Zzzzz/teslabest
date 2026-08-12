@@ -2,7 +2,7 @@
 
 'use client';
 
-import { Blend, Cat, Clover, Container, Film, Globe, Home, Menu, Search, Star, Tv, TvMinimalPlay, Users } from 'lucide-react';
+import { Blend, Clapperboard, Cat, Clover, Container, Film, Globe, Home, Menu, Search, Star, Tv, TvMinimalPlay, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
@@ -151,6 +151,11 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
       label: '电视直播',
       href: '/live',
     },
+    {
+      icon: Clapperboard,
+      label: '刷视频',
+      href: '/short-video',
+    },
   ]);
 
   useEffect(() => {
@@ -187,6 +192,11 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
             },
           ]
         : []),
+      {
+        icon: Clapperboard,
+        label: '刷视频',
+        href: '/short-video',
+      },
     ];
 
     // 如果启用网络直播，添加网络直播入口

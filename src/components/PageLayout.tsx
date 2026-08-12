@@ -26,6 +26,7 @@ const PageLayout = ({ children, activePath = '/', hideNavigation = false }: Page
   useEffect(() => {
     router.prefetch('/search');
     router.prefetch('/play');
+    router.prefetch('/short-video');
   }, [router]);
 
   useEffect(() => {
