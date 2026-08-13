@@ -73,7 +73,11 @@ async function generateAuthCookie(
   role: 'owner' | 'admin' | 'user',
   deviceInfo: string
 ): Promise<string> {
-  const authData: any = { role };
+  const authData: any = {
+    role,
+    accountStatus: 'active',
+    accountExpiresAt: null,
+  };
 
   if (username && process.env.PASSWORD) {
     authData.username = username;
@@ -83,7 +87,9 @@ async function generateAuthCookie(
     const dataToSign = JSON.stringify({
       username: authData.username,
       role: authData.role,
-      timestamp: authData.timestamp
+      timestamp: authData.timestamp,
+      accountStatus: authData.accountStatus,
+      accountExpiresAt: authData.accountExpiresAt
     });
     const signature = await generateSignature(dataToSign, process.env.PASSWORD);
     authData.signature = signature;
@@ -162,6 +168,12 @@ export async function POST(request: NextRequest) {
     if (!siteConfig.EnableOIDCRegistration) {
       return NextResponse.json(
         { error: 'OIDC注册未启用' },
+        { status: 403 }
+      );
+    }
+    if (siteConfig.RequireRedemptionCode) {
+      return NextResponse.json(
+        { error: '当前启用了兑换码注册，请返回普通注册页完成注册' },
         { status: 403 }
       );
     }
