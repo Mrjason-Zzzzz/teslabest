@@ -4,10 +4,11 @@
 
 import {
   Blend,
-  Clapperboard,
   Cat,
+  Clapperboard,
   Clover,
   Container,
+  Crown,
   Film,
   Globe,
   Home,
@@ -28,6 +29,8 @@ import {
   useLayoutEffect,
   useState,
 } from 'react';
+
+import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 
 import { useSite } from './SiteProvider';
 import { useWatchRoomContextSafe } from './WatchRoomProvider';
@@ -62,6 +65,23 @@ interface SidebarProps {
   activePath?: string;
 }
 
+interface SidebarMembershipInfo {
+  planLabel: string;
+  status: 'active' | 'disabled';
+  expiresAt: number | null;
+  remainingDays: number | null;
+  isExpired: boolean;
+  renewalMessage: string;
+}
+
+function formatMembershipDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}`;
+}
+
 // 在浏览器环境下通过全局变量缓存折叠状态，避免组件重新挂载时出现初始值闪烁
 declare global {
   interface Window {
@@ -78,6 +98,45 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const watchRoomContext = useWatchRoomContextSafe();
+  const [membership, setMembership] = useState<SidebarMembershipInfo | null>(
+    null
+  );
+  const [showMembershipCard, setShowMembershipCard] = useState(false);
+
+  const loadMembership = useCallback(async () => {
+    const auth = getAuthInfoFromBrowserCookie();
+    if (!auth?.username || auth.role !== 'user') {
+      setShowMembershipCard(false);
+      setMembership(null);
+      return;
+    }
+
+    setShowMembershipCard(true);
+    try {
+      const response = await fetch('/api/user/account-access', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) return;
+      setMembership((await response.json()) as SidebarMembershipInfo);
+    } catch {
+      // 会员卡是信息展示，请求失败不应阻塞导航。
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMembership();
+    const handleFocus = () => void loadMembership();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void loadMembership();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadMembership]);
 
   // 若同一次 SPA 会话中已经读取过折叠状态，则直接复用，避免闪烁
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
@@ -377,6 +436,80 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                 })}
               </div>
             </div>
+
+            {showMembershipCard && (
+              <div className='px-2 pb-3 pt-2'>
+                {isCollapsed ? (
+                  <div
+                    className={`mx-auto flex h-11 w-11 items-center justify-center rounded-xl border shadow-sm ${
+                      membership?.status === 'disabled' || membership?.isExpired
+                        ? 'border-red-300 bg-red-50 text-red-600 dark:border-red-700 dark:bg-red-950/50 dark:text-red-300'
+                        : 'border-amber-300 bg-amber-50 text-amber-600 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                    }`}
+                    title={
+                      membership
+                        ? membership.expiresAt === null
+                          ? `${membership.planLabel} · 永久有效`
+                          : `${membership.planLabel} · 剩余 ${
+                              membership.remainingDays ?? 0
+                            } 天`
+                        : '正在读取会员信息'
+                    }
+                  >
+                    <Crown className='h-5 w-5' />
+                  </div>
+                ) : (
+                  <div
+                    className={`rounded-2xl border px-3.5 py-3 shadow-sm backdrop-blur-sm ${
+                      membership?.status === 'disabled' || membership?.isExpired
+                        ? 'border-red-300 bg-red-50/95 dark:border-red-700 dark:bg-red-950/55'
+                        : 'border-amber-300 bg-amber-50/95 dark:border-amber-700 dark:bg-amber-950/45'
+                    }`}
+                  >
+                    <div className='flex items-center gap-2 text-sm font-bold text-gray-900 dark:text-gray-100'>
+                      <Crown
+                        className={`h-4 w-4 ${
+                          membership?.status === 'disabled' ||
+                          membership?.isExpired
+                            ? 'text-red-600 dark:text-red-300'
+                            : 'text-amber-600 dark:text-amber-300'
+                        }`}
+                      />
+                      <span>我的会员</span>
+                    </div>
+                    {membership ? (
+                      <>
+                        <div className='mt-2 text-sm font-semibold text-gray-800 dark:text-gray-100'>
+                          {membership.planLabel}
+                          {membership.status === 'disabled'
+                            ? ' · 已停用'
+                            : membership.isExpired
+                            ? ' · 已到期'
+                            : ''}
+                        </div>
+                        <div className='mt-1 text-xs leading-5 text-gray-700 dark:text-gray-300'>
+                          {membership.expiresAt === null
+                            ? '永久有效'
+                            : `有效至 ${formatMembershipDate(
+                                membership.expiresAt
+                              )} · 剩余 ${membership.remainingDays ?? 0} 天`}
+                        </div>
+                        {typeof membership.expiresAt === 'number' &&
+                          membership.renewalMessage && (
+                            <div className='mt-1.5 text-[11px] font-medium leading-4 text-amber-800 dark:text-amber-200'>
+                              {membership.renewalMessage}
+                            </div>
+                          )}
+                      </>
+                    ) : (
+                      <div className='mt-2 text-xs text-gray-600 dark:text-gray-300'>
+                        正在读取服务端会员状态…
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </aside>
         <div

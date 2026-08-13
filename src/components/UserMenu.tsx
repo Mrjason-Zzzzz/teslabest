@@ -2331,6 +2331,21 @@ export const UserMenu: React.FC = () => {
           accountAccess.remainingDays ?? 0
         } 天`
     : '';
+  const membershipUrgent = Boolean(
+    accountAccess &&
+      (accountAccess.status === 'disabled' || accountAccess.isExpired)
+  );
+  const membershipHeaderReminder = accountAccess
+    ? accountAccess.status === 'disabled'
+      ? '会员已停用'
+      : accountAccess.isExpired
+      ? '会员已到期'
+      : typeof accountAccess.expiresAt === 'number'
+      ? accountAccess.remainingDays === 0
+        ? '会员今日到期'
+        : `会员剩余 ${accountAccess.remainingDays ?? 0} 天`
+      : ''
+    : '';
 
   const handleOpenProfileCenter = () => {
     setIsOpen(false);
@@ -2395,12 +2410,28 @@ export const UserMenu: React.FC = () => {
               }
               handleOpenProfileCenter();
             }}
-            className='w-full border-b border-amber-200/70 bg-amber-50/80 px-4 py-3 text-left transition-colors hover:bg-amber-100/80 dark:border-amber-800/50 dark:bg-amber-950/25 dark:hover:bg-amber-900/30'
+            className={`w-full border-b px-4 py-3 text-left transition-colors ${
+              membershipUrgent
+                ? 'border-red-200 bg-red-50 hover:bg-red-100 dark:border-red-800/60 dark:bg-red-950/35 dark:hover:bg-red-900/40'
+                : 'border-amber-200/70 bg-amber-50/80 hover:bg-amber-100/80 dark:border-amber-800/50 dark:bg-amber-950/25 dark:hover:bg-amber-900/30'
+            }`}
           >
             <div className='flex items-start gap-2.5'>
-              <Crown className='mt-0.5 h-4 w-4 flex-none text-amber-600 dark:text-amber-300' />
+              <Crown
+                className={`mt-0.5 h-4 w-4 flex-none ${
+                  membershipUrgent
+                    ? 'text-red-600 dark:text-red-300'
+                    : 'text-amber-600 dark:text-amber-300'
+                }`}
+              />
               <div className='min-w-0'>
-                <div className='text-xs font-semibold text-amber-800 dark:text-amber-200'>
+                <div
+                  className={`text-xs font-semibold ${
+                    membershipUrgent
+                      ? 'text-red-800 dark:text-red-200'
+                      : 'text-amber-800 dark:text-amber-200'
+                  }`}
+                >
                   会员有效期
                 </div>
                 <div className='mt-1 text-xs leading-5 text-gray-700 dark:text-gray-200'>
@@ -2413,7 +2444,13 @@ export const UserMenu: React.FC = () => {
                 {accountAccess &&
                   typeof accountAccess.expiresAt === 'number' &&
                   accountAccess.renewalMessage && (
-                    <div className='mt-1 text-[11px] leading-4 text-amber-700/90 dark:text-amber-300/90'>
+                    <div
+                      className={`mt-1 text-[11px] font-medium leading-4 ${
+                        membershipUrgent
+                          ? 'text-red-700 dark:text-red-300'
+                          : 'text-amber-700/90 dark:text-amber-300/90'
+                      }`}
+                    >
                       {accountAccess.renewalMessage}
                     </div>
                   )}
@@ -2524,34 +2561,36 @@ export const UserMenu: React.FC = () => {
             <span className='font-medium'>登出</span>
           </button>
 
-          {/* 分割线 */}
-          <div className='my-1 border-t border-gray-200 dark:border-gray-700'></div>
-
-          {/* 版本信息 */}
-          <button
-            onClick={() => {
-              setIsVersionPanelOpen(true);
-              handleCloseMenu();
-            }}
-            className='w-full px-3 py-2 text-center flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-xs'
-          >
-            <div className='flex items-center gap-1'>
-              <span className='font-mono'>v{CURRENT_VERSION}</span>
-              {!isChecking &&
-                updateStatus &&
-                updateStatus !== UpdateStatus.FETCH_FAILED && (
-                  <div
-                    className={`w-2 h-2 rounded-full -translate-y-2 ${
-                      updateStatus === UpdateStatus.HAS_UPDATE
-                        ? 'bg-yellow-500'
-                        : updateStatus === UpdateStatus.NO_UPDATE
-                        ? 'bg-green-400'
-                        : ''
-                    }`}
-                  ></div>
-                )}
-            </div>
-          </button>
+          {!isRegisteredUser && (
+            <>
+              {/* 版本信息仅供站长/管理员排障，普通用户端不展示 */}
+              <div className='my-1 border-t border-gray-200 dark:border-gray-700'></div>
+              <button
+                onClick={() => {
+                  setIsVersionPanelOpen(true);
+                  handleCloseMenu();
+                }}
+                className='w-full px-3 py-2 text-center flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-xs'
+              >
+                <div className='flex items-center gap-1'>
+                  <span className='font-mono'>v{CURRENT_VERSION}</span>
+                  {!isChecking &&
+                    updateStatus &&
+                    updateStatus !== UpdateStatus.FETCH_FAILED && (
+                      <div
+                        className={`w-2 h-2 rounded-full -translate-y-2 ${
+                          updateStatus === UpdateStatus.HAS_UPDATE
+                            ? 'bg-yellow-500'
+                            : updateStatus === UpdateStatus.NO_UPDATE
+                            ? 'bg-green-400'
+                            : ''
+                        }`}
+                      ></div>
+                    )}
+                </div>
+              </button>
+            </>
+          )}
         </div>
       </div>
     </>
@@ -5399,7 +5438,22 @@ export const UserMenu: React.FC = () => {
 
   return (
     <>
-      <div className='relative'>
+      <div className='relative flex items-center gap-2'>
+        {membershipHeaderReminder && (
+          <button
+            type='button'
+            onClick={handleOpenProfileCenter}
+            className={`hidden h-9 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-bold shadow-sm transition-colors sm:inline-flex ${
+              membershipUrgent
+                ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-950/60 dark:text-red-200 dark:hover:bg-red-900/60'
+                : 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50'
+            }`}
+            title={accountAccess?.renewalMessage || membershipHeaderReminder}
+          >
+            <Crown className='h-4 w-4' />
+            {membershipHeaderReminder}
+          </button>
+        )}
         <button
           onClick={handleMenuClick}
           className='w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200/50 dark:text-gray-300 dark:hover:bg-gray-700/50 transition-colors'
@@ -5408,7 +5462,7 @@ export const UserMenu: React.FC = () => {
           <User className='w-full h-full' />
         </button>
         {/* 版本更新红点 */}
-        {updateStatus === UpdateStatus.HAS_UPDATE && (
+        {!isRegisteredUser && updateStatus === UpdateStatus.HAS_UPDATE && (
           <div className='absolute top-[2px] right-[2px] w-2 h-2 bg-yellow-500 rounded-full'></div>
         )}
         {/* 未读通知红点 */}
@@ -5435,6 +5489,7 @@ export const UserMenu: React.FC = () => {
         membershipRenewalMessage={accountAccess?.renewalMessage}
         membershipStatus={accountAccess?.status}
         membershipIsExpired={accountAccess?.isExpired}
+        showNotificationSettings={false}
         showDeviceManagement={storageType !== 'localstorage'}
         showChangePassword={showChangePassword}
         onOpenEmailSettings={() => {

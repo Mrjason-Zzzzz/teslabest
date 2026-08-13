@@ -26,6 +26,7 @@ interface PersonalCenterPanelProps {
   membershipRenewalMessage?: string;
   membershipStatus?: 'active' | 'disabled';
   membershipIsExpired?: boolean;
+  showNotificationSettings?: boolean;
   showDeviceManagement: boolean;
   showChangePassword: boolean;
   onOpenEmailSettings: () => void;
@@ -48,6 +49,7 @@ export function PersonalCenterPanel({
   membershipRenewalMessage,
   membershipStatus,
   membershipIsExpired,
+  showNotificationSettings = true,
   showDeviceManagement,
   showChangePassword,
   onOpenEmailSettings,
@@ -126,22 +128,24 @@ export function PersonalCenterPanel({
           </div>
 
           <div className='space-y-3'>
-            <button
-              onClick={onOpenEmailSettings}
-              className='flex w-full items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-left transition-colors hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750'
-            >
-              <div className='flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300'>
-                <Bell className='w-6 h-6' />
-              </div>
-              <div>
-                <div className='text-base font-semibold text-gray-900 dark:text-gray-100'>
-                  通知设置
+            {showNotificationSettings && (
+              <button
+                onClick={onOpenEmailSettings}
+                className='flex w-full items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-left transition-colors hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750'
+              >
+                <div className='flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300'>
+                  <Bell className='w-6 h-6' />
                 </div>
-                <div className='mt-1 text-sm text-gray-500 dark:text-gray-400'>
-                  管理邮件通知和浏览器系统通知
+                <div>
+                  <div className='text-base font-semibold text-gray-900 dark:text-gray-100'>
+                    通知设置
+                  </div>
+                  <div className='mt-1 text-sm text-gray-500 dark:text-gray-400'>
+                    管理邮件通知和浏览器系统通知
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+            )}
 
             {showDeviceManagement && (
               <button
