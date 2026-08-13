@@ -69,10 +69,27 @@ export async function middleware(request: NextRequest) {
     return handleAuthFailure(request, pathname);
   }
 
+  if (
+    authInfo.accountStatus !== 'active' ||
+    (authInfo.accountExpiresAt !== null &&
+      typeof authInfo.accountExpiresAt !== 'number')
+  ) {
+    console.log(`Legacy or disabled account token for ${authInfo.username}`);
+    return handleAuthFailure(request, pathname);
+  }
+
   // 验证 Token 时间戳
   const ACCESS_TOKEN_AGE = TOKEN_CONFIG.ACCESS_TOKEN_AGE;
   const now = Date.now();
   const age = now - authInfo.timestamp;
+
+  if (
+    typeof authInfo.accountExpiresAt === 'number' &&
+    now >= authInfo.accountExpiresAt
+  ) {
+    console.log(`Account expired for ${authInfo.username}`);
+    return handleAuthFailure(request, pathname);
+  }
 
   // 先检查 Refresh Token 是否过期
   if (now >= authInfo.refreshExpires) {
@@ -97,6 +114,8 @@ export async function middleware(request: NextRequest) {
     authInfo.username,
     authInfo.role,
     authInfo.timestamp,
+    authInfo.accountStatus,
+    authInfo.accountExpiresAt,
     authInfo.signature,
     process.env.PASSWORD || ''
   );
@@ -120,6 +139,8 @@ async function verifySignature(
   username: string,
   role: string,
   timestamp: number,
+  accountStatus: 'active',
+  accountExpiresAt: number | null,
   signature: string,
   secret: string
 ): Promise<boolean> {
@@ -130,7 +151,9 @@ async function verifySignature(
   const dataToSign = JSON.stringify({
     username,
     role,
-    timestamp
+    timestamp,
+    accountStatus,
+    accountExpiresAt
   });
   const messageData = encoder.encode(dataToSign);
 
