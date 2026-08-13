@@ -21,6 +21,40 @@ let focusSource: ConstantSourceNode | OscillatorNode | null = null;
 let focusGain: GainNode | null = null;
 let focusAudioElement: HTMLAudioElement | null = null;
 let focusReleaseTimer: number | null = null;
+let activeMediaControls: TeslaMediaSessionOptions | null = null;
+let activeMediaControlsToken = 0;
+let internalKeeperAction: 'play' | 'pause' | null = null;
+let internalKeeperActionTimer: number | null = null;
+
+function invokeMediaControl(handler: (() => void) | null | undefined): void {
+  if (!handler) return;
+  try {
+    handler();
+  } catch {
+    // Vehicle media controls must never break the playback event loop.
+  }
+}
+
+function markInternalKeeperAction(action: 'play' | 'pause'): void {
+  internalKeeperAction = action;
+  if (internalKeeperActionTimer !== null) {
+    window.clearTimeout(internalKeeperActionTimer);
+  }
+  internalKeeperActionTimer = window.setTimeout(() => {
+    internalKeeperAction = null;
+    internalKeeperActionTimer = null;
+  }, 1500);
+}
+
+function consumeInternalKeeperAction(action: 'play' | 'pause'): boolean {
+  if (internalKeeperAction !== action) return false;
+  internalKeeperAction = null;
+  if (internalKeeperActionTimer !== null) {
+    window.clearTimeout(internalKeeperActionTimer);
+    internalKeeperActionTimer = null;
+  }
+  return true;
+}
 
 function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return;
@@ -97,6 +131,26 @@ export function setTeslaMediaSessionState(
   }
 }
 
+export function setTeslaMediaSessionPosition(
+  duration: number,
+  position: number,
+  playbackRate = 1
+): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator))
+    return;
+  if (!Number.isFinite(duration) || duration <= 0) return;
+  const safePosition = Math.max(0, Math.min(duration, position));
+  try {
+    navigator.mediaSession.setPositionState({
+      duration,
+      position: safePosition,
+      playbackRate: Math.max(0.1, playbackRate),
+    });
+  } catch {
+    // Older Tesla Chromium versions may expose Media Session without position.
+  }
+}
+
 export interface TeslaMediaSessionOptions {
   title?: string;
   poster?: string;
@@ -104,6 +158,7 @@ export interface TeslaMediaSessionOptions {
   onPause: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
+  onSeekTo?: (seconds: number) => void;
 }
 
 /**
@@ -123,6 +178,8 @@ export function bindTeslaMediaSession(
   }
 
   const mediaSession = navigator.mediaSession;
+  const bindingToken = ++activeMediaControlsToken;
+  activeMediaControls = options;
   try {
     mediaSession.metadata = new MediaMetadata({
       title: options.title || 'Tesla 视频播放',
@@ -146,16 +203,65 @@ export function bindTeslaMediaSession(
     }
   };
 
-  register('play', options.onPlay);
-  register('pause', options.onPause);
-  register('previoustrack', options.onPrevious || null);
-  register('nexttrack', options.onNext || null);
+  register('play', () => invokeMediaControl(activeMediaControls?.onPlay));
+  register('pause', () => invokeMediaControl(activeMediaControls?.onPause));
+  register('stop', () => invokeMediaControl(activeMediaControls?.onPause));
+  register('previoustrack', () =>
+    invokeMediaControl(activeMediaControls?.onPrevious)
+  );
+  register('nexttrack', () => invokeMediaControl(activeMediaControls?.onNext));
+  // Some embedded Chromium/Tesla releases expose the left/right media-card
+  // buttons as seek actions instead of track actions. Map both spellings to
+  // the requested episode/video navigation.
+  register('seekbackward', () =>
+    invokeMediaControl(activeMediaControls?.onPrevious)
+  );
+  register('seekforward', () =>
+    invokeMediaControl(activeMediaControls?.onNext)
+  );
+  register('seekto', (details) => {
+    const seekTime = details.seekTime;
+    if (Number.isFinite(seekTime)) {
+      activeMediaControls?.onSeekTo?.(seekTime as number);
+    }
+  });
+
+  const handleHardwareMediaKey = (event: KeyboardEvent) => {
+    if (event.repeat) return;
+    if (event.key === 'MediaPlayPause') {
+      const state = mediaSession.playbackState;
+      invokeMediaControl(
+        state === 'playing'
+          ? activeMediaControls?.onPause
+          : activeMediaControls?.onPlay
+      );
+    } else if (event.key === 'MediaPlay') {
+      invokeMediaControl(activeMediaControls?.onPlay);
+    } else if (event.key === 'MediaPause' || event.key === 'MediaStop') {
+      invokeMediaControl(activeMediaControls?.onPause);
+    } else if (event.key === 'MediaTrackPrevious') {
+      invokeMediaControl(activeMediaControls?.onPrevious);
+    } else if (event.key === 'MediaTrackNext') {
+      invokeMediaControl(activeMediaControls?.onNext);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  };
+  window.addEventListener('keydown', handleHardwareMediaKey, true);
 
   return () => {
+    window.removeEventListener('keydown', handleHardwareMediaKey, true);
+    if (activeMediaControlsToken !== bindingToken) return;
+    activeMediaControls = null;
     register('play', null);
     register('pause', null);
+    register('stop', null);
     register('previoustrack', null);
     register('nexttrack', null);
+    register('seekbackward', null);
+    register('seekforward', null);
+    register('seekto', null);
   };
 }
 
@@ -199,6 +305,18 @@ function ensureFocusKeeper(context: AudioContext): HTMLAudioElement | null {
     audio.setAttribute('playsinline', '');
     audio.setAttribute('aria-hidden', 'true');
     audio.srcObject = focusDestination.stream;
+    // Tesla's media card can control the active native media element without
+    // dispatching Media Session action handlers. Bridge those native state
+    // changes back to the real Canvas/WebCodecs player. Internal keeper calls
+    // are marked and ignored, so they cannot pause/play the program twice.
+    audio.addEventListener('play', () => {
+      if (consumeInternalKeeperAction('play')) return;
+      invokeMediaControl(activeMediaControls?.onPlay);
+    });
+    audio.addEventListener('pause', () => {
+      if (consumeInternalKeeperAction('pause')) return;
+      invokeMediaControl(activeMediaControls?.onPause);
+    });
     document.body.appendChild(audio);
     focusAudioElement = audio;
     return audio;
@@ -251,7 +369,10 @@ export async function claimTeslaAudioFocus(
 
   if (!keeper) return context.state === 'running';
   try {
-    await keeper.play();
+    if (keeper.paused) {
+      markInternalKeeperAction('play');
+      await keeper.play();
+    }
   } catch {
     // A previous explicit user gesture may still keep WebAudio available even
     // when the silent media keeper is blocked.
@@ -265,7 +386,10 @@ export function deferTeslaAudioFocusRelease(delayMs = 2500): void {
   focusReleaseTimer = window.setTimeout(() => {
     focusReleaseTimer = null;
     try {
-      focusAudioElement?.pause();
+      if (focusAudioElement && !focusAudioElement.paused) {
+        markInternalKeeperAction('pause');
+        focusAudioElement.pause();
+      }
     } catch {
       // The page may already be tearing down; focus release is best-effort.
     }

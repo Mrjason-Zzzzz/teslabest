@@ -36,7 +36,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const channelData = await getCachedLiveChannels(sourceKey);
+    // Channel selection does not need the potentially large XMLTV document.
+    // Return the parsed playlist immediately; the EPG endpoint loads programme
+    // data on demand.
+    const channelData = await getCachedLiveChannels(sourceKey, {
+      includeEpg: false,
+    });
 
     if (!channelData) {
       return NextResponse.json({ error: '频道信息未找到' }, { status: 404 });

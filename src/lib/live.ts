@@ -9,7 +9,9 @@ export const DEFAULT_LIVE_REFRESH_INTERVAL_HOURS = 12;
 
 let lastGlobalLiveRefreshTime = 0;
 
-export function getLiveRefreshIntervalHours(refreshIntervalHours?: number): number {
+export function getLiveRefreshIntervalHours(
+  refreshIntervalHours?: number
+): number {
   const normalizedInterval = Number(refreshIntervalHours);
 
   if (!Number.isFinite(normalizedInterval) || normalizedInterval <= 0) {
@@ -47,32 +49,47 @@ export interface LiveChannels {
   };
 }
 
-const cachedLiveChannels: { [key: string]: LiveChannels } = {};
+interface CachedLiveChannels extends LiveChannels {
+  epgUa: string;
+  epgLoaded: boolean;
+  epgLoading?: Promise<void>;
+}
+
+const cachedLiveChannels: { [key: string]: CachedLiveChannels } = {};
 
 export function deleteCachedLiveChannels(key: string) {
   delete cachedLiveChannels[key];
 }
 
 export async function getCachedLiveChannels(
-  key: string
+  key: string,
+  options: { includeEpg?: boolean } = {}
 ): Promise<LiveChannels | null> {
+  const includeEpg = options.includeEpg !== false;
   if (!cachedLiveChannels[key]) {
     const config = await getConfig();
     const liveInfo = config.LiveConfig?.find((live) => live.key === key);
     if (!liveInfo) {
       return null;
     }
-    const channelNum = await refreshLiveChannels(liveInfo);
+    const channelNum = await refreshLiveChannels(liveInfo, {
+      loadEpg: includeEpg,
+    });
     if (channelNum === 0) {
       return null;
     }
     liveInfo.channelNumber = channelNum;
     await db.saveAdminConfig(config);
+  } else if (includeEpg && !cachedLiveChannels[key].epgLoaded) {
+    await hydrateCachedEpg(
+      cachedLiveChannels[key],
+      cachedLiveChannels[key].epgUa
+    );
   }
   return cachedLiveChannels[key] || null;
 }
 
-export async function refreshLiveChannels(liveInfo: {
+type LiveInfo = {
   key: string;
   name: string;
   url: string;
@@ -81,7 +98,34 @@ export async function refreshLiveChannels(liveInfo: {
   from: 'config' | 'custom';
   channelNumber?: number;
   disabled?: boolean;
-}): Promise<number> {
+};
+
+async function hydrateCachedEpg(
+  entry: CachedLiveChannels,
+  ua: string
+): Promise<void> {
+  if (entry.epgLoaded) return;
+  if (!entry.epgLoading) {
+    entry.epgLoading = parseEpg(
+      entry.epgUrl,
+      ua,
+      entry.channels.map((channel) => channel.tvgId).filter(Boolean)
+    )
+      .then((epgs) => {
+        entry.epgs = epgs;
+        entry.epgLoaded = true;
+      })
+      .finally(() => {
+        entry.epgLoading = undefined;
+      });
+  }
+  await entry.epgLoading;
+}
+
+export async function refreshLiveChannels(
+  liveInfo: LiveInfo,
+  options: { loadEpg?: boolean } = {}
+): Promise<number> {
   if (cachedLiveChannels[liveInfo.key]) {
     delete cachedLiveChannels[liveInfo.key];
   }
@@ -96,16 +140,18 @@ export async function refreshLiveChannels(liveInfo: {
     ? parseM3U(liveInfo.key, data)
     : parseTxtLive(liveInfo.key, data);
   const epgUrl = liveInfo.epg || result.tvgUrl;
-  const tvgIds = result.channels
-    .map((channel) => channel.tvgId)
-    .filter((tvgId) => tvgId);
-  const epgs = await parseEpg(epgUrl, liveInfo.ua || defaultUA, tvgIds);
-  cachedLiveChannels[liveInfo.key] = {
+  const entry: CachedLiveChannels = {
     channelNumber: result.channels.length,
     channels: result.channels,
     epgUrl: epgUrl,
-    epgs: epgs,
+    epgs: {},
+    epgUa: liveInfo.ua || defaultUA,
+    epgLoaded: !epgUrl,
   };
+  cachedLiveChannels[liveInfo.key] = entry;
+  if (options.loadEpg !== false && epgUrl) {
+    await hydrateCachedEpg(entry, liveInfo.ua || defaultUA);
+  }
   return result.channels.length;
 }
 

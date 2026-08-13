@@ -28,6 +28,7 @@ export interface PlayerCallbacks {
   onTime?: (currentSec: number) => void;
   onDurationChange?: (durationSec: number) => void;
   onStateChange?: (state: PlayerState) => void;
+  onFirstVideoFrame?: () => void;
   onError?: (message: string) => void;
   liveHint?: boolean;
 }
@@ -106,6 +107,7 @@ export class WebCodecsPlayer {
   private ppsNalu: Uint8Array | null = null;
 
   private renderedFrames = 0;
+  private firstVideoFrameReported = false;
   private decodedFrames = 0;
   private droppedFrames = 0;
   private statsMark = { t: 0, rendered: 0, decoded: 0 };
@@ -201,6 +203,7 @@ export class WebCodecsPlayer {
     this.ctxStartTime = null;
     this.nextAudioStartTime = 0;
     this.renderedFrames = 0;
+    this.firstVideoFrameReported = false;
     this.decodedFrames = 0;
     this.droppedFrames = 0;
     this.statsMark = { t: performance.now(), rendered: 0, decoded: 0 };
@@ -1374,6 +1377,10 @@ export class WebCodecsPlayer {
     this.ctx.fillRect(0, 0, width, height);
     this.ctx.drawImage(frame, x, y, drawWidth, drawHeight);
     this.canvasSized = true;
+    if (!this.firstVideoFrameReported) {
+      this.firstVideoFrameReported = true;
+      this.cb.onFirstVideoFrame?.();
+    }
   }
 
   private canUseNativePitchPreservingAudio(): boolean {

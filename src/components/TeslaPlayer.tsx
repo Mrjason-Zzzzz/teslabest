@@ -34,6 +34,7 @@ import {
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
   getTeslaAudioSession,
+  setTeslaMediaSessionPosition,
   setTeslaMediaSessionState,
   unlockTeslaAudioSession,
   updateTeslaAudioSession,
@@ -362,7 +363,7 @@ export default function TeslaPlayer({
         unlockAndRemember()
           .then((unlocked) => unlocked && player.ensureAudible())
           .then(() => {
-            if (!playing) player.play();
+            if (!playingRef.current) player.play();
           })
           .catch(() => {});
         return;
@@ -392,7 +393,7 @@ export default function TeslaPlayer({
         deferTeslaAudioFocusRelease(1200);
       }
     }
-  }, [mode, muted, playing, title, volume]);
+  }, [mode, muted, title, volume]);
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -478,6 +479,11 @@ export default function TeslaPlayer({
     setTeslaMediaSessionState(playing ? 'playing' : 'paused');
   }, [playing]);
 
+  useEffect(() => {
+    if (live) return;
+    setTeslaMediaSessionPosition(duration, currentTime, rate);
+  }, [currentTime, duration, live, rate]);
+
   useEffect(
     () =>
       bindTeslaMediaSession({
@@ -491,8 +497,9 @@ export default function TeslaPlayer({
         },
         onPrevious: live ? undefined : onPrevious,
         onNext: live ? undefined : onNext,
+        onSeekTo: live ? undefined : seek,
       }),
-    [live, onNext, onPrevious, poster, title, togglePlay]
+    [live, onNext, onPrevious, poster, seek, title, togglePlay]
   );
 
   const resetControlsTimer = useCallback(() => {
@@ -1059,7 +1066,8 @@ export default function TeslaPlayer({
     }
 
     let destroyed = false;
-    let firstFrameTimer: number | null = null;
+    let firstFrameWarningTimer: number | null = null;
+    let firstFrameFailureTimer: number | null = null;
     setLoading(true);
     setError(null);
 
@@ -1078,10 +1086,6 @@ export default function TeslaPlayer({
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
-            if (firstFrameTimer) {
-              clearTimeout(firstFrameTimer);
-              firstFrameTimer = null;
-            }
             const session = getTeslaAudioSession();
             const audioActive = wcPlayerRef.current?.isAudioActive() ?? false;
             const shouldBeMuted = session.muted || !session.unlocked;
@@ -1095,7 +1099,7 @@ export default function TeslaPlayer({
             setLoading(false);
             clearBufferingTimeout();
             setEngineLabel('Tesla 播放');
-            reportPlaybackReady();
+            if (!live) reportPlaybackReady();
           } else if (s === 'paused') {
             setPlaying(false);
             setBuffering(false);
@@ -1111,6 +1115,25 @@ export default function TeslaPlayer({
               onProgress?.(durationRef.current, durationRef.current);
             setTimeout(() => onEndedCallback?.(), 500);
           }
+        },
+        onFirstVideoFrame: () => {
+          if (destroyed) return;
+          if (firstFrameWarningTimer) {
+            clearTimeout(firstFrameWarningTimer);
+            firstFrameWarningTimer = null;
+          }
+          if (firstFrameFailureTimer) {
+            clearTimeout(firstFrameFailureTimer);
+            firstFrameFailureTimer = null;
+          }
+          // A delayed live stream may produce its first real Canvas frame
+          // after the warning. Clear stale overlays immediately instead of
+          // leaving a successful picture hidden behind a previous timeout.
+          setError(null);
+          setReconnectMessage('');
+          setBuffering(false);
+          setLoading(false);
+          reportPlaybackReady();
         },
         onError: (msg) => {
           if (destroyed) return;
@@ -1146,20 +1169,30 @@ export default function TeslaPlayer({
       // must not inherit that rule: slow MP4 range probing and sparse-keyframe
       // HLS are valid and are covered by the generic loading timeout instead.
       if (live) {
-        firstFrameTimer = window.setTimeout(() => {
+        firstFrameWarningTimer = window.setTimeout(() => {
           if (
             destroyed ||
             playbackReadyReportedRef.current ||
             (typeof navigator !== 'undefined' && !navigator.onLine)
           )
             return;
-          const message = '直播未在限定时间内产生有效画面';
+          setReconnectMessage('直播画面加载较慢，正在继续等待视频帧…');
+          setBuffering(true);
+        }, 30000);
+        firstFrameFailureTimer = window.setTimeout(() => {
+          if (
+            destroyed ||
+            playbackReadyReportedRef.current ||
+            (typeof navigator !== 'undefined' && !navigator.onLine)
+          )
+            return;
+          const message = '直播长时间未产生有效画面，请重试当前频道';
           console.warn('[TeslaPlayer]', message);
           setLoading(false);
           setBuffering(false);
           setError(message);
           reportPlaybackError(message);
-        }, 18000);
+        }, 90000);
       }
 
       const statsTimer = window.setInterval(() => {
@@ -1173,7 +1206,8 @@ export default function TeslaPlayer({
       return () => {
         destroyed = true;
         clearInterval(statsTimer);
-        if (firstFrameTimer) clearTimeout(firstFrameTimer);
+        if (firstFrameWarningTimer) clearTimeout(firstFrameWarningTimer);
+        if (firstFrameFailureTimer) clearTimeout(firstFrameFailureTimer);
         clearBufferingTimeout();
         player.destroy();
         wcPlayerRef.current = null;
