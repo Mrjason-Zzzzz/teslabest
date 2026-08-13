@@ -1,7 +1,9 @@
 /* eslint-disable no-console */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { resolveAccountAccess } from '@/lib/account-access';
 import { getAuthInfoFromCookie, parseAuthInfo } from '@/lib/auth';
+import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { refreshAccessToken } from '@/lib/middleware-auth';
 import { TOKEN_CONFIG } from '@/lib/refresh-token';
@@ -67,7 +69,10 @@ export async function POST(request: NextRequest) {
     !authInfo.timestamp ||
     !authInfo.tokenId ||
     !authInfo.refreshToken ||
-    !authInfo.refreshExpires
+    !authInfo.refreshExpires ||
+    authInfo.accountStatus !== 'active' ||
+    (authInfo.accountExpiresAt !== null &&
+      typeof authInfo.accountExpiresAt !== 'number')
   ) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -92,6 +97,16 @@ export async function POST(request: NextRequest) {
     if (userInfo.role !== authInfo.role) {
       return NextResponse.json({ error: 'Role changed' }, { status: 401 });
     }
+
+    const config = await getConfig();
+    const access = resolveAccountAccess(config, authInfo.username, now);
+    if (access.status === 'disabled') {
+      return NextResponse.json({ error: 'Account disabled' }, { status: 403 });
+    }
+    if (access.isExpired) {
+      return NextResponse.json({ error: 'Account expired' }, { status: 403 });
+    }
+    authInfo.accountExpiresAt = access.expiresAt;
   }
 
   // 只检查 Refresh Token 是否过期
@@ -109,7 +124,8 @@ export async function POST(request: NextRequest) {
     authInfo.role,
     authInfo.tokenId,
     authInfo.refreshToken,
-    authInfo.refreshExpires
+    authInfo.refreshExpires,
+    authInfo.accountExpiresAt ?? null
   );
 
   if (!newAuthData) {
@@ -117,7 +133,11 @@ export async function POST(request: NextRequest) {
   }
 
   const response = buildRefreshResponse(newAuthData);
-  const expires = new Date(authInfo.refreshExpires);
+  const expires = new Date(
+    authInfo.accountExpiresAt
+      ? Math.min(authInfo.refreshExpires, authInfo.accountExpiresAt)
+      : authInfo.refreshExpires
+  );
   response.cookies.set('auth', newAuthData, {
     path: '/',
     expires,
