@@ -424,6 +424,8 @@ export interface AdminConfig {
       excludeText?: string; // 排除关键词，逗号分隔；标题包含任一则跳过
       source: 'acgrip' | 'mikan' | 'dmhy' | 'nyaa';
       enabled: boolean;
+      onePerEpisode?: boolean;
+      refillMissingEpisodes?: boolean;
       lastCheckTime: number;
       lastEpisode: number;
       createdAt: number;
