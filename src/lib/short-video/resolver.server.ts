@@ -189,7 +189,8 @@ function sanitizeHttpsUrl(
 
 function firstImageUrl(value: unknown): string | undefined {
   const record = asRecord(value);
-  const urls = Array.isArray(record?.url_list) ? record.url_list : [];
+  const urlList = record?.url_list;
+  const urls = Array.isArray(urlList) ? urlList : [];
   const safeUrls = urls
     .map((url) => sanitizeHttpsUrl(url))
     .filter(Boolean) as string[];
@@ -201,7 +202,8 @@ function firstImageUrl(value: unknown): string | undefined {
 
 function firstMediaUrl(value: unknown): string | undefined {
   const record = asRecord(value);
-  const urls = Array.isArray(record?.url_list) ? record.url_list : [];
+  const urlList = record?.url_list;
+  const urls = Array.isArray(urlList) ? urlList : [];
   const safeUrls = urls
     .map((url) => sanitizeHttpsUrl(url))
     .filter(Boolean) as string[];
@@ -598,8 +600,9 @@ function findRouterVideoItem(value: unknown): unknown {
   for (const entry of Object.values(loaderData)) {
     const record = asRecord(entry);
     const response = asRecord(record?.videoInfoRes);
-    if (Array.isArray(response?.item_list) && response.item_list.length > 0) {
-      return response.item_list[0];
+    const itemList = response?.item_list;
+    if (Array.isArray(itemList) && itemList.length > 0) {
+      return itemList[0];
     }
   }
   return undefined;
