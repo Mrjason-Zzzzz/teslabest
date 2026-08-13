@@ -58,6 +58,7 @@ export interface AdminConfig {
     EnableRegistration?: boolean; // 开启注册
     RequireRegistrationInviteCode?: boolean; // 注册时要求邀请码
     RegistrationInviteCode?: string; // 通用注册邀请码
+    RequireRedemptionCode?: boolean; // 注册时要求一次性兑换码
     RegistrationRequireTurnstile?: boolean; // 注册启用Cloudflare Turnstile
     LoginRequireTurnstile?: boolean; // 登录启用Cloudflare Turnstile
     TurnstileSiteKey?: string; // Cloudflare Turnstile Site Key
@@ -96,6 +97,29 @@ export interface AdminConfig {
       name: string;
       enabledApis: string[];
       permissions?: string[];
+    }[];
+    AccessPolicies?: Record<
+      string,
+      {
+        plan: '1_month' | '3_months' | '12_months' | 'permanent';
+        status: 'active' | 'disabled';
+        expiresAt: number | null;
+        source: 'legacy' | 'admin' | 'redemption';
+        createdAt: number;
+        updatedAt: number;
+      }
+    >;
+    RedemptionCodes?: {
+      id: string;
+      codeHash: string;
+      codeHint: string;
+      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      status: 'active' | 'used' | 'revoked';
+      label?: string;
+      createdAt: number;
+      codeExpiresAt?: number | null;
+      usedAt?: number;
+      usedBy?: string;
     }[];
   };
   SpecialSourceApis?: string[]; // 特殊源 key 列表，默认对普通入口隐藏
