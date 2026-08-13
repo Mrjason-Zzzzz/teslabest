@@ -21,6 +21,16 @@ const VERSION_CHECK_URLS = [
  * @returns Promise<UpdateStatus> - 返回版本检查状态
  */
 export async function checkForUpdates(): Promise<UpdateStatus> {
+  // P002 是带 Tesla 播放器定制的维护分支。默认不把纯上游版本当作
+  // 可直接覆盖的更新，避免误点升级破坏 Canvas/WebCodecs 播放链路。
+  // 需要人工评估上游时，可显式开启此构建变量恢复提醒。
+  if (
+    CURRENT_VERSION.includes('-p002.') &&
+    process.env.NEXT_PUBLIC_ENABLE_UPSTREAM_UPDATE_NOTICE !== 'true'
+  ) {
+    return UpdateStatus.NO_UPDATE;
+  }
+
   try {
     // 尝试从主要URL获取版本信息
     const primaryVersion = await fetchVersionFromUrl(VERSION_CHECK_URLS[0]);
