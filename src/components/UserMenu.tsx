@@ -9,6 +9,7 @@ import {
   ChevronUp,
   CircleHelp,
   Copy,
+  Crown,
   Download,
   ExternalLink,
   Eye,
@@ -68,6 +69,14 @@ interface AccountAccessInfo {
   renewalMessage: string;
 }
 
+function formatMembershipExpiry(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export const UserMenu: React.FC = () => {
   const router = useRouter();
   const { updateStatus, isChecking } = useVersionCheck();
@@ -92,6 +101,9 @@ export const UserMenu: React.FC = () => {
   const [accountAccess, setAccountAccess] = useState<AccountAccessInfo | null>(
     null
   );
+  const [accountAccessState, setAccountAccessState] = useState<
+    'idle' | 'loading' | 'loaded' | 'error'
+  >('idle');
   const [storageType, setStorageType] = useState<string>('localstorage');
   const [displayStorageType, setDisplayStorageType] =
     useState<string>('localstorage');
@@ -387,30 +399,37 @@ export const UserMenu: React.FC = () => {
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!authInfo?.username || storageType === 'localstorage') {
+  const loadAccountAccess = useCallback(async () => {
+    if (!authInfo?.username) {
       setAccountAccess(null);
+      setAccountAccessState('idle');
       return;
     }
 
-    let cancelled = false;
-    fetch('/api/user/account-access', { cache: 'no-store' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('会员状态读取失败');
-        return (await response.json()) as AccountAccessInfo;
-      })
-      .then((access) => {
-        if (!cancelled) setAccountAccess(access);
-      })
-      .catch((error) => {
-        console.warn(error);
-        if (!cancelled) setAccountAccess(null);
+    setAccountAccessState('loading');
+    try {
+      const response = await fetch('/api/user/account-access', {
+        cache: 'no-store',
+        credentials: 'same-origin',
       });
+      if (!response.ok) throw new Error('会员状态读取失败');
+      const access = (await response.json()) as AccountAccessInfo;
+      setAccountAccess(access);
+      setAccountAccessState('loaded');
+    } catch (error) {
+      console.warn(error);
+      setAccountAccessState('error');
+    }
+  }, [authInfo?.username]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [authInfo?.username, storageType]);
+  useEffect(() => {
+    void loadAccountAccess();
+  }, [loadAccountAccess]);
+
+  // 用户每次打开菜单或个人中心时都重新读取，保证管理后台续期后即时更新。
+  useEffect(() => {
+    if (isOpen || isProfileCenterOpen) void loadAccountAccess();
+  }, [isOpen, isProfileCenterOpen, loadAccountAccess]);
 
   // 加载未读通知数量
   const loadUnreadCount = async () => {
@@ -2301,6 +2320,18 @@ export const UserMenu: React.FC = () => {
       ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300'
       : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
 
+  const membershipSummary = accountAccess
+    ? accountAccess.status === 'disabled'
+      ? `${accountAccess.planLabel} · 已停用`
+      : accountAccess.isExpired
+      ? `${accountAccess.planLabel} · 已到期`
+      : typeof accountAccess.expiresAt !== 'number'
+      ? `${accountAccess.planLabel} · 永久有效`
+      : `到期时间：${formatMembershipExpiry(accountAccess.expiresAt)} · 剩余 ${
+          accountAccess.remainingDays ?? 0
+        } 天`
+    : '';
+
   const handleOpenProfileCenter = () => {
     setIsOpen(false);
     setIsProfileCenterOpen(true);
@@ -2316,7 +2347,7 @@ export const UserMenu: React.FC = () => {
       />
 
       {/* 菜单面板 */}
-      <div className='fixed top-14 right-4 w-56 bg-white dark:bg-gray-900 rounded-lg shadow-xl z-[1001] border border-gray-200/50 dark:border-gray-700/50 overflow-hidden select-none'>
+      <div className='fixed top-14 right-4 w-72 bg-white dark:bg-gray-900 rounded-lg shadow-xl z-[1001] border border-gray-200/50 dark:border-gray-700/50 overflow-hidden select-none'>
         {/* 用户信息区域 */}
         <div className='px-3 py-1 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-800 dark:to-gray-800/50'>
           <div className='flex items-start justify-between gap-3'>
@@ -2353,6 +2384,43 @@ export const UserMenu: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {authInfo?.username && (
+          <button
+            type='button'
+            onClick={() => {
+              if (accountAccessState === 'error') {
+                void loadAccountAccess();
+                return;
+              }
+              handleOpenProfileCenter();
+            }}
+            className='w-full border-b border-amber-200/70 bg-amber-50/80 px-4 py-3 text-left transition-colors hover:bg-amber-100/80 dark:border-amber-800/50 dark:bg-amber-950/25 dark:hover:bg-amber-900/30'
+          >
+            <div className='flex items-start gap-2.5'>
+              <Crown className='mt-0.5 h-4 w-4 flex-none text-amber-600 dark:text-amber-300' />
+              <div className='min-w-0'>
+                <div className='text-xs font-semibold text-amber-800 dark:text-amber-200'>
+                  会员有效期
+                </div>
+                <div className='mt-1 text-xs leading-5 text-gray-700 dark:text-gray-200'>
+                  {accountAccessState === 'loading' && !accountAccess
+                    ? '正在读取服务端会员状态…'
+                    : accountAccessState === 'error' && !accountAccess
+                    ? '会员信息暂时读取失败，点击重试'
+                    : membershipSummary || '正在读取服务端会员状态…'}
+                </div>
+                {accountAccess &&
+                  typeof accountAccess.expiresAt === 'number' &&
+                  accountAccess.renewalMessage && (
+                    <div className='mt-1 text-[11px] leading-4 text-amber-700/90 dark:text-amber-300/90'>
+                      {accountAccess.renewalMessage}
+                    </div>
+                  )}
+              </div>
+            </div>
+          </button>
+        )}
 
         {/* 菜单项 */}
         <div className='py-1'>

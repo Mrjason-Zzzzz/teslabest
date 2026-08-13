@@ -6,14 +6,44 @@ const AD_URI_KEYWORDS = [
   'advertisement',
   '/adjump',
   'redtraffic',
+  '博彩',
+  '赌博',
+  '赌场',
+  '投注',
+  '六合彩',
 ];
+
+const GAMBLING_AD_URI_PATTERN =
+  /(?:^|[/?&_.=-])(?:casino|gambling|betting|lottery|poker|slots?)(?:[/?&_.=-]|$)/i;
 
 const UNSAFE_PLAYLIST_TAG =
   /^#EXT-X-(BYTERANGE|PART|PRELOAD-HINT|GAP|SKIP|RENDITION-REPORT)/i;
 
 function isAdUri(uri: string): boolean {
-  const normalized = uri.toLowerCase();
-  return AD_URI_KEYWORDS.some((keyword) => normalized.includes(keyword));
+  let normalized = uri.toLowerCase();
+  // Tesla 代理链路会把真实分片地址包在 ?url= 中。最多解码三层，
+  // 既能检查原始地址，又避免对异常百分号编码无限循环。
+  for (let depth = 0; depth < 3; depth += 1) {
+    try {
+      const decoded = decodeURIComponent(normalized);
+      if (decoded === normalized) break;
+      normalized = decoded.toLowerCase();
+    } catch {
+      break;
+    }
+  }
+  return (
+    AD_URI_KEYWORDS.some((keyword) => normalized.includes(keyword)) ||
+    GAMBLING_AD_URI_PATTERN.test(normalized)
+  );
+}
+
+export interface AdFilterOptions {
+  /**
+   * 由站长自定义规则识别出的完整媒体分片序号。核心过滤器仍会
+   * 执行 VOD、加密和 LL-HLS 安全校验，不允许自定义逻辑绕过音画同步保护。
+   */
+  additionalAdSegmentIndexes?: ReadonlySet<number>;
 }
 
 function isCueIn(line: string): boolean {
@@ -107,7 +137,10 @@ function withoutAdSignals(lines: string[]): string[] {
  * followed by a discontinuity boundary so hls.js assigns the returning program
  * a fresh shared timeline without keeping the removed duration as a clock gap.
  */
-export function filterAdsFromMediaPlaylist(m3u8Content: string): string {
+export function filterAdsFromMediaPlaylist(
+  m3u8Content: string,
+  options: AdFilterOptions = {}
+): string {
   if (!m3u8Content || !m3u8Content.includes('#EXTM3U')) {
     return m3u8Content || '';
   }
@@ -137,6 +170,7 @@ export function filterAdsFromMediaPlaylist(m3u8Content: string): string {
   let remainingAdSeconds: number | null = null;
   let needsProgramBoundary = false;
   let removedSegments = 0;
+  let segmentIndex = 0;
 
   while (cursor < lines.length) {
     const extInfIndex = lines.findIndex(
@@ -177,7 +211,10 @@ export function filterAdsFromMediaPlaylist(m3u8Content: string): string {
     }
 
     const duration = readExtInfDuration(lines[extInfIndex]);
-    const removeSegment = adBreakActive || isAdUri(lines[uriIndex].trim());
+    const removeSegment =
+      adBreakActive ||
+      isAdUri(lines[uriIndex].trim()) ||
+      options.additionalAdSegmentIndexes?.has(segmentIndex) === true;
 
     if (removeSegment) {
       output.push(...persistentLines(prefix));
@@ -209,6 +246,7 @@ export function filterAdsFromMediaPlaylist(m3u8Content: string): string {
     }
 
     cursor = uriIndex + 1;
+    segmentIndex += 1;
   }
 
   return removedSegments > 0 ? output.join('\n') : m3u8Content;
