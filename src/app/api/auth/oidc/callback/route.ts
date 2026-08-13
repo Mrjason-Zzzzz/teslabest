@@ -1,6 +1,7 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { resolveAccountAccess } from '@/lib/account-access';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import {
@@ -71,9 +72,14 @@ function getDeviceInfo(userAgent: string): string {
 async function generateAuthCookie(
   username: string,
   role: 'owner' | 'admin' | 'user',
-  deviceInfo: string
+  deviceInfo: string,
+  accountExpiresAt: number | null
 ): Promise<string> {
-  const authData: any = { role };
+  const authData: any = {
+    role,
+    accountStatus: 'active',
+    accountExpiresAt,
+  };
 
   if (username && process.env.PASSWORD) {
     authData.username = username;
@@ -83,7 +89,9 @@ async function generateAuthCookie(
     const dataToSign = JSON.stringify({
       username: authData.username,
       role: authData.role,
-      timestamp: authData.timestamp
+      timestamp: authData.timestamp,
+      accountStatus: authData.accountStatus,
+      accountExpiresAt: authData.accountExpiresAt
     });
     const signature = await generateSignature(dataToSign, process.env.PASSWORD);
     authData.signature = signature;
@@ -215,6 +223,7 @@ export async function GET(request: NextRequest) {
     const username = await db.getUserByOidcSub(oidcSub);
     let userRole: 'owner' | 'admin' | 'user' = 'user';
 
+    let accountExpiresAt: number | null = null;
     if (username) {
       // 获取用户信息
       const userInfoV2 = await db.getUserInfoV2(username);
@@ -226,6 +235,19 @@ export async function GET(request: NextRequest) {
             new URL('/login?error=' + encodeURIComponent('用户被封禁'), origin)
           );
         }
+        const accountAccess = resolveAccountAccess(config, username);
+        if (accountAccess.status === 'disabled' || accountAccess.isExpired) {
+          return NextResponse.redirect(
+            new URL(
+              '/login?error=' +
+                encodeURIComponent(
+                  accountAccess.isExpired ? '账户已到期' : '账户已停用'
+                ),
+              origin
+            )
+          );
+        }
+        accountExpiresAt = accountAccess.expiresAt;
       }
     }
 
@@ -234,8 +256,18 @@ export async function GET(request: NextRequest) {
       const response = NextResponse.redirect(new URL('/', origin));
       const userAgent = request.headers.get('user-agent') || 'Unknown';
       const deviceInfo = getDeviceInfo(userAgent);
-      const cookieValue = await generateAuthCookie(username, userRole, deviceInfo);
-      const expires = new Date(Date.now() + TOKEN_CONFIG.REFRESH_TOKEN_AGE);
+      const cookieValue = await generateAuthCookie(
+        username,
+        userRole,
+        deviceInfo,
+        accountExpiresAt
+      );
+      const refreshExpires = Date.now() + TOKEN_CONFIG.REFRESH_TOKEN_AGE;
+      const expires = new Date(
+        accountExpiresAt
+          ? Math.min(refreshExpires, accountExpiresAt)
+          : refreshExpires
+      );
 
       response.cookies.set('auth', cookieValue, {
         path: '/',
