@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-type AccessPlan = '1_month' | '3_months' | '12_months' | 'permanent';
+type AccessPlan =
+  | '1_day'
+  | '1_month'
+  | '3_months'
+  | '6_months'
+  | '12_months'
+  | 'permanent';
 type Policy = {
   plan: AccessPlan;
   status: 'active' | 'disabled';
@@ -25,8 +31,10 @@ type SafeCode = {
 };
 
 const PLAN_LABELS: Record<AccessPlan, string> = {
+  '1_day': '天卡（1天）',
   '1_month': '1个月',
   '3_months': '3个月',
+  '6_months': '半年卡（6个月）',
   '12_months': '1年',
   permanent: '永久',
 };
@@ -174,7 +182,7 @@ export default function AccountAccessManager({
             账户有效期与兑换码
           </h4>
           <p className='mt-1 text-xs text-gray-600 dark:text-gray-400'>
-            旧账号默认永久有效；新兑换码一码一用，套餐从注册成功时开始计算。
+            旧账号默认永久有效；新兑换码一码一用，天卡与月卡均从注册成功时开始计算。
           </p>
         </div>
         <button
@@ -220,7 +228,9 @@ export default function AccountAccessManager({
               max={50}
               value={count}
               onChange={(event) =>
-                setCount(Math.max(1, Math.min(50, Number(event.target.value) || 1)))
+                setCount(
+                  Math.max(1, Math.min(50, Number(event.target.value) || 1))
+                )
               }
               className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
               placeholder='数量'
@@ -277,7 +287,9 @@ export default function AccountAccessManager({
           <div className='grid grid-cols-2 gap-3'>
             <select
               value={userPlan}
-              onChange={(event) => setUserPlan(event.target.value as AccessPlan)}
+              onChange={(event) =>
+                setUserPlan(event.target.value as AccessPlan)
+              }
               className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
             >
               {Object.entries(PLAN_LABELS).map(([value, text]) => (
@@ -306,7 +318,7 @@ export default function AccountAccessManager({
             保存并让旧会话失效
           </button>
           <p className='text-xs text-gray-500 dark:text-gray-400'>
-            重新选择 1/3/12 个月会从现在重新计时；选择永久则不设到期日。
+            重新选择天卡或 1/3/6/12 个月会从现在重新计时；选择永久则不设到期日。
           </p>
         </div>
       </div>
@@ -325,7 +337,10 @@ export default function AccountAccessManager({
           </thead>
           <tbody>
             {codes.slice(0, 100).map((code) => (
-              <tr key={code.id} className='border-t border-gray-100 dark:border-gray-800'>
+              <tr
+                key={code.id}
+                className='border-t border-gray-100 dark:border-gray-800'
+              >
                 <td className='px-3 py-2 font-mono'>{code.codeHint}</td>
                 <td className='px-3 py-2'>{PLAN_LABELS[code.plan]}</td>
                 <td className='px-3 py-2'>{STATE_LABELS[code.state]}</td>
@@ -358,7 +373,8 @@ export default function AccountAccessManager({
 
       {Object.keys(policies).length > 0 && (
         <p className='text-xs text-gray-500 dark:text-gray-400'>
-          已设置有效期账户：{Object.keys(policies).length} 个。具体到期时间会显示在下方用户列表。
+          已设置有效期账户：{Object.keys(policies).length}{' '}
+          个。具体到期时间会显示在下方用户列表。
         </p>
       )}
     </section>

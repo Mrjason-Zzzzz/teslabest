@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveAccountAccess } from '@/lib/account-access';
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -50,10 +50,15 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
 
     // 获取用户列表（优先使用新版本）
-    const result = await db.getUserListV2(offset, limit, process.env.USERNAME, search);
+    const result = await db.getUserListV2(
+      offset,
+      limit,
+      process.env.USERNAME,
+      search
+    );
 
     if (result.users.length > 0) {
-      const config = await getConfig();
+      const config = await getFreshConfig();
       const users = result.users.map((user) => ({
         ...user,
         access: resolveAccountAccess(config, user.username),

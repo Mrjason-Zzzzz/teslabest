@@ -1,24 +1,35 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-empty-function, no-empty, no-constant-condition */
 // @ts-nocheck
-import Hls from "hls.js";
-import * as MP4Box from "mp4box";
-import * as muxjs from "mux.js";
+import Hls from 'hls.js';
+import * as MP4Box from 'mp4box';
+import * as muxjs from 'mux.js';
 
-import { createAdFilteringPlaylistLoader } from "@/lib/hls/ad-filter";
-import { getTeslaAudioContext } from "@/lib/tesla/audio-session";
+import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
+import {
+  claimTeslaAudioFocus,
+  deferTeslaAudioFocusRelease,
+  getTeslaAudioContext,
+} from '@/lib/tesla/audio-session';
+import {
+  chooseCommonAvStart,
+  getTeslaAvSyncPolicy,
+  shouldResetAudioSchedule,
+} from '@/lib/tesla/av-sync';
 
 export type PlayerState =
-  | "idle"
-  | "buffering"
-  | "playing"
-  | "paused"
-  | "ended"
-  | "error";
+  | 'idle'
+  | 'buffering'
+  | 'playing'
+  | 'paused'
+  | 'ended'
+  | 'error';
 
 export interface PlayerCallbacks {
   onTime?: (currentSec: number) => void;
   onDurationChange?: (durationSec: number) => void;
   onStateChange?: (state: PlayerState) => void;
   onError?: (message: string) => void;
+  liveHint?: boolean;
 }
 
 interface Segment {
@@ -36,13 +47,14 @@ export class WebCodecsPlayer {
   private hlsVideoEl: HTMLVideoElement | null = null;
   private mp4File: any = null;
   private mp4AbortController: AbortController | null = null;
-  private sourceKind: "hls" | "mp4" = "hls";
-  private sourceUrl = "";
+  private sourceKind: 'hls' | 'mp4' = 'hls';
+  private sourceUrl = '';
   private loadGeneration = 0;
   private segments: Segment[] = [];
   private currentSegIndex = 0;
   private durationSec = 0;
   private isLivePlaylist = false;
+  private liveHint = false;
   private endedReported = false;
   private lastRenderedMediaTime = 0;
 
@@ -63,7 +75,7 @@ export class WebCodecsPlayer {
   private frameQueue: VideoFrame[] = [];
   private decodedAudio: AudioData[] = [];
 
-  private state: PlayerState = "idle";
+  private state: PlayerState = 'idle';
   private wantPlaying = true;
   private destroyed = false;
   private raf = 0;
@@ -109,7 +121,7 @@ export class WebCodecsPlayer {
   private useNativePitchPreservingAudio = false;
 
   private debugStats = {
-    hlsState: "init",
+    hlsState: 'init',
     levelCount: 0,
     currentLevel: -1,
     fragLoaded: 0,
@@ -119,17 +131,18 @@ export class WebCodecsPlayer {
     videoSamples: 0,
     audioSamples: 0,
     pmtFound: false,
-    m3u8Preview: "",
-    error: "",
-    lastError: "",
+    m3u8Preview: '',
+    error: '',
+    lastError: '',
   };
 
   constructor(canvas: HTMLCanvasElement, cb: PlayerCallbacks = {}) {
     this.canvas = canvas;
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) throw new Error("2d canvas context unavailable");
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('2d canvas context unavailable');
     this.ctx = ctx;
     this.cb = cb;
+    this.liveHint = cb.liveHint === true;
 
     if (!canvas.width || !canvas.height) {
       canvas.width = 1280;
@@ -139,7 +152,7 @@ export class WebCodecsPlayer {
 
   static isSupported(): boolean {
     return (
-      typeof VideoDecoder === "function" && typeof AudioDecoder === "function"
+      typeof VideoDecoder === 'function' && typeof AudioDecoder === 'function'
     );
   }
 
@@ -152,14 +165,14 @@ export class WebCodecsPlayer {
     this.teardownAudioGraph();
     this.destroyed = false;
     this.sourceUrl = url;
-    this.sourceKind = this.looksLikeMp4Url(url) ? "mp4" : "hls";
+    this.sourceKind = this.looksLikeMp4Url(url) ? 'mp4' : 'hls';
     this.useNativePitchPreservingAudio =
-      this.sourceKind === "hls" &&
+      this.sourceKind === 'hls' &&
       this.playbackRate !== 1 &&
       this.canUseNativePitchPreservingAudio();
     this.segments = [];
     this.currentSegIndex = 0;
-    this.isLivePlaylist = false;
+    this.isLivePlaylist = this.liveHint;
     this.endedReported = false;
     this.lastRenderedMediaTime = 0;
     this.videoConfig = null;
@@ -181,18 +194,23 @@ export class WebCodecsPlayer {
     this.decodedFrames = 0;
     this.droppedFrames = 0;
     this.statsMark = { t: performance.now(), rendered: 0, decoded: 0 };
-    this.setState("buffering");
-    console.log("[WebCodecsPlayer] load url=" + url + " startAt=" + startAt);
+    this.setState('buffering');
+    console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
+
+    // Keep the browser media session owned by this page while the audible
+    // graph and decoders are rebuilt. This keeper is silent and does not take
+    // part in the A/V clock.
+    void claimTeslaAudioFocus();
 
     this.setupAudioGraph();
     this.setupDecoders(generation);
 
-    if (this.sourceKind === "mp4") {
+    if (this.sourceKind === 'mp4') {
       this.loop();
       void this.loadMp4(url, startAt, generation).catch((error) => {
         if (this.destroyed || generation !== this.loadGeneration) return;
         this.fail(
-          error instanceof Error ? error.message : "MP4 短视频读取失败"
+          error instanceof Error ? error.message : 'MP4 短视频读取失败'
         );
       });
       return;
@@ -201,7 +219,7 @@ export class WebCodecsPlayer {
     this.initDemuxPipeline(generation);
 
     if (!Hls.isSupported()) {
-      this.fail("hls.js not supported");
+      this.fail('hls.js not supported');
       return;
     }
 
@@ -212,10 +230,13 @@ export class WebCodecsPlayer {
       pLoader: createAdFilteringPlaylistLoader(),
       lowLatencyMode: false,
       autoStartLoad: true,
-      startPosition: startAt,
-      maxBufferLength: 36,
-      maxMaxBufferLength: 72,
-      backBufferLength: 16,
+      startPosition: this.liveHint ? -1 : startAt,
+      maxBufferLength: this.liveHint ? 24 : 36,
+      maxMaxBufferLength: this.liveHint ? 48 : 72,
+      backBufferLength: this.liveHint ? 8 : 16,
+      liveSyncDurationCount: this.liveHint ? 3 : undefined,
+      liveMaxLatencyDurationCount: this.liveHint ? 10 : undefined,
+      maxLiveSyncPlaybackRate: this.liveHint ? 1.03 : 1,
       startLevel: 0,
       capLevelToPlayerSize: true,
       testBandwidth: false,
@@ -228,10 +249,10 @@ export class WebCodecsPlayer {
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_evt: any, data: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
-      this.debugStats.hlsState = "manifest-parsed";
+      this.debugStats.hlsState = 'manifest-parsed';
       this.debugStats.levelCount = data.levels?.length || 0;
       console.log(
-        "[WebCodecsPlayer] MANIFEST_PARSED, levels:",
+        '[WebCodecsPlayer] MANIFEST_PARSED, levels:',
         data.levels?.length
       );
     });
@@ -245,7 +266,7 @@ export class WebCodecsPlayer {
         this.hls.config.maxMaxBufferLength = 48;
         this.hls.config.backBufferLength = 8;
       }
-      this.debugStats.hlsState = "level-loaded";
+      this.debugStats.hlsState = 'level-loaded';
       this.debugStats.currentLevel = data.level;
 
       if (details && details.fragments && details.fragments.length > 0) {
@@ -265,9 +286,9 @@ export class WebCodecsPlayer {
         }
 
         console.log(
-          "[WebCodecsPlayer] LEVEL_LOADED, segments:",
+          '[WebCodecsPlayer] LEVEL_LOADED, segments:',
           this.segments.length,
-          "duration:",
+          'duration:',
           this.durationSec
         );
       }
@@ -283,7 +304,7 @@ export class WebCodecsPlayer {
       if (!this.checkedTsContainer) {
         this.checkedTsContainer = true;
         if (!this.isTransportStreamPayload(bytes)) {
-          this.fail("当前直播线路不是 Tesla 播放所需的 H.264/AAC TS");
+          this.fail('当前直播线路不是 Tesla 播放所需的 H.264/AAC TS');
           return;
         }
       }
@@ -294,7 +315,7 @@ export class WebCodecsPlayer {
 
     const isEncryptedFragment = (frag: any) => {
       const method = frag?.decryptdata?.method;
-      return Boolean(method && method !== "NONE");
+      return Boolean(method && method !== 'NONE');
     };
 
     hls.on(Hls.Events.FRAG_LOADED, (_evt: any, data: any) => {
@@ -322,13 +343,13 @@ export class WebCodecsPlayer {
 
     hls.on(Hls.Events.ERROR, (_evt: any, data: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
-      console.warn("[WebCodecsPlayer] HLS ERROR:", data.type, data.details);
+      console.warn('[WebCodecsPlayer] HLS ERROR:', data.type, data.details);
       this.debugStats.lastError = data.details || data.type;
       if (!data.fatal) return;
 
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        this.setState("buffering");
-        if (typeof navigator !== "undefined" && !navigator.onLine) return;
+        this.setState('buffering');
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
         if (this.hlsNetworkRecoveryAttempts < 5) {
           const attempt = ++this.hlsNetworkRecoveryAttempts;
@@ -356,19 +377,19 @@ export class WebCodecsPlayer {
         this.recoveryAttempts < 3
       ) {
         this.recoveryAttempts++;
-        this.setState("buffering");
+        this.setState('buffering');
         try {
           hls.recoverMediaError();
         } catch {}
         return;
       }
 
-      this.fail("hls: " + (data.details || data.type));
+      this.fail('hls: ' + (data.details || data.type));
     });
 
     hls.loadSource(url);
-    const videoEl = document.createElement("video");
-    videoEl.style.display = "none";
+    const videoEl = document.createElement('video');
+    videoEl.style.display = 'none';
     videoEl.playsInline = true;
     this.configureNativePitchAudio(videoEl);
     document.body.appendChild(videoEl);
@@ -383,7 +404,7 @@ export class WebCodecsPlayer {
       const parsed = new URL(url, window.location.href);
       return (
         /\.mp4$/i.test(parsed.pathname) ||
-        parsed.searchParams.get("mime_type") === "video_mp4"
+        parsed.searchParams.get('mime_type') === 'video_mp4'
       );
     } catch {
       return /\.mp4(?:\?|$)/i.test(url) || /mime_type=video_mp4/i.test(url);
@@ -410,7 +431,7 @@ export class WebCodecsPlayer {
     });
 
     file.onError = (error: unknown) => {
-      readyReject?.(new Error("MP4 解析失败：" + String(error)));
+      readyReject?.(new Error('MP4 解析失败：' + String(error)));
     };
     file.onReady = (nextInfo: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
@@ -422,7 +443,7 @@ export class WebCodecsPlayer {
       const track = info.tracks.find((item: any) => item.id === trackId);
       if (!track) return;
 
-      if (track.type === "video") {
+      if (track.type === 'video') {
         this.configureMp4Video(track, samples[0]);
         for (const sample of samples) {
           if (!sample.data?.byteLength) continue;
@@ -437,7 +458,7 @@ export class WebCodecsPlayer {
           });
           this.debugStats.videoSamples++;
         }
-      } else if (track.type === "audio") {
+      } else if (track.type === 'audio') {
         this.configureMp4Audio(track);
         for (const sample of samples) {
           if (!sample.data?.byteLength) continue;
@@ -480,20 +501,20 @@ export class WebCodecsPlayer {
       if (chunk.end >= chunk.total - 1) break;
     }
     if (!info) {
-      throw new Error("该短视频不是可渐进读取的 MP4");
+      throw new Error('该短视频不是可渐进读取的 MP4');
     }
     await ready;
 
     const videoTrack = info.tracks.find(
       (track: any) =>
-        track.type === "video" && /^avc[13]\./i.test(track.codec || "")
+        track.type === 'video' && /^avc[13]\./i.test(track.codec || '')
     );
     const audioTrack = info.tracks.find(
       (track: any) =>
-        track.type === "audio" && /^mp4a\.40\./i.test(track.codec || "")
+        track.type === 'audio' && /^mp4a\.40\./i.test(track.codec || '')
     );
     if (!videoTrack || !audioTrack) {
-      throw new Error("该短视频不是 Tesla 所需的 H.264/AAC");
+      throw new Error('该短视频不是 Tesla 所需的 H.264/AAC');
     }
 
     this.durationSec = Number(info.duration) / Number(info.timescale || 1);
@@ -553,22 +574,22 @@ export class WebCodecsPlayer {
     const range = end == null ? `bytes=${start}-` : `bytes=${start}-${end}`;
     const response = await fetch(url, {
       headers: { Range: range },
-      cache: "no-store",
-      credentials: "omit",
-      referrerPolicy: "no-referrer",
+      cache: 'no-store',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
       signal,
     });
     if (response.status !== 206) {
-      throw new Error("短视频源不支持 Range 分段读取");
+      throw new Error('短视频源不支持 Range 分段读取');
     }
-    const contentRange = response.headers.get("content-range") || "";
+    const contentRange = response.headers.get('content-range') || '';
     const match = contentRange.match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/i);
-    if (!match) throw new Error("短视频源返回了无效的分段范围");
+    if (!match) throw new Error('短视频源返回了无效的分段范围');
     const actualStart = Number(match[1]);
     const actualEnd = Number(match[2]);
     const total = Number(match[3]);
     if (actualStart !== start || !Number.isFinite(total)) {
-      throw new Error("短视频分段位置不匹配");
+      throw new Error('短视频分段位置不匹配');
     }
     return {
       buffer: await response.arrayBuffer(),
@@ -587,18 +608,18 @@ export class WebCodecsPlayer {
   ) {
     const response = await fetch(url, {
       headers: { Range: `bytes=${start}-` },
-      cache: "no-store",
-      credentials: "omit",
-      referrerPolicy: "no-referrer",
+      cache: 'no-store',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
       signal,
     });
     if (response.status !== 206 || !response.body) {
-      throw new Error("短视频续传失败");
+      throw new Error('短视频续传失败');
     }
-    const contentRange = response.headers.get("content-range") || "";
+    const contentRange = response.headers.get('content-range') || '';
     const match = contentRange.match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/i);
     if (!match || Number(match[1]) !== start) {
-      throw new Error("短视频续传范围不匹配");
+      throw new Error('短视频续传范围不匹配');
     }
 
     const reader = response.body.getReader();
@@ -632,7 +653,7 @@ export class WebCodecsPlayer {
     const sps = avcC.SPS?.[0]?.data;
     const pps = avcC.PPS?.[0]?.data;
     if (!sps || !pps) {
-      this.fail("MP4 缺少 AVC 解码参数");
+      this.fail('MP4 缺少 AVC 解码参数');
       return;
     }
     const config = this.buildVideoConfig(sps, pps);
@@ -657,7 +678,7 @@ export class WebCodecsPlayer {
     const channels = Number(track.audio?.channel_count) || 2;
     const description = this.buildAacConfig(sampleRate, channels, 2);
     this.audioConfig = {
-      codec: track.codec || "mp4a.40.2",
+      codec: track.codec || 'mp4a.40.2',
       sampleRate,
       numberOfChannels: channels,
       description,
@@ -675,24 +696,24 @@ export class WebCodecsPlayer {
     this.packetStream.pipe(this.parseStream);
     this.parseStream.pipe(this.elementaryStream);
 
-    this.parseStream.on("data", (d: any) => {
-      if (d.type === "pmt") this.debugStats.pmtFound = true;
+    this.parseStream.on('data', (d: any) => {
+      if (d.type === 'pmt') this.debugStats.pmtFound = true;
     });
 
-    this.elementaryStream.on("data", (d: any) => {
+    this.elementaryStream.on('data', (d: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
-      if (d.type === "video") {
+      if (d.type === 'video') {
         this.debugStats.videoPes++;
         this.handleVideoPes(d);
-      } else if (d.type === "audio") {
+      } else if (d.type === 'audio') {
         this.debugStats.audioPes++;
         this.handleAudioPes(d);
       }
     });
 
-    this.elementaryStream.on("error", (err: any) => {
+    this.elementaryStream.on('error', (err: any) => {
       if (this.destroyed || generation !== this.loadGeneration) return;
-      console.warn("[WebCodecsPlayer] demux error:", err);
+      console.warn('[WebCodecsPlayer] demux error:', err);
       this.debugStats.lastError = String(err);
     });
   }
@@ -742,7 +763,7 @@ export class WebCodecsPlayer {
       this.packetStream.push(data);
       this.packetStream.flush();
     } catch (e) {
-      console.warn("[WebCodecsPlayer] feedTs error:", e);
+      console.warn('[WebCodecsPlayer] feedTs error:', e);
     }
   }
 
@@ -791,12 +812,12 @@ export class WebCodecsPlayer {
         };
         this.videoDecoder?.configure(cfg);
         console.log(
-          "[WebCodecsPlayer] video decoder configured:",
+          '[WebCodecsPlayer] video decoder configured:',
           config.codec,
-          config.codedWidth + "x" + config.codedHeight
+          config.codedWidth + 'x' + config.codedHeight
         );
       } catch (e) {
-        console.warn("[WebCodecsPlayer] video configure failed:", e);
+        console.warn('[WebCodecsPlayer] video configure failed:', e);
       }
     }
 
@@ -844,25 +865,25 @@ export class WebCodecsPlayer {
           adts.profile
         );
         this.audioConfig = {
-          codec: "mp4a.40.2",
+          codec: 'mp4a.40.2',
           sampleRate: adts.sampleRate,
           numberOfChannels: adts.channels,
           description: desc,
         };
         try {
           this.audioDecoder?.configure({
-            codec: "mp4a.40.2",
+            codec: 'mp4a.40.2',
             sampleRate: adts.sampleRate,
             numberOfChannels: adts.channels,
             description: desc,
           });
           console.log(
-            "[WebCodecsPlayer] audio decoder configured:",
-            adts.sampleRate + "Hz",
-            adts.channels + "ch"
+            '[WebCodecsPlayer] audio decoder configured:',
+            adts.sampleRate + 'Hz',
+            adts.channels + 'ch'
           );
         } catch (e) {
-          console.warn("[WebCodecsPlayer] audio configure failed:", e);
+          console.warn('[WebCodecsPlayer] audio configure failed:', e);
         }
       }
 
@@ -893,7 +914,7 @@ export class WebCodecsPlayer {
       },
       error: (e) => {
         if (generation === this.loadGeneration)
-          this.fail("video decoder: " + e.message);
+          this.fail('video decoder: ' + e.message);
       },
     });
     this.audioDecoder = new AudioDecoder({
@@ -906,7 +927,7 @@ export class WebCodecsPlayer {
       },
       error: (e) => {
         if (generation === this.loadGeneration)
-          this.fail("audio decoder: " + e.message);
+          this.fail('audio decoder: ' + e.message);
       },
     });
   }
@@ -965,7 +986,7 @@ export class WebCodecsPlayer {
       // the video canvas: that races with VideoFrame rendering and flickers.
       this.maybeRecoverFromStall();
     } catch (e) {
-      console.error("[WebCodecsPlayer] tick error:", e);
+      console.error('[WebCodecsPlayer] tick error:', e);
     }
   }
 
@@ -973,7 +994,7 @@ export class WebCodecsPlayer {
     if (
       this.endedReported ||
       this.isLivePlaylist ||
-      this.state !== "playing" ||
+      this.state !== 'playing' ||
       this.durationSec <= 0 ||
       clock < this.durationSec - 0.15
     )
@@ -982,7 +1003,7 @@ export class WebCodecsPlayer {
     this.endedReported = true;
     this.wantPlaying = false;
     this.cb.onTime?.(this.durationSec);
-    this.setState("ended");
+    this.setState('ended');
     this.audioCtx?.suspend().catch(() => {});
   }
 
@@ -999,7 +1020,7 @@ export class WebCodecsPlayer {
 
   private maybeEnterBuffering() {
     if (
-      this.state !== "playing" ||
+      this.state !== 'playing' ||
       !this.wantPlaying ||
       this.ctxStartTime === null
     )
@@ -1023,12 +1044,17 @@ export class WebCodecsPlayer {
     // Brief decoder gaps are normal. Freeze the media clock only when one side
     // of the A/V pipeline has actually been empty for a moment.
     const now = performance.now();
+    const syncPolicy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
     const videoStarved =
       noVideoReady &&
-      now - this.lastRenderedAtMs >= (this.isLivePlaylist ? 1100 : 700);
+      now - this.lastRenderedAtMs >= syncPolicy.videoStarvationMs;
     const audioStarved =
       noAudioReady &&
-      now - this.lastAudioScheduledAtMs >= (this.isLivePlaylist ? 1400 : 1000);
+      now - this.lastAudioScheduledAtMs >= syncPolicy.audioStarvationMs;
     if (!videoStarved && !audioStarved) return;
 
     const clock = this.getMediaTime();
@@ -1046,21 +1072,29 @@ export class WebCodecsPlayer {
       } catch {}
     }
     this.activeSources.clear();
-    this.audioCtx?.suspend().catch(() => {});
-    this.setState("buffering");
+    // Do not suspend the page-level AudioContext here. The media clock is
+    // already frozen by ctxStartTime=null, while keeping the context running
+    // lets the silent MediaSession keeper retain Tesla's audio focus during a
+    // short decoder rebuild.
+    this.setState('buffering');
   }
 
   private maybeRecoverFromStall() {
     const now = performance.now();
+    const syncPolicy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
     const stalledWhilePlaying =
-      this.state === "playing" &&
+      this.state === 'playing' &&
       this.ctxStartTime !== null &&
-      now - this.lastRenderedAtMs >= 8000;
+      now - this.lastRenderedAtMs >= syncPolicy.stallRecoveryMs;
     const stalledWhileBuffering =
-      this.state === "buffering" &&
+      this.state === 'buffering' &&
       this.ctxStartTime === null &&
       this.bufferingStartedAtMs > 0 &&
-      now - this.bufferingStartedAtMs >= 12000;
+      now - this.bufferingStartedAtMs >= syncPolicy.stallRecoveryMs;
 
     if (
       (!stalledWhilePlaying && !stalledWhileBuffering) ||
@@ -1070,9 +1104,9 @@ export class WebCodecsPlayer {
 
     if (this.recoveryAttempts >= 3) {
       this.fail(
-        this.sourceKind === "mp4"
-          ? "短视频持续卡顿，请上滑切换或重试"
-          : "直播画面持续卡顿，请重试当前线路"
+        this.sourceKind === 'mp4'
+          ? '短视频持续卡顿，请上滑切换或重试'
+          : '直播画面持续卡顿，请重试当前线路'
       );
       return;
     }
@@ -1094,7 +1128,7 @@ export class WebCodecsPlayer {
 
   private pumpVideo() {
     const dec = this.videoDecoder;
-    if (!dec || dec.state !== "configured") return;
+    if (!dec || dec.state !== 'configured') return;
     const MAX_OUTSTANDING = this.isLivePlaylist ? 18 : 50;
     while (
       this.vIdx < this.encodedVideo.length &&
@@ -1108,14 +1142,14 @@ export class WebCodecsPlayer {
       try {
         dec.decode(
           new EncodedVideoChunk({
-            type: s.key ? "key" : "delta",
+            type: s.key ? 'key' : 'delta',
             timestamp: s.timestamp,
             duration: s.duration,
             data: s.data,
           })
         );
       } catch (e) {
-        console.warn("[WebCodecsPlayer] video decode error:", e);
+        console.warn('[WebCodecsPlayer] video decode error:', e);
         this.needVideoKey = true;
       }
     }
@@ -1123,7 +1157,7 @@ export class WebCodecsPlayer {
 
   private pumpAudio() {
     const dec = this.audioDecoder;
-    if (!dec || dec.state !== "configured") return;
+    if (!dec || dec.state !== 'configured') return;
     while (
       this.aIdx < this.encodedAudio.length &&
       dec.decodeQueueSize < (this.isLivePlaylist ? 24 : 32) &&
@@ -1134,33 +1168,33 @@ export class WebCodecsPlayer {
       try {
         dec.decode(
           new EncodedAudioChunk({
-            type: "key",
+            type: 'key',
             timestamp: s.timestamp,
             duration: s.duration,
             data: s.data,
           })
         );
       } catch (e) {
-        console.warn("[WebCodecsPlayer] audio decode error:", e);
+        console.warn('[WebCodecsPlayer] audio decode error:', e);
       }
     }
   }
 
   private maybePrime() {
-    const minVideoFrames = this.isLivePlaylist ? 6 : this.canvasSized ? 12 : 6;
-    const minAudioFrames = this.isLivePlaylist
-      ? 12
-      : this.canvasSized
-      ? 24
-      : 12;
+    const syncPolicy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
     const audioPipelineActive =
       this.audioConfig !== null ||
       this.debugStats.audioSamples > 0 ||
       this.encodedAudio.length > 0 ||
       this.decodedAudio.length > 0;
     if (
-      this.frameQueue.length < minVideoFrames ||
-      (audioPipelineActive && this.decodedAudio.length < minAudioFrames) ||
+      this.frameQueue.length < syncPolicy.minVideoFrames ||
+      (audioPipelineActive &&
+        this.decodedAudio.length < syncPolicy.minAudioFrames) ||
       !this.audioCtx
     )
       return;
@@ -1175,7 +1209,7 @@ export class WebCodecsPlayer {
     const firstAudioSec = firstAudio
       ? firstAudio.timestamp / 1e6
       : firstVideoSec;
-    this.baseMediaTime = Math.max(
+    this.baseMediaTime = chooseCommonAvStart(
       this.baseMediaTime,
       firstVideoSec,
       firstAudioSec
@@ -1190,18 +1224,19 @@ export class WebCodecsPlayer {
 
   private resumeAudio() {
     if (!this.audioCtx) return;
+    void claimTeslaAudioFocus();
     this.audioCtx
       .resume()
       .then(() => {
-        if (this.audioCtx?.state === "running" && this.state !== "ended") {
+        if (this.audioCtx?.state === 'running' && this.state !== 'ended') {
           this.startNativePitchAudio();
           this.bufferingStartedAtMs = 0;
           this.lastRenderedAtMs = performance.now();
           this.lastAudioScheduledAtMs = performance.now();
-          this.setState("playing");
+          this.setState('playing');
         }
       })
-      .catch((e) => console.warn("[WebCodecsPlayer] resume audio failed:", e));
+      .catch((e) => console.warn('[WebCodecsPlayer] resume audio failed:', e));
   }
 
   private drawFirstFrame() {
@@ -1231,19 +1266,19 @@ export class WebCodecsPlayer {
     const x = Math.round((width - drawWidth) / 2);
     const y = Math.round((height - drawHeight) / 2);
 
-    this.ctx.fillStyle = "#000";
+    this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, width, height);
     this.ctx.drawImage(frame, x, y, drawWidth, drawHeight);
     this.canvasSized = true;
   }
 
   private canUseNativePitchPreservingAudio(): boolean {
-    if (typeof HTMLMediaElement === "undefined") return false;
+    if (typeof HTMLMediaElement === 'undefined') return false;
     const proto: any = HTMLMediaElement.prototype;
     return (
-      "preservesPitch" in proto ||
-      "webkitPreservesPitch" in proto ||
-      "mozPreservesPitch" in proto
+      'preservesPitch' in proto ||
+      'webkitPreservesPitch' in proto ||
+      'mozPreservesPitch' in proto
     );
   }
 
@@ -1274,7 +1309,7 @@ export class WebCodecsPlayer {
     video.play().catch((e) => {
       // If a browser refuses this hidden-media path, retain audible playback
       // through the proven WebAudio scheduler rather than leaving the user silent.
-      console.warn("[WebCodecsPlayer] native pitch audio unavailable:", e);
+      console.warn('[WebCodecsPlayer] native pitch audio unavailable:', e);
       this.useNativePitchPreservingAudio = false;
       video.muted = true;
     });
@@ -1310,11 +1345,12 @@ export class WebCodecsPlayer {
     if (this.useNativePitchPreservingAudio) return;
     if (this.ctxStartTime === null || !this.audioCtx || !this.gain) return;
     const now = this.audioCtx.currentTime;
-    const maxLeadSec = this.isLivePlaylist
-      ? 1.1
-      : this.playbackRate === 1
-      ? 2
-      : 0.7;
+    const syncPolicy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
+    const maxLeadSec = syncPolicy.maxAudioLeadSec;
     if (
       this.nextAudioStartTime !== 0 &&
       this.nextAudioStartTime - now > maxLeadSec
@@ -1353,7 +1389,7 @@ export class WebCodecsPlayer {
       let when = Math.max(idealWhen, now + 0.03);
       if (this.nextAudioStartTime !== 0) {
         const driftSec = idealWhen - this.nextAudioStartTime;
-        if (Math.abs(driftSec) > 0.12) {
+        if (shouldResetAudioSchedule(driftSec, this.isLivePlaylist)) {
           // A discontinuity or ad splice can reset TS timestamps. Never start
           // the new timeline while old future nodes are still scheduled: that
           // is the direct cause of overlapping voices after an ad boundary.
@@ -1380,7 +1416,7 @@ export class WebCodecsPlayer {
         );
         for (let channel = 0; channel < channels; channel++) {
           const dest = new Float32Array(head.numberOfFrames);
-          head.copyTo(dest, { planeIndex: channel, format: "f32-planar" });
+          head.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
           buffer.copyToChannel(dest, channel);
         }
       } finally {
@@ -1460,6 +1496,7 @@ export class WebCodecsPlayer {
 
   play() {
     this.wantPlaying = true;
+    void claimTeslaAudioFocus();
     if (this.ctxStartTime === null) {
       if (this.audioCtx) this.audioCtx.resume().catch(() => {});
       return;
@@ -1472,12 +1509,13 @@ export class WebCodecsPlayer {
     if (this.audioCtx) this.audioCtx.suspend().catch(() => {});
     if (this.audioEl) this.audioEl.pause();
     if (this.useNativePitchPreservingAudio) this.hlsVideoEl?.pause();
-    if (this.state !== "ended" && this.state !== "error")
-      this.setState("paused");
+    if (this.state !== 'ended' && this.state !== 'error')
+      this.setState('paused');
+    deferTeslaAudioFocusRelease(1200);
   }
 
   togglePlay() {
-    if (this.state === "playing") this.pause();
+    if (this.state === 'playing') this.pause();
     else this.play();
   }
 
@@ -1502,7 +1540,7 @@ export class WebCodecsPlayer {
   isAudioActive(): boolean {
     if (!this.audioCtx) return true;
     return (
-      this.audioCtx.state === "running" && (this.gain?.gain.value || 0) > 0
+      this.audioCtx.state === 'running' && (this.gain?.gain.value || 0) > 0
     );
   }
 
@@ -1510,14 +1548,15 @@ export class WebCodecsPlayer {
     if (this.gain) this.gain.gain.value = this.volume;
     if (!this.audioCtx) return true;
     try {
+      await claimTeslaAudioFocus();
       await this.audioCtx.resume();
       this.startNativePitchAudio();
-      if (this.ctxStartTime !== null && this.state !== "ended")
-        this.setState("playing");
+      if (this.ctxStartTime !== null && this.state !== 'ended')
+        this.setState('playing');
     } catch (e) {
-      console.warn("[WebCodecsPlayer] audio activation failed:", e);
+      console.warn('[WebCodecsPlayer] audio activation failed:', e);
     }
-    return this.audioCtx.state === "running";
+    return this.audioCtx.state === 'running';
   }
 
   setPlaybackRate(rate: number) {
@@ -1550,8 +1589,8 @@ export class WebCodecsPlayer {
     const url = this.sourceUrl;
     if (!url) return;
 
-    console.log("[WebCodecsPlayer] full pipeline seek to:", t);
-    this.setState("buffering");
+    console.log('[WebCodecsPlayer] full pipeline seek to:', t);
+    this.setState('buffering');
     await this.load(url, t);
   }
 
@@ -1585,7 +1624,7 @@ export class WebCodecsPlayer {
       try {
         this.hlsVideoEl.pause();
       } catch {}
-      this.hlsVideoEl.removeAttribute("src");
+      this.hlsVideoEl.removeAttribute('src');
       this.hlsVideoEl.remove();
       this.hlsVideoEl = null;
     }
@@ -1605,11 +1644,11 @@ export class WebCodecsPlayer {
     this.ppsNalu = null;
 
     try {
-      if (this.videoDecoder && this.videoDecoder.state !== "closed")
+      if (this.videoDecoder && this.videoDecoder.state !== 'closed')
         this.videoDecoder.close();
     } catch {}
     try {
-      if (this.audioDecoder && this.audioDecoder.state !== "closed")
+      if (this.audioDecoder && this.audioDecoder.state !== 'closed')
         this.audioDecoder.close();
     } catch {}
     this.videoDecoder = null;
@@ -1659,10 +1698,13 @@ export class WebCodecsPlayer {
   destroy() {
     this.destroyed = true;
     this.loadGeneration++;
-    this.sourceUrl = "";
+    this.sourceUrl = '';
     this.teardown();
     this.teardownAudioGraph();
-    this.setState("idle");
+    this.setState('idle');
+    // A reconnect destroys and recreates the player. Delay release so the next
+    // instance can cancel it without yielding focus to another vehicle app.
+    deferTeslaAudioFocusRelease(2500);
   }
 
   getState(): PlayerState {
@@ -1702,14 +1744,14 @@ export class WebCodecsPlayer {
       dropped: this.droppedFrames,
       resolution: this.videoConfig
         ? `${this.videoConfig.codedWidth}x${this.videoConfig.codedHeight}`
-        : "",
-      codec: this.videoConfig?.codec ?? "",
+        : '',
+      codec: this.videoConfig?.codec ?? '',
       currentSec: +clock.toFixed(1),
       decodedFrames: this.decodedFrames,
       renderedFrames: this.renderedFrames,
       demuxVideoQueue: this.encodedVideo.length - this.vIdx,
       demuxAudioQueue: this.encodedAudio.length - this.aIdx,
-      audioCtx: this.audioCtx?.state ?? "none",
+      audioCtx: this.audioCtx?.state ?? 'none',
     };
   }
 
@@ -1720,10 +1762,10 @@ export class WebCodecsPlayer {
   }
 
   private fail(message: string) {
-    console.error("[WebCodecsPlayer] fail:", message);
+    console.error('[WebCodecsPlayer] fail:', message);
     this.debugStats.error = message;
     this.cb.onError?.(message);
-    this.setState("error");
+    this.setState('error');
   }
 
   private findSegIndex(seconds: number): number {
@@ -1855,7 +1897,7 @@ export class WebCodecsPlayer {
     description.set(ppsRaw, i);
 
     return {
-      kind: "video",
+      kind: 'video',
       codec,
       codedWidth: 1920,
       codedHeight: 1080,
@@ -1864,7 +1906,7 @@ export class WebCodecsPlayer {
   }
 
   private hex(b: number): string {
-    return b.toString(16).padStart(2, "0").toUpperCase();
+    return b.toString(16).padStart(2, '0').toUpperCase();
   }
 
   private stripStartCode(nalu: Uint8Array): Uint8Array {

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveAccountAccess } from '@/lib/account-access';
 import { getAuthInfoFromCookie, parseAuthInfo } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { refreshAccessToken } from '@/lib/middleware-auth';
 import { TOKEN_CONFIG } from '@/lib/refresh-token';
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Role changed' }, { status: 401 });
     }
 
-    const config = await getConfig();
+    const config = await getFreshConfig();
     const access = resolveAccountAccess(config, authInfo.username, now);
     if (access.status === 'disabled') {
       return NextResponse.json({ error: 'Account disabled' }, { status: 403 });

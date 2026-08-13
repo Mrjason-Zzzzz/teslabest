@@ -59,6 +59,13 @@ interface AuthInfo {
   role?: 'owner' | 'admin' | 'user';
 }
 
+interface AccountAccessInfo {
+  planLabel: string;
+  status: 'active' | 'disabled';
+  expiresAt: number | null;
+  isExpired: boolean;
+}
+
 export const UserMenu: React.FC = () => {
   const router = useRouter();
   const { updateStatus, isChecking } = useVersionCheck();
@@ -80,6 +87,9 @@ export const UserMenu: React.FC = () => {
     useState(false);
   const [isTVRemoteOpen, setIsTVRemoteOpen] = useState(false);
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
+  const [accountAccess, setAccountAccess] = useState<AccountAccessInfo | null>(
+    null
+  );
   const [storageType, setStorageType] = useState<string>('localstorage');
   const [displayStorageType, setDisplayStorageType] =
     useState<string>('localstorage');
@@ -107,7 +117,9 @@ export const UserMenu: React.FC = () => {
   const tvQrVideoRef = useRef<HTMLVideoElement | null>(null);
   const tvQrStreamRef = useRef<MediaStream | null>(null);
   const tvQrScanStopRef = useRef(false);
-  const [tvAccessTab, setTvAccessTab] = useState<'tvbox' | 'orion' | 'web'>('tvbox');
+  const [tvAccessTab, setTvAccessTab] = useState<'tvbox' | 'orion' | 'web'>(
+    'tvbox'
+  );
 
   // Body 滚动锁定 - 使用 overflow 方式避免布局问题
   useEffect(() => {
@@ -213,17 +225,19 @@ export const UserMenu: React.FC = () => {
   const [maxConcurrentDownloads, setMaxConcurrentDownloads] = useState(6);
   const [downloadThreadsPerTask, setDownloadThreadsPerTask] = useState(6);
   const [downloadSegmentTimeout, setDownloadSegmentTimeout] = useState(30000);
-  const [downloadMode, setDownloadMode] = useState<'browser' | 'filesystem' | 'indexeddb'>(
-    'browser'
-  );
+  const [downloadMode, setDownloadMode] = useState<
+    'browser' | 'filesystem' | 'indexeddb'
+  >('browser');
   const [filesystemSavePath, setFilesystemSavePath] = useState<string>('');
 
   // 通知设置
   const [userEmail, setUserEmail] = useState('');
   const [emailNotifications, setEmailNotifications] = useState(false);
   const [pushNotifications, setPushNotifications] = useState(false);
-  const [pushNotificationsConfigured, setPushNotificationsConfigured] = useState(false);
-  const [pushNotificationsSupported, setPushNotificationsSupported] = useState(false);
+  const [pushNotificationsConfigured, setPushNotificationsConfigured] =
+    useState(false);
+  const [pushNotificationsSupported, setPushNotificationsSupported] =
+    useState(false);
   const [pushNotificationsBusy, setPushNotificationsBusy] = useState(false);
   const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
   const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
@@ -371,6 +385,31 @@ export const UserMenu: React.FC = () => {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!authInfo?.username || storageType === 'localstorage') {
+      setAccountAccess(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch('/api/user/account-access', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('会员状态读取失败');
+        return (await response.json()) as AccountAccessInfo;
+      })
+      .then((access) => {
+        if (!cancelled) setAccountAccess(access);
+      })
+      .catch((error) => {
+        console.warn(error);
+        if (!cancelled) setAccountAccess(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInfo?.username, storageType]);
+
   // 加载未读通知数量
   const loadUnreadCount = async () => {
     try {
@@ -470,7 +509,9 @@ export const UserMenu: React.FC = () => {
       const enabled =
         (window as any).RUNTIME_CONFIG?.ENABLE_TVBOX_SUBSCRIBE || false;
       setSubscribeEnabled(enabled);
-      setTvModeEnabled((window as any).RUNTIME_CONFIG?.ENABLE_TV_MODE !== false);
+      setTvModeEnabled(
+        (window as any).RUNTIME_CONFIG?.ENABLE_TV_MODE !== false
+      );
     }
   }, []);
 
@@ -889,16 +930,18 @@ export const UserMenu: React.FC = () => {
       const pushResponse = await fetch('/api/notifications/push');
       if (pushResponse.ok) {
         const pushData = await pushResponse.json();
-        setPushNotificationsConfigured(Boolean(pushData.configured && pushData.publicKey));
+        setPushNotificationsConfigured(
+          Boolean(pushData.configured && pushData.publicKey)
+        );
         setPushNotificationsSupported(
           Boolean(
             pushData.configured &&
-            pushData.publicKey &&
-            pushData.hasDeviceToken &&
-            typeof window !== 'undefined' &&
-            'Notification' in window &&
-            'serviceWorker' in navigator &&
-            'PushManager' in window
+              pushData.publicKey &&
+              pushData.hasDeviceToken &&
+              typeof window !== 'undefined' &&
+              'Notification' in window &&
+              'serviceWorker' in navigator &&
+              'PushManager' in window
           )
         );
         setPushNotifications(Boolean(pushData.pushNotifications));
@@ -933,7 +976,9 @@ export const UserMenu: React.FC = () => {
       setEmailSettingsMessage('Telegram 绑定码已生成，请在 10 分钟内完成绑定');
       setEmailSettingsMessageType('success');
     } catch (error) {
-      setEmailSettingsMessage(error instanceof Error ? error.message : '生成 Telegram 绑定码失败');
+      setEmailSettingsMessage(
+        error instanceof Error ? error.message : '生成 Telegram 绑定码失败'
+      );
       setEmailSettingsMessageType('error');
     } finally {
       setTelegramBindingBusy(false);
@@ -999,10 +1044,16 @@ export const UserMenu: React.FC = () => {
     await new Promise<void>((resolve, reject) => {
       const handleStateChange = () => {
         if (activatingWorker.state === 'activated') {
-          activatingWorker.removeEventListener('statechange', handleStateChange);
+          activatingWorker.removeEventListener(
+            'statechange',
+            handleStateChange
+          );
           resolve();
         } else if (activatingWorker.state === 'redundant') {
-          activatingWorker.removeEventListener('statechange', handleStateChange);
+          activatingWorker.removeEventListener(
+            'statechange',
+            handleStateChange
+          );
           reject(new Error('Service Worker 激活失败，请刷新页面后重试'));
         }
       };
@@ -1075,7 +1126,10 @@ export const UserMenu: React.FC = () => {
       const registration = await getReadyServiceWorkerRegistration();
 
       let subscription = await registration.pushManager.getSubscription();
-      if (subscription && !isSubscriptionUsingPublicKey(subscription, status.publicKey)) {
+      if (
+        subscription &&
+        !isSubscriptionUsingPublicKey(subscription, status.publicKey)
+      ) {
         await subscription.unsubscribe();
         subscription = null;
       }
@@ -1107,7 +1161,9 @@ export const UserMenu: React.FC = () => {
     } catch (error) {
       console.error('开启浏览器通知失败:', error);
       setPushNotifications(false);
-      setEmailSettingsMessage(error instanceof Error ? error.message : '开启浏览器通知失败');
+      setEmailSettingsMessage(
+        error instanceof Error ? error.message : '开启浏览器通知失败'
+      );
       setEmailSettingsMessageType('error');
     } finally {
       setPushNotificationsBusy(false);
@@ -1407,42 +1463,52 @@ export const UserMenu: React.FC = () => {
     setTvQrScannerError('');
   }, [stopTvQrScanner]);
 
-  const handleQrLoginResult = useCallback((rawValue: string) => {
-    try {
-      const url = new URL(rawValue, window.location.origin);
+  const handleQrLoginResult = useCallback(
+    (rawValue: string) => {
+      try {
+        const url = new URL(rawValue, window.location.origin);
 
-      const isLocalRemoteUrl =
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.searchParams.has('token') &&
-        (url.pathname === '/remote' || url.pathname.endsWith('/remote'));
+        const isLocalRemoteUrl =
+          (url.protocol === 'http:' || url.protocol === 'https:') &&
+          url.searchParams.has('token') &&
+          (url.pathname === '/remote' || url.pathname.endsWith('/remote'));
 
-      if (isLocalRemoteUrl) {
-        setTvQrScannerStatus('识别成功，正在打开局域网遥控器...');
+        if (isLocalRemoteUrl) {
+          setTvQrScannerStatus('识别成功，正在打开局域网遥控器...');
+          stopTvQrScanner();
+          window.location.href = url.href;
+          return true;
+        }
+
+        if (
+          url.origin !== window.location.origin ||
+          url.pathname !== '/qr-login'
+        ) {
+          setTvQrScannerError(
+            '未识别到电视登录二维码或局域网遥控二维码，请扫描电视屏幕上的二维码。'
+          );
+          return false;
+        }
+
+        const token = url.searchParams.get('token');
+        if (!token) {
+          setTvQrScannerError('二维码缺少登录凭证，请刷新电视端二维码后重试。');
+          return false;
+        }
+
+        setTvQrScannerStatus('识别成功，正在打开确认登录页...');
         stopTvQrScanner();
-        window.location.href = url.href;
+        window.location.href = `/qr-login?token=${encodeURIComponent(token)}`;
         return true;
-      }
-
-      if (url.origin !== window.location.origin || url.pathname !== '/qr-login') {
-        setTvQrScannerError('未识别到电视登录二维码或局域网遥控二维码，请扫描电视屏幕上的二维码。');
+      } catch {
+        setTvQrScannerError(
+          '二维码内容无效，请扫描电视端显示的登录二维码或局域网遥控二维码。'
+        );
         return false;
       }
-
-      const token = url.searchParams.get('token');
-      if (!token) {
-        setTvQrScannerError('二维码缺少登录凭证，请刷新电视端二维码后重试。');
-        return false;
-      }
-
-      setTvQrScannerStatus('识别成功，正在打开确认登录页...');
-      stopTvQrScanner();
-      window.location.href = `/qr-login?token=${encodeURIComponent(token)}`;
-      return true;
-    } catch {
-      setTvQrScannerError('二维码内容无效，请扫描电视端显示的登录二维码或局域网遥控二维码。');
-      return false;
-    }
-  }, [stopTvQrScanner]);
+    },
+    [stopTvQrScanner]
+  );
 
   const startTvQrScanner = useCallback(async () => {
     setIsTvQrScannerOpen(true);
@@ -1451,14 +1517,18 @@ export const UserMenu: React.FC = () => {
     tvQrScanStopRef.current = false;
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setTvQrScannerError('当前浏览器不支持调用摄像头，请使用手机浏览器或系统相机扫描电视端二维码。');
+      setTvQrScannerError(
+        '当前浏览器不支持调用摄像头，请使用手机浏览器或系统相机扫描电视端二维码。'
+      );
       setTvQrScannerStatus('');
       return;
     }
 
     const BarcodeDetectorCtor = (window as any).BarcodeDetector;
     if (!BarcodeDetectorCtor) {
-      setTvQrScannerError('当前浏览器不支持网页内二维码识别，请使用系统相机扫描电视端二维码。');
+      setTvQrScannerError(
+        '当前浏览器不支持网页内二维码识别，请使用系统相机扫描电视端二维码。'
+      );
       setTvQrScannerStatus('');
       return;
     }
@@ -1475,7 +1545,9 @@ export const UserMenu: React.FC = () => {
       await tvQrVideoRef.current.play();
 
       const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] });
-      setTvQrScannerStatus('请将电视屏幕上的登录二维码或局域网遥控二维码放入取景框');
+      setTvQrScannerStatus(
+        '请将电视屏幕上的登录二维码或局域网遥控二维码放入取景框'
+      );
 
       const scan = async () => {
         if (tvQrScanStopRef.current || !tvQrVideoRef.current) return;
@@ -1682,7 +1754,9 @@ export const UserMenu: React.FC = () => {
     return seconds > 0 ? `${minutes}分${seconds}秒` : `${minutes}分钟`;
   };
 
-  const handleDownloadModeChange = (mode: 'browser' | 'filesystem' | 'indexeddb') => {
+  const handleDownloadModeChange = (
+    mode: 'browser' | 'filesystem' | 'indexeddb'
+  ) => {
     // 如果选择 filesystem 模式，先检测浏览器是否支持
     if (
       mode === 'filesystem' &&
@@ -2184,6 +2258,10 @@ export const UserMenu: React.FC = () => {
     (authInfo?.role === 'owner' || authInfo?.role === 'admin') &&
     storageType !== 'localstorage';
 
+  // Normal registered accounts cannot configure TV access or ecosystem apps.
+  // This is deliberately presentation-only; stored settings remain untouched.
+  const isRegisteredUser = authInfo?.role === 'user';
+
   // 检查是否显示离线下载按钮
   const showOfflineDownload =
     (authInfo?.role === 'owner' || authInfo?.role === 'admin') &&
@@ -2339,26 +2417,30 @@ export const UserMenu: React.FC = () => {
             </button>
           )}
 
-          {/* 电视访问按钮 */}
-          <button
-            onClick={handleSubscribe}
-            className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
-          >
-            <Monitor className='w-4 h-4 text-gray-500 dark:text-gray-400' />
-            <span className='font-medium'>电视访问</span>
-          </button>
+          {!isRegisteredUser && (
+            <>
+              {/* 电视访问按钮 */}
+              <button
+                onClick={handleSubscribe}
+                className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
+              >
+                <Monitor className='w-4 h-4 text-gray-500 dark:text-gray-400' />
+                <span className='font-medium'>电视访问</span>
+              </button>
 
-          {/* 生态应用按钮 */}
-          <button
-            onClick={() => {
-              setIsOpen(false);
-              setIsEcoAppsOpen(true);
-            }}
-            className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
-          >
-            <Package className='w-4 h-4 text-gray-500 dark:text-gray-400' />
-            <span className='font-medium'>生态应用</span>
-          </button>
+              {/* 生态应用按钮 */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsEcoAppsOpen(true);
+                }}
+                className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
+              >
+                <Package className='w-4 h-4 text-gray-500 dark:text-gray-400' />
+                <span className='font-medium'>生态应用</span>
+              </button>
+            </>
+          )}
 
           {/* 分割线 */}
           <div className='my-1 border-t border-gray-200 dark:border-gray-700'></div>
@@ -3133,7 +3215,8 @@ export const UserMenu: React.FC = () => {
                       </summary>
                       <pre className='mt-3 max-h-40 overflow-auto rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300'>
                         <code>
-                          {bangumiProxyScript || '正在加载 /scripts/bangumi-proxy.worker.js ...'}
+                          {bangumiProxyScript ||
+                            '正在加载 /scripts/bangumi-proxy.worker.js ...'}
                         </code>
                       </pre>
                     </details>
@@ -3652,16 +3735,22 @@ export const UserMenu: React.FC = () => {
                         className='flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700'
                         style={{
                           background: `linear-gradient(to right, #10b981 0%, #10b981 ${
-                            ((downloadSegmentTimeout - 30000) / (300000 - 30000)) * 100
+                            ((downloadSegmentTimeout - 30000) /
+                              (300000 - 30000)) *
+                            100
                           }%, #e5e7eb ${
-                            ((downloadSegmentTimeout - 30000) / (300000 - 30000)) * 100
+                            ((downloadSegmentTimeout - 30000) /
+                              (300000 - 30000)) *
+                            100
                           }%, #e5e7eb 100%)`,
                         }}
                       />
                     </div>
                     <div className='flex justify-between text-xs text-gray-500 dark:text-gray-400'>
                       <button
-                        onClick={() => handleDownloadSegmentTimeoutChange(30000)}
+                        onClick={() =>
+                          handleDownloadSegmentTimeoutChange(30000)
+                        }
                         className={`px-2 py-0.5 rounded cursor-pointer ${
                           downloadSegmentTimeout === 30000
                             ? 'bg-green-500 text-white'
@@ -3671,7 +3760,9 @@ export const UserMenu: React.FC = () => {
                         30秒
                       </button>
                       <button
-                        onClick={() => handleDownloadSegmentTimeoutChange(120000)}
+                        onClick={() =>
+                          handleDownloadSegmentTimeoutChange(120000)
+                        }
                         className={`px-2 py-0.5 rounded cursor-pointer ${
                           downloadSegmentTimeout === 120000
                             ? 'bg-green-500 text-white'
@@ -3681,7 +3772,9 @@ export const UserMenu: React.FC = () => {
                         2分钟
                       </button>
                       <button
-                        onClick={() => handleDownloadSegmentTimeoutChange(300000)}
+                        onClick={() =>
+                          handleDownloadSegmentTimeoutChange(300000)
+                        }
                         className={`px-2 py-0.5 rounded cursor-pointer ${
                           downloadSegmentTimeout === 300000
                             ? 'bg-green-500 text-white'
@@ -3735,9 +3828,7 @@ export const UserMenu: React.FC = () => {
                           name='downloadMode'
                           value='indexeddb'
                           checked={downloadMode === 'indexeddb'}
-                          onChange={() =>
-                            handleDownloadModeChange('indexeddb')
-                          }
+                          onChange={() => handleDownloadModeChange('indexeddb')}
                           className='mt-0.5 w-4 h-4 text-green-500'
                         />
                         <span className='text-sm text-gray-700 dark:text-gray-300'>
@@ -4475,7 +4566,9 @@ export const UserMenu: React.FC = () => {
                     手机相机扫码
                   </div>
                   <h3 className='mt-3 text-2xl font-black'>扫描电视二维码</h3>
-                  <p className='mt-1 text-sm text-white/75'>支持扫码登录，也支持打开局域网遥控器</p>
+                  <p className='mt-1 text-sm text-white/75'>
+                    支持扫码登录，也支持打开局域网遥控器
+                  </p>
                 </div>
                 <button
                   type='button'
@@ -4501,276 +4594,326 @@ export const UserMenu: React.FC = () => {
             </div>
           ) : (
             <>
-          {/* 标题栏 */}
-          <div className='mb-6 flex items-start justify-between gap-4'>
-            <div>
-              <div className='inline-flex items-center gap-2 rounded-full bg-green-500/10 px-3 py-1 text-xs font-bold text-green-600 dark:text-green-400'>
-                <Monitor className='h-4 w-4' />
-                TV ACCESS
-              </div>
-              <h3 className='mt-3 text-2xl font-black text-slate-900 dark:text-slate-50'>
-                电视访问
-              </h3>
-            </div>
-            <button
-              onClick={handleCloseSubscribe}
-              className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 dark:hover:bg-white/10 dark:hover:text-white'
-              aria-label='Close'
-            >
-              <X className='h-5 w-5' />
-            </button>
-          </div>
-
-          <div className='mb-5 grid grid-cols-3 rounded-2xl bg-slate-100 p-1 dark:bg-white/10'>
-            {[
-              { key: 'tvbox' as const, label: 'TVBox 订阅', icon: Rss },
-              { key: 'orion' as const, label: 'OrionTV', icon: Download },
-              { key: 'web' as const, label: 'Web 电视', icon: Monitor },
-            ].map((item) => {
-              const Icon = item.icon;
-              const active = tvAccessTab === item.key;
-              return (
+              {/* 标题栏 */}
+              <div className='mb-6 flex items-start justify-between gap-4'>
+                <div>
+                  <div className='inline-flex items-center gap-2 rounded-full bg-green-500/10 px-3 py-1 text-xs font-bold text-green-600 dark:text-green-400'>
+                    <Monitor className='h-4 w-4' />
+                    TV ACCESS
+                  </div>
+                  <h3 className='mt-3 text-2xl font-black text-slate-900 dark:text-slate-50'>
+                    电视访问
+                  </h3>
+                </div>
                 <button
-                  key={item.key}
-                  type='button'
-                  onClick={() => {
-                    setTvAccessTab(item.key);
-                    if (item.key !== 'web') closeTvQrScanner();
-                  }}
-                  className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/70 ${
-                    active
-                      ? 'bg-white text-slate-950 shadow-sm dark:bg-slate-950 dark:text-white'
-                      : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-                  }`}
+                  onClick={handleCloseSubscribe}
+                  className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 dark:hover:bg-white/10 dark:hover:text-white'
+                  aria-label='Close'
                 >
-                  <Icon className='h-4 w-4' />
-                  <span className='hidden sm:inline'>{item.label}</span>
-                  <span className='sm:hidden'>{item.key === 'tvbox' ? 'TVBox' : item.key === 'orion' ? 'Orion' : 'Web'}</span>
+                  <X className='h-5 w-5' />
                 </button>
-              );
-            })}
-          </div>
-
-          {tvAccessTab === 'tvbox' && (
-            <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
-              <div className='flex items-center justify-between gap-3'>
-                <div className='flex items-center gap-3'>
-                  <div className='flex h-11 w-11 items-center justify-center rounded-2xl bg-green-500 text-white shadow-lg shadow-green-500/25'>
-                    <Rss className='h-5 w-5' />
-                  </div>
-                  <div>
-                    <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
-                      TVBox 订阅
-                    </h4>
-                    <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
-                      复制订阅链接到 TVBox 使用
-                    </p>
-                  </div>
-                </div>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                    subscribeEnabled
-                      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                      : 'bg-slate-200 text-slate-500 dark:bg-white/10 dark:text-slate-400'
-                  }`}
-                >
-                  {subscribeEnabled ? '已启用' : '未启用'}
-                </span>
               </div>
 
-              {!subscribeEnabled ? (
-                <div className='mt-5 rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-3 text-sm font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400'>
-                  TVBox 订阅功能未启用
-                </div>
-              ) : isLoadingSubscribeUrl ? (
-                <div className='mt-5 space-y-3'>
-                  <div className='h-14 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
-                  <div className='h-14 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
-                  <div className='h-10 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
-                </div>
-              ) : (
-                <div className='mt-5 space-y-4'>
-                  <div className='grid gap-3 sm:grid-cols-2'>
+              <div className='mb-5 grid grid-cols-3 rounded-2xl bg-slate-100 p-1 dark:bg-white/10'>
+                {[
+                  { key: 'tvbox' as const, label: 'TVBox 订阅', icon: Rss },
+                  { key: 'orion' as const, label: 'OrionTV', icon: Download },
+                  { key: 'web' as const, label: 'Web 电视', icon: Monitor },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const active = tvAccessTab === item.key;
+                  return (
                     <button
+                      key={item.key}
                       type='button'
-                      onClick={() => setSubscribeAdFilterEnabled((prev) => !prev)}
-                      className='flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-green-400 dark:border-white/10 dark:bg-slate-900/70'
+                      onClick={() => {
+                        setTvAccessTab(item.key);
+                        if (item.key !== 'web') closeTvQrScanner();
+                      }}
+                      className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/70 ${
+                        active
+                          ? 'bg-white text-slate-950 shadow-sm dark:bg-slate-950 dark:text-white'
+                          : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                      }`}
                     >
-                      <div>
-                        <div className='text-sm font-bold text-slate-800 dark:text-slate-200'>去广告</div>
-                        <div className='mt-1 text-xs text-slate-500 dark:text-slate-400'>开启后通过代理处理播放链接</div>
-                      </div>
-                      <span className={`h-5 w-9 rounded-full p-0.5 transition ${subscribeAdFilterEnabled ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-700'}`}>
-                        <span className={`block h-4 w-4 rounded-full bg-white transition ${subscribeAdFilterEnabled ? 'translate-x-4' : ''}`} />
+                      <Icon className='h-4 w-4' />
+                      <span className='hidden sm:inline'>{item.label}</span>
+                      <span className='sm:hidden'>
+                        {item.key === 'tvbox'
+                          ? 'TVBox'
+                          : item.key === 'orion'
+                          ? 'Orion'
+                          : 'Web'}
                       </span>
                     </button>
-                    <button
-                      type='button'
-                      onClick={() => setSubscribeYellowFilterEnabled((prev) => !prev)}
-                      className='flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-yellow-400 dark:border-white/10 dark:bg-slate-900/70'
-                    >
-                      <div>
-                        <div className='text-sm font-bold text-slate-800 dark:text-slate-200'>黄色过滤</div>
-                        <div className='mt-1 text-xs text-slate-500 dark:text-slate-400'>过滤代理搜索中的黄色内容</div>
+                  );
+                })}
+              </div>
+
+              {tvAccessTab === 'tvbox' && (
+                <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
+                  <div className='flex items-center justify-between gap-3'>
+                    <div className='flex items-center gap-3'>
+                      <div className='flex h-11 w-11 items-center justify-center rounded-2xl bg-green-500 text-white shadow-lg shadow-green-500/25'>
+                        <Rss className='h-5 w-5' />
                       </div>
-                      <span className={`h-5 w-9 rounded-full p-0.5 transition ${subscribeYellowFilterEnabled ? 'bg-yellow-500' : 'bg-slate-300 dark:bg-slate-700'}`}>
-                        <span className={`block h-4 w-4 rounded-full bg-white transition ${subscribeYellowFilterEnabled ? 'translate-x-4' : ''}`} />
-                      </span>
-                    </button>
+                      <div>
+                        <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
+                          TVBox 订阅
+                        </h4>
+                        <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
+                          复制订阅链接到 TVBox 使用
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                        subscribeEnabled
+                          ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                          : 'bg-slate-200 text-slate-500 dark:bg-white/10 dark:text-slate-400'
+                      }`}
+                    >
+                      {subscribeEnabled ? '已启用' : '未启用'}
+                    </span>
                   </div>
 
-                  <div>
-                    <h4 className='mb-2 text-sm font-medium text-slate-700 dark:text-slate-300'>
-                      订阅链接
-                    </h4>
+                  {!subscribeEnabled ? (
+                    <div className='mt-5 rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-3 text-sm font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400'>
+                      TVBox 订阅功能未启用
+                    </div>
+                  ) : isLoadingSubscribeUrl ? (
+                    <div className='mt-5 space-y-3'>
+                      <div className='h-14 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
+                      <div className='h-14 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
+                      <div className='h-10 animate-pulse rounded-xl bg-slate-200 dark:bg-white/10' />
+                    </div>
+                  ) : (
+                    <div className='mt-5 space-y-4'>
+                      <div className='grid gap-3 sm:grid-cols-2'>
+                        <button
+                          type='button'
+                          onClick={() =>
+                            setSubscribeAdFilterEnabled((prev) => !prev)
+                          }
+                          className='flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-green-400 dark:border-white/10 dark:bg-slate-900/70'
+                        >
+                          <div>
+                            <div className='text-sm font-bold text-slate-800 dark:text-slate-200'>
+                              去广告
+                            </div>
+                            <div className='mt-1 text-xs text-slate-500 dark:text-slate-400'>
+                              开启后通过代理处理播放链接
+                            </div>
+                          </div>
+                          <span
+                            className={`h-5 w-9 rounded-full p-0.5 transition ${
+                              subscribeAdFilterEnabled
+                                ? 'bg-green-500'
+                                : 'bg-slate-300 dark:bg-slate-700'
+                            }`}
+                          >
+                            <span
+                              className={`block h-4 w-4 rounded-full bg-white transition ${
+                                subscribeAdFilterEnabled ? 'translate-x-4' : ''
+                              }`}
+                            />
+                          </span>
+                        </button>
+                        <button
+                          type='button'
+                          onClick={() =>
+                            setSubscribeYellowFilterEnabled((prev) => !prev)
+                          }
+                          className='flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-yellow-400 dark:border-white/10 dark:bg-slate-900/70'
+                        >
+                          <div>
+                            <div className='text-sm font-bold text-slate-800 dark:text-slate-200'>
+                              黄色过滤
+                            </div>
+                            <div className='mt-1 text-xs text-slate-500 dark:text-slate-400'>
+                              过滤代理搜索中的黄色内容
+                            </div>
+                          </div>
+                          <span
+                            className={`h-5 w-9 rounded-full p-0.5 transition ${
+                              subscribeYellowFilterEnabled
+                                ? 'bg-yellow-500'
+                                : 'bg-slate-300 dark:bg-slate-700'
+                            }`}
+                          >
+                            <span
+                              className={`block h-4 w-4 rounded-full bg-white transition ${
+                                subscribeYellowFilterEnabled
+                                  ? 'translate-x-4'
+                                  : ''
+                              }`}
+                            />
+                          </span>
+                        </button>
+                      </div>
+
+                      <div>
+                        <h4 className='mb-2 text-sm font-medium text-slate-700 dark:text-slate-300'>
+                          订阅链接
+                        </h4>
+                        <div className='flex gap-2'>
+                          <input
+                            type='text'
+                            className='min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-green-500 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200'
+                            value={subscribeUrl}
+                            readOnly
+                          />
+                          <button
+                            onClick={handleCopySubscribeUrl}
+                            className='inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-green-700'
+                          >
+                            <Copy className='h-4 w-4' />
+                            {copySuccess ? '已复制' : '复制'}
+                          </button>
+                        </div>
+                        {(subscribeAdFilterEnabled ||
+                          subscribeYellowFilterEnabled) && (
+                          <p className='mt-2 rounded-xl border border-yellow-400/25 bg-yellow-400/10 px-3 py-2 text-xs font-semibold text-yellow-700 dark:text-yellow-300'>
+                            💡
+                            代理模式已开启，某些源可能因为区域或兼容问题无法播放
+                          </p>
+                        )}
+                      </div>
+
+                      <div className='pt-1'>
+                        <button
+                          onClick={handleResetToken}
+                          disabled={isResettingToken}
+                          className='w-full cursor-pointer rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60'
+                        >
+                          {isResettingToken ? '重置中...' : '重置订阅Token'}
+                        </button>
+                        <p className='mt-2 text-center text-xs text-slate-500 dark:text-slate-400'>
+                          ⚠️ 重置后旧链接将失效
+                        </p>
+                        <p
+                          id='tvbox-token-message'
+                          className='hidden text-center text-xs'
+                        ></p>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {tvAccessTab === 'orion' && (
+                <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
+                  <div className='flex items-center gap-3'>
+                    <img
+                      src='/icons/OrionTV.png'
+                      alt='OrionTV'
+                      className='h-11 w-11 rounded-2xl object-cover shadow-lg shadow-indigo-500/20'
+                    />
+                    <div>
+                      <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
+                        OrionTV
+                      </h4>
+                      <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
+                        Android TV 专用客户端
+                      </p>
+                    </div>
+                  </div>
+                  <p className='mt-5 text-sm leading-6 text-slate-600 dark:text-slate-400'>
+                    可直接作为 MoonTV Plus 电视端使用，适合安装到 Android TV /
+                    电视盒子。
+                  </p>
+                  <div className='mt-5'>
+                    <h5 className='mb-2 text-sm font-bold text-slate-700 dark:text-slate-300'>
+                      Base URL
+                    </h5>
                     <div className='flex gap-2'>
                       <input
                         type='text'
-                        className='min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-green-500 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200'
-                        value={subscribeUrl}
                         readOnly
+                        value={
+                          typeof window !== 'undefined'
+                            ? window.location.origin
+                            : ''
+                        }
+                        className='min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200'
                       />
                       <button
-                        onClick={handleCopySubscribeUrl}
-                        className='inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-green-700'
+                        type='button'
+                        onClick={handleCopyOrionBaseUrl}
+                        className='inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-indigo-700'
                       >
                         <Copy className='h-4 w-4' />
-                        {copySuccess ? '已复制' : '复制'}
+                        {orionBaseUrlCopySuccess ? '已复制' : '复制'}
                       </button>
                     </div>
-                    {(subscribeAdFilterEnabled || subscribeYellowFilterEnabled) && (
-                      <p className='mt-2 rounded-xl border border-yellow-400/25 bg-yellow-400/10 px-3 py-2 text-xs font-semibold text-yellow-700 dark:text-yellow-300'>
-                        💡 代理模式已开启，某些源可能因为区域或兼容问题无法播放
-                      </p>
-                    )}
-                  </div>
-
-                  <div className='pt-1'>
-                    <button
-                      onClick={handleResetToken}
-                      disabled={isResettingToken}
-                      className='w-full cursor-pointer rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60'
-                    >
-                      {isResettingToken ? '重置中...' : '重置订阅Token'}
-                    </button>
-                    <p className='mt-2 text-center text-xs text-slate-500 dark:text-slate-400'>
-                      ⚠️ 重置后旧链接将失效
+                    <p className='mt-2 text-xs text-slate-500 dark:text-slate-400'>
+                      在 OrionTV 中填写该地址作为后端服务地址。
                     </p>
-                    <p id='tvbox-token-message' className='hidden text-center text-xs'></p>
                   </div>
-                </div>
-              )}
-            </section>
-          )}
-
-          {tvAccessTab === 'orion' && (
-            <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
-              <div className='flex items-center gap-3'>
-                <img
-                  src='/icons/OrionTV.png'
-                  alt='OrionTV'
-                  className='h-11 w-11 rounded-2xl object-cover shadow-lg shadow-indigo-500/20'
-                />
-                <div>
-                  <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
-                    OrionTV
-                  </h4>
-                  <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
-                    Android TV 专用客户端
-                  </p>
-                </div>
-              </div>
-              <p className='mt-5 text-sm leading-6 text-slate-600 dark:text-slate-400'>
-                可直接作为 MoonTV Plus 电视端使用，适合安装到 Android TV / 电视盒子。
-              </p>
-              <div className='mt-5'>
-                <h5 className='mb-2 text-sm font-bold text-slate-700 dark:text-slate-300'>
-                  Base URL
-                </h5>
-                <div className='flex gap-2'>
-                  <input
-                    type='text'
-                    readOnly
-                    value={typeof window !== 'undefined' ? window.location.origin : ''}
-                    className='min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-200'
-                  />
-                  <button
-                    type='button'
-                    onClick={handleCopyOrionBaseUrl}
-                    className='inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-indigo-700'
+                  <a
+                    href='https://github.com/mtvpls/OrionTV_Build/tags'
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className='mt-5 inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white transition hover:bg-indigo-700'
                   >
-                    <Copy className='h-4 w-4' />
-                    {orionBaseUrlCopySuccess ? '已复制' : '复制'}
-                  </button>
-                </div>
-                <p className='mt-2 text-xs text-slate-500 dark:text-slate-400'>
-                  在 OrionTV 中填写该地址作为后端服务地址。
-                </p>
-              </div>
-              <a
-                href='https://github.com/mtvpls/OrionTV_Build/tags'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='mt-5 inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white transition hover:bg-indigo-700'
-              >
-                下载 OrionTV
-                <ExternalLink className='h-4 w-4' />
-              </a>
-            </section>
-          )}
-
-          {tvAccessTab === 'web' && (
-            <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
-              <div className='flex items-center gap-3'>
-                <div className='flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-500 text-white shadow-lg shadow-rose-500/25'>
-                  <Monitor className='h-5 w-5' />
-                </div>
-                <div>
-                  <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
-                    Web 电视
-                  </h4>
-                  <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
-                    手机扫描电视屏幕二维码并确认登录
-                  </p>
-                </div>
-              </div>
-                <p className='mt-5 text-sm leading-6 text-slate-600 dark:text-slate-400'>
-                {tvModeEnabled
-                  ? '电视端打开 /tv 后可扫码登录；在电视端“我的”页也可扫描局域网遥控二维码。'
-                  : '当前部署未开启 TV 模式，/tv 页面和 Web 电视遥控不可用。'}
-              </p>
-              {!tvModeEnabled && (
-                <div className='mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 dark:border-amber-300/20 dark:bg-amber-400/10 dark:text-amber-200'>
-                  TV 模式未开启。请在环境变量中设置 ENABLE_TV_MODE=true 后重启服务。
-                </div>
+                    下载 OrionTV
+                    <ExternalLink className='h-4 w-4' />
+                  </a>
+                </section>
               )}
-              <div className='mt-5 grid gap-2 sm:grid-cols-2'>
-                <button
-                  type='button'
-                  onClick={startTvQrScanner}
-                  disabled={!tvModeEnabled}
-                  className='inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-3 text-sm font-black text-white transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/70 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-white/10 dark:disabled:text-slate-500'
-                >
-                  打开相机扫码
-                  <Smartphone className='h-4 w-4' />
-                </button>
-                <button
-                  type='button'
-                  onClick={() => {
-                    if (!tvModeEnabled) return;
-                    setIsSubscribeOpen(false);
-                    setIsTVRemoteOpen(true);
-                  }}
-                  disabled={!tvModeEnabled}
-                  className='inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/70 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200 dark:disabled:bg-white/10 dark:disabled:text-slate-500'
-                >
-                  <Sliders className='h-4 w-4' />
-                  远程电视遥控器
-                </button>
-              </div>
 
-            </section>
-          )}
+              {tvAccessTab === 'web' && (
+                <section className='rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-white/10 dark:bg-white/[0.04]'>
+                  <div className='flex items-center gap-3'>
+                    <div className='flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-500 text-white shadow-lg shadow-rose-500/25'>
+                      <Monitor className='h-5 w-5' />
+                    </div>
+                    <div>
+                      <h4 className='text-lg font-black text-slate-900 dark:text-slate-100'>
+                        Web 电视
+                      </h4>
+                      <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
+                        手机扫描电视屏幕二维码并确认登录
+                      </p>
+                    </div>
+                  </div>
+                  <p className='mt-5 text-sm leading-6 text-slate-600 dark:text-slate-400'>
+                    {tvModeEnabled
+                      ? '电视端打开 /tv 后可扫码登录；在电视端“我的”页也可扫描局域网遥控二维码。'
+                      : '当前部署未开启 TV 模式，/tv 页面和 Web 电视遥控不可用。'}
+                  </p>
+                  {!tvModeEnabled && (
+                    <div className='mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 dark:border-amber-300/20 dark:bg-amber-400/10 dark:text-amber-200'>
+                      TV 模式未开启。请在环境变量中设置 ENABLE_TV_MODE=true
+                      后重启服务。
+                    </div>
+                  )}
+                  <div className='mt-5 grid gap-2 sm:grid-cols-2'>
+                    <button
+                      type='button'
+                      onClick={startTvQrScanner}
+                      disabled={!tvModeEnabled}
+                      className='inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-3 text-sm font-black text-white transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/70 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-white/10 dark:disabled:text-slate-500'
+                    >
+                      打开相机扫码
+                      <Smartphone className='h-4 w-4' />
+                    </button>
+                    <button
+                      type='button'
+                      onClick={() => {
+                        if (!tvModeEnabled) return;
+                        setIsSubscribeOpen(false);
+                        setIsTVRemoteOpen(true);
+                      }}
+                      disabled={!tvModeEnabled}
+                      className='inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/70 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200 dark:disabled:bg-white/10 dark:disabled:text-slate-500'
+                    >
+                      <Sliders className='h-4 w-4' />
+                      远程电视遥控器
+                    </button>
+                  </div>
+                </section>
+              )}
             </>
           )}
         </div>
@@ -5216,6 +5359,10 @@ export const UserMenu: React.FC = () => {
         showRoleBadge={shouldShowRoleBadge}
         avatarText={avatarText}
         roleBadgeClassName={roleBadgeClassName}
+        membershipLabel={accountAccess?.planLabel}
+        membershipExpiresAt={accountAccess?.expiresAt}
+        membershipStatus={accountAccess?.status}
+        membershipIsExpired={accountAccess?.isExpired}
         showDeviceManagement={storageType !== 'localstorage'}
         showChangePassword={showChangePassword}
         onOpenEmailSettings={() => {
@@ -5243,7 +5390,8 @@ export const UserMenu: React.FC = () => {
         createPortal(changePasswordPanel, document.body)}
 
       {/* 使用 Portal 将订阅面板渲染到 document.body */}
-      {isSubscribeOpen &&
+      {!isRegisteredUser &&
+        isSubscribeOpen &&
         mounted &&
         createPortal(subscribePanel, document.body)}
 
@@ -5346,7 +5494,10 @@ export const UserMenu: React.FC = () => {
       />
 
       {/* 使用 Portal 将生态应用面板渲染到 document.body */}
-      {isEcoAppsOpen && mounted && createPortal(ecoAppsPanel, document.body)}
+      {!isRegisteredUser &&
+        isEcoAppsOpen &&
+        mounted &&
+        createPortal(ecoAppsPanel, document.body)}
 
       {/* 使用 Portal 将举报信息面板渲染到 document.body */}
       {isReportOpen && mounted && createPortal(reportPanel, document.body)}

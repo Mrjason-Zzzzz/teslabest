@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 import { CURRENT_VERSION } from '@/lib/version';
 
 export const runtime = 'nodejs';
@@ -26,7 +26,8 @@ export async function GET(request: NextRequest) {
     : {
         enabled: process.env.WATCH_ROOM_ENABLED === 'true',
         serverType:
-          (process.env.WATCH_ROOM_SERVER_TYPE as 'internal' | 'external') || 'internal',
+          (process.env.WATCH_ROOM_SERVER_TYPE as 'internal' | 'external') ||
+          'internal',
         externalServerUrl: process.env.WATCH_ROOM_EXTERNAL_SERVER_URL,
       };
 
@@ -38,26 +39,34 @@ export async function GET(request: NextRequest) {
       Version: CURRENT_VERSION,
       TVModeEnabled: process.env.ENABLE_TV_MODE !== 'false',
       WatchRoom: watchRoomConfig,
-      EnableOfflineDownload: process.env.NEXT_PUBLIC_ENABLE_OFFLINE_DOWNLOAD === 'true',
+      EnableOfflineDownload:
+        process.env.NEXT_PUBLIC_ENABLE_OFFLINE_DOWNLOAD === 'true',
       DanmakuAutoLoadDefault: true,
-      EnableTelegramLogin: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_USERNAME && process.env.TELEGRAM_LOGIN_ENABLED !== 'false'),
+      EnableTelegramLogin: Boolean(
+        process.env.TELEGRAM_BOT_TOKEN &&
+          process.env.TELEGRAM_BOT_USERNAME &&
+          process.env.TELEGRAM_LOGIN_ENABLED !== 'false'
+      ),
       TelegramBotUsername: process.env.TELEGRAM_BOT_USERNAME || '',
     });
   }
 
   // 非 localStorage 模式，从数据库读取配置
-  const config = await getConfig();
+  const config = await getFreshConfig();
   const result = {
     SiteName: config.SiteConfig.SiteName,
     StorageType: storageType,
     Version: CURRENT_VERSION,
     TVModeEnabled: process.env.ENABLE_TV_MODE !== 'false',
     WatchRoom: watchRoomConfig,
-    EnableOfflineDownload: process.env.NEXT_PUBLIC_ENABLE_OFFLINE_DOWNLOAD === 'true',
+    EnableOfflineDownload:
+      process.env.NEXT_PUBLIC_ENABLE_OFFLINE_DOWNLOAD === 'true',
     EnableRegistration: config.SiteConfig.EnableRegistration || false,
-    RequireRegistrationInviteCode: config.SiteConfig.RequireRegistrationInviteCode || false,
+    RequireRegistrationInviteCode:
+      config.SiteConfig.RequireRegistrationInviteCode || false,
     RequireRedemptionCode: config.SiteConfig.RequireRedemptionCode === true,
-    RegistrationRequireTurnstile: config.SiteConfig.RegistrationRequireTurnstile || false,
+    RegistrationRequireTurnstile:
+      config.SiteConfig.RegistrationRequireTurnstile || false,
     LoginRequireTurnstile: config.SiteConfig.LoginRequireTurnstile || false,
     TurnstileSiteKey: config.SiteConfig.TurnstileSiteKey || '',
     EnableOIDCLogin: config.SiteConfig.EnableOIDCLogin || false,
@@ -67,11 +76,15 @@ export async function GET(request: NextRequest) {
     OIDCButtonText: config.SiteConfig.OIDCButtonText || '',
     EnableTelegramLogin: Boolean(
       config.TelegramConfig?.enabled &&
-      config.TelegramConfig?.loginEnabled &&
-      (config.TelegramConfig?.botToken || process.env.TELEGRAM_BOT_TOKEN) &&
-      (config.TelegramConfig?.botUsername || process.env.TELEGRAM_BOT_USERNAME)
+        config.TelegramConfig?.loginEnabled &&
+        (config.TelegramConfig?.botToken || process.env.TELEGRAM_BOT_TOKEN) &&
+        (config.TelegramConfig?.botUsername ||
+          process.env.TELEGRAM_BOT_USERNAME)
     ),
-    TelegramBotUsername: config.TelegramConfig?.botUsername || process.env.TELEGRAM_BOT_USERNAME || '',
+    TelegramBotUsername:
+      config.TelegramConfig?.botUsername ||
+      process.env.TELEGRAM_BOT_USERNAME ||
+      '',
     DanmakuAutoLoadDefault: config.SiteConfig.DanmakuAutoLoadDefault !== false,
     loginBackgroundImage: config.ThemeConfig?.loginBackgroundImage || '',
     registerBackgroundImage: config.ThemeConfig?.registerBackgroundImage || '',

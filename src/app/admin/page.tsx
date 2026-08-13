@@ -375,11 +375,7 @@ interface SiteConfig {
   TMDBApiKey?: string;
   TMDBProxy?: string;
   TMDBReverseProxy?: string;
-  BangumiDataSource?:
-    | 'direct'
-    | 'server-proxy'
-    | 'custom-baseurl'
-    | 'sakura';
+  BangumiDataSource?: 'direct' | 'server-proxy' | 'custom-baseurl' | 'sakura';
   BangumiApiBaseUrl?: string;
   BangumiImageBaseUrl?: string;
   BangumiProxy?: string;
@@ -533,7 +529,13 @@ interface UserConfigProps {
     oidcSub?: string;
     enabledApis?: string[];
     access?: {
-      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      plan:
+        | '1_day'
+        | '1_month'
+        | '3_months'
+        | '6_months'
+        | '12_months'
+        | 'permanent';
       status: 'active' | 'disabled';
       expiresAt: number | null;
       isExpired: boolean;
@@ -573,8 +575,10 @@ const UserConfig = ({
     password: '',
     userGroup: '', // 新增用户组字段
     accessPlan: 'permanent' as
+      | '1_day'
       | '1_month'
       | '3_months'
+      | '6_months'
       | '12_months'
       | 'permanent',
   });
@@ -686,7 +690,13 @@ const UserConfig = ({
     created_at?: number;
     oidcSub?: string;
     access?: {
-      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      plan:
+        | '1_day'
+        | '1_month'
+        | '3_months'
+        | '6_months'
+        | '12_months'
+        | 'permanent';
       status: 'active' | 'disabled';
       expiresAt: number | null;
       isExpired: boolean;
@@ -1171,7 +1181,13 @@ const UserConfig = ({
     targetUsername: string,
     targetPassword?: string,
     userGroup?: string,
-    accessPlan?: '1_month' | '3_months' | '12_months' | 'permanent'
+    accessPlan?:
+      | '1_day'
+      | '1_month'
+      | '3_months'
+      | '6_months'
+      | '12_months'
+      | 'permanent'
   ) => {
     try {
       const res = await fetch('/api/admin/user', {
@@ -1546,30 +1562,30 @@ const UserConfig = ({
               </div>
               <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
                 <div>
-                <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-                  用户组（可选）
-                </label>
-                <select
-                  value={newUser.userGroup}
-                  onChange={(e) =>
-                    setNewUser((prev) => ({
-                      ...prev,
-                      userGroup: e.target.value,
-                    }))
-                  }
-                  className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-                >
-                  <option value=''>无用户组（无限制）</option>
-                  {userGroups.map((group) => (
-                    <option key={group.name} value={group.name}>
-                      {group.name} (
-                      {group.enabledApis && group.enabledApis.length > 0
-                        ? `${group.enabledApis.length} 个源`
-                        : '无限制'}
-                      )
-                    </option>
-                  ))}
-                </select>
+                  <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                    用户组（可选）
+                  </label>
+                  <select
+                    value={newUser.userGroup}
+                    onChange={(e) =>
+                      setNewUser((prev) => ({
+                        ...prev,
+                        userGroup: e.target.value,
+                      }))
+                    }
+                    className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+                  >
+                    <option value=''>无用户组（无限制）</option>
+                    {userGroups.map((group) => (
+                      <option key={group.name} value={group.name}>
+                        {group.name} (
+                        {group.enabledApis && group.enabledApis.length > 0
+                          ? `${group.enabledApis.length} 个源`
+                          : '无限制'}
+                        )
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
@@ -1581,16 +1597,20 @@ const UserConfig = ({
                       setNewUser((prev) => ({
                         ...prev,
                         accessPlan: e.target.value as
+                          | '1_day'
                           | '1_month'
                           | '3_months'
+                          | '6_months'
                           | '12_months'
                           | 'permanent',
                       }))
                     }
                     className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
                   >
+                    <option value='1_day'>天卡（1天）</option>
                     <option value='1_month'>1个月</option>
                     <option value='3_months'>3个月</option>
+                    <option value='6_months'>半年卡（6个月）</option>
                     <option value='12_months'>1年</option>
                     <option value='permanent'>永久</option>
                   </select>
@@ -1930,9 +1950,9 @@ const UserConfig = ({
                               </span>
                             ) : (
                               <span className='text-gray-700 dark:text-gray-300'>
-                                {new Date(user.access.expiresAt).toLocaleDateString(
-                                  'zh-CN'
-                                )}
+                                {new Date(
+                                  user.access.expiresAt
+                                ).toLocaleDateString('zh-CN')}
                               </span>
                             )}
                           </td>
@@ -4192,7 +4212,8 @@ const OpenListConfigComponent = ({
               路径元信息
             </h3>
             <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-              为指定路径下的影片设置分类，以及播放时是否自动刷新链接（约 14 分钟）
+              为指定路径下的影片设置分类，以及播放时是否自动刷新链接（约 14
+              分钟）
               {pathMetaRows.length > 0
                 ? ` · 已配置 ${pathMetaRows.length} 条`
                 : ''}
@@ -4240,7 +4261,8 @@ const OpenListConfigComponent = ({
                 </div>
 
                 <div className='px-5 py-3 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800'>
-                  填写目录路径即可作用于其下所有影片（如 /videos）。更具体的路径优先。改完后点「保存配置」才会生效。
+                  填写目录路径即可作用于其下所有影片（如
+                  /videos）。更具体的路径优先。改完后点「保存配置」才会生效。
                 </div>
 
                 <div className='flex-1 overflow-y-auto px-5 py-4 space-y-2'>
@@ -4351,7 +4373,9 @@ const OpenListConfigComponent = ({
                   <button
                     type='button'
                     onClick={() => {
-                      if (pathMetaRows.some((row) => !(row.path || '').trim())) {
+                      if (
+                        pathMetaRows.some((row) => !(row.path || '').trim())
+                      ) {
                         showError('路径不能为空', showAlert);
                         return;
                       }
@@ -6553,7 +6577,9 @@ const EmbyConfigComponent = ({
                   className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white text-sm'
                 />
                 <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                  仅用于账号认证登录请求，示例：MediaBrowser Client=&quot;moontvplus&quot;, Device=&quot;Web&quot;, DeviceId=&quot;moontvplus-web&quot;, Version=&quot;1.0.0&quot;
+                  仅用于账号认证登录请求，示例：MediaBrowser
+                  Client=&quot;moontvplus&quot;, Device=&quot;Web&quot;,
+                  DeviceId=&quot;moontvplus-web&quot;, Version=&quot;1.0.0&quot;
                 </p>
               </div>
             </div>
@@ -6654,9 +6680,14 @@ const VideoSourceConfig = ({
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [showSpecialSourcesModal, setShowSpecialSourcesModal] = useState(false);
-  const [showClientAdSourcesModal, setShowClientAdSourcesModal] = useState(false);
-  const [specialSourceDraftApis, setSpecialSourceDraftApis] = useState<string[]>([]);
-  const [clientAdSourceDraftApis, setClientAdSourceDraftApis] = useState<string[]>([]);
+  const [showClientAdSourcesModal, setShowClientAdSourcesModal] =
+    useState(false);
+  const [specialSourceDraftApis, setSpecialSourceDraftApis] = useState<
+    string[]
+  >([]);
+  const [clientAdSourceDraftApis, setClientAdSourceDraftApis] = useState<
+    string[]
+  >([]);
   const [weightDraftSources, setWeightDraftSources] = useState<DataSource[]>(
     []
   );
@@ -6789,7 +6820,6 @@ const VideoSourceConfig = ({
       console.error('操作失败', 'toggle_proxy_mode', key);
     });
   };
-
 
   const openSpecialSourcesModal = () => {
     setSpecialSourceDraftApis(config?.SpecialSourceApis || []);
@@ -7881,7 +7911,6 @@ const VideoSourceConfig = ({
         </table>
       </div>
 
-
       {showSpecialSourcesModal &&
         createPortal(
           <div
@@ -7898,7 +7927,8 @@ const VideoSourceConfig = ({
                     特殊源设置
                   </h3>
                   <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
-                    选中的视频源默认对普通搜索隐藏，仅在当前设备访问 /special 开启后参与普通 Web 搜索。
+                    选中的视频源默认对普通搜索隐藏，仅在当前设备访问 /special
+                    开启后参与普通 Web 搜索。
                   </p>
                 </div>
                 <button
@@ -7916,7 +7946,8 @@ const VideoSourceConfig = ({
                     配置说明
                   </div>
                   <p className='mt-1 text-sm text-rose-700 dark:text-rose-400'>
-                    这里维护的是特殊源列表，不是用户权限；TVBox、OrionTV、WebTV 始终不会使用这些特殊源。
+                    这里维护的是特殊源列表，不是用户权限；TVBox、OrionTV、WebTV
+                    始终不会使用这些特殊源。
                   </p>
                 </div>
 
@@ -7932,7 +7963,9 @@ const VideoSourceConfig = ({
                         onChange={(e) => {
                           if (e.target.checked) {
                             setSpecialSourceDraftApis((prev) =>
-                              prev.includes(source.key) ? prev : [...prev, source.key]
+                              prev.includes(source.key)
+                                ? prev
+                                : [...prev, source.key]
                             );
                           } else {
                             setSpecialSourceDraftApis((prev) =>
@@ -7966,9 +7999,9 @@ const VideoSourceConfig = ({
                   <button
                     onClick={() => {
                       const allApis =
-                        config?.SourceConfig?.filter((source) => !source.disabled).map(
-                          (source) => source.key
-                        ) || [];
+                        config?.SourceConfig?.filter(
+                          (source) => !source.disabled
+                        ).map((source) => source.key) || [];
                       setSpecialSourceDraftApis(allApis);
                     }}
                     className={buttonStyles.quickAction}
@@ -7983,7 +8016,10 @@ const VideoSourceConfig = ({
                       {specialSourceDraftApis.length} 个源
                     </span>
                   </span>
-                  <button onClick={closeSpecialSourcesModal} className={buttonStyles.secondary}>
+                  <button
+                    onClick={closeSpecialSourcesModal}
+                    className={buttonStyles.secondary}
+                  >
                     取消
                   </button>
                   <button
@@ -8020,7 +8056,8 @@ const VideoSourceConfig = ({
                     客户端去广告配置
                   </h3>
                   <p className='mt-1 text-sm text-gray-600 dark:text-gray-400'>
-                    勾选后，用户使用 MoonTVPlus APP 或 OrionTV 观看这些视频源时，会自动过滤片头/插播广告。
+                    勾选后，用户使用 MoonTVPlus APP 或 OrionTV
+                    观看这些视频源时，会自动过滤片头/插播广告。
                   </p>
                 </div>
                 <button
@@ -8045,7 +8082,9 @@ const VideoSourceConfig = ({
                         onChange={(e) => {
                           if (e.target.checked) {
                             setClientAdSourceDraftApis((prev) =>
-                              prev.includes(source.key) ? prev : [...prev, source.key]
+                              prev.includes(source.key)
+                                ? prev
+                                : [...prev, source.key]
                             );
                           } else {
                             setClientAdSourceDraftApis((prev) =>
@@ -8079,9 +8118,9 @@ const VideoSourceConfig = ({
                   <button
                     onClick={() => {
                       const allApis =
-                        config?.SourceConfig?.filter((source) => !source.disabled).map(
-                          (source) => source.key
-                        ) || [];
+                        config?.SourceConfig?.filter(
+                          (source) => !source.disabled
+                        ).map((source) => source.key) || [];
                       setClientAdSourceDraftApis(allApis);
                     }}
                     className={buttonStyles.quickAction}
@@ -8096,7 +8135,10 @@ const VideoSourceConfig = ({
                       {clientAdSourceDraftApis.length} 个源
                     </span>
                   </span>
-                  <button onClick={closeClientAdSourcesModal} className={buttonStyles.secondary}>
+                  <button
+                    onClick={closeClientAdSourcesModal}
+                    className={buttonStyles.secondary}
+                  >
                     取消
                   </button>
                   <button
@@ -11703,8 +11745,8 @@ const SiteConfigComponent = ({
                   Bangumi Cloudflare Workers 代理脚本
                 </label>
                 <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-                  复制后粘贴到 Cloudflare Workers，部署后的域名可填入
-                  Bangumi Base URL 和 Bangumi 图片 Base URL。
+                  复制后粘贴到 Cloudflare Workers，部署后的域名可填入 Bangumi
+                  Base URL 和 Bangumi 图片 Base URL。
                 </p>
               </div>
               <div className='flex shrink-0 items-center gap-2'>
@@ -12012,7 +12054,8 @@ const SiteConfigComponent = ({
                 启用流量统计
               </label>
               <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-                开启后将在页面中注入统计脚本，支持 Umami、Google Analytics 和自定义代码
+                开启后将在页面中注入统计脚本，支持 Umami、Google Analytics
+                和自定义代码
               </p>
             </div>
             <button
@@ -12053,14 +12096,20 @@ const SiteConfigComponent = ({
                   onChange={(e) =>
                     setSiteSettings((prev) => ({
                       ...prev,
-                      AnalyticsProvider: e.target.value as 'umami' | 'google' | 'clarity' | 'custom',
+                      AnalyticsProvider: e.target.value as
+                        | 'umami'
+                        | 'google'
+                        | 'clarity'
+                        | 'custom',
                     }))
                   }
                   className='mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                 >
                   <option value='umami'>Umami（开源，自托管）</option>
                   <option value='google'>Google Analytics</option>
-                  <option value='clarity'>Microsoft Clarity（免费，热力图+会话回放）</option>
+                  <option value='clarity'>
+                    Microsoft Clarity（免费，热力图+会话回放）
+                  </option>
                   <option value='custom'>自定义代码</option>
                 </select>
               </div>
@@ -12128,7 +12177,8 @@ const SiteConfigComponent = ({
                     className='mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   />
                   <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-                    Google Analytics 4 的 Measurement ID，在 GA 后台「数据流」中获取
+                    Google Analytics 4 的 Measurement ID，在 GA
+                    后台「数据流」中获取
                   </p>
                 </div>
               )}
@@ -12151,7 +12201,8 @@ const SiteConfigComponent = ({
                     className='mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   />
                   <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-                    Microsoft Clarity 的 Project ID，在 clarity.microsoft.com 项目设置中获取
+                    Microsoft Clarity 的 Project ID，在 clarity.microsoft.com
+                    项目设置中获取
                   </p>
                 </div>
               )}
@@ -12174,7 +12225,8 @@ const SiteConfigComponent = ({
                     className='mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   />
                   <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-                    支持任意第三方统计服务的脚本代码，将直接注入到页面 &lt;head&gt; 中
+                    支持任意第三方统计服务的脚本代码，将直接注入到页面
+                    &lt;head&gt; 中
                   </p>
                 </div>
               )}
@@ -14792,7 +14844,6 @@ const XiaoyaConfigComponent = ({
   );
 };
 
-
 // Telegram Bot 配置组件
 const TelegramConfigComponent = ({
   config,
@@ -14860,7 +14911,10 @@ const TelegramConfigComponent = ({
         showSuccess('Telegram 配置保存成功', showAlert);
         await refreshConfig();
       } catch (error) {
-        showError(error instanceof Error ? error.message : '保存失败', showAlert);
+        showError(
+          error instanceof Error ? error.message : '保存失败',
+          showAlert
+        );
         throw error;
       }
     });
@@ -14876,9 +14930,10 @@ const TelegramConfigComponent = ({
           throw new Error('请先填写 Bot Token、Bot 用户名 和 Webhook Secret');
         }
 
-        const webhookUrlValue = webhookSecret === '******'
-          ? ''
-          : `${window.location.origin}/api/telegram/webhook/${webhookSecret}`;
+        const webhookUrlValue =
+          webhookSecret === '******'
+            ? ''
+            : `${window.location.origin}/api/telegram/webhook/${webhookSecret}`;
         const response = await fetch('/api/admin/telegram', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -14892,13 +14947,20 @@ const TelegramConfigComponent = ({
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
           const telegramDetail = data.telegram
-            ? `（HTTP ${data.telegram.status || '-'}，响应：${data.telegram.body || data.telegram.statusText || '-'}）`
+            ? `（HTTP ${data.telegram.status || '-'}，响应：${
+                data.telegram.body || data.telegram.statusText || '-'
+              }）`
             : '';
-          throw new Error(`${data.error || 'Webhook 设置失败'}${telegramDetail}`);
+          throw new Error(
+            `${data.error || 'Webhook 设置失败'}${telegramDetail}`
+          );
         }
         showSuccess('Webhook 设置成功', showAlert);
       } catch (error) {
-        showError(error instanceof Error ? error.message : 'Webhook 设置失败', showAlert);
+        showError(
+          error instanceof Error ? error.message : 'Webhook 设置失败',
+          showAlert
+        );
         throw error;
       }
     });
@@ -14915,20 +14977,31 @@ const TelegramConfigComponent = ({
         const response = await fetch('/api/admin/telegram', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'test', config: buildConfig(), testChatId: testChatId.trim() }),
+          body: JSON.stringify({
+            action: 'test',
+            config: buildConfig(),
+            testChatId: testChatId.trim(),
+          }),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '发送失败');
         showSuccess('测试消息发送成功', showAlert);
       } catch (error) {
-        showError(error instanceof Error ? error.message : '发送失败', showAlert);
+        showError(
+          error instanceof Error ? error.message : '发送失败',
+          showAlert
+        );
         throw error;
       }
     });
   };
 
   const webhookUrl = webhookSecret
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/api/telegram/webhook/${webhookSecret === '******' ? '<secret>' : webhookSecret}`
+    ? `${
+        typeof window !== 'undefined' ? window.location.origin : ''
+      }/api/telegram/webhook/${
+        webhookSecret === '******' ? '<secret>' : webhookSecret
+      }`
     : '';
 
   return (
@@ -14939,7 +15012,10 @@ const TelegramConfigComponent = ({
         </h3>
         <div className='text-sm text-sky-800 dark:text-sky-200 space-y-1'>
           <p>• 支持用户绑定 Telegram、快捷确认登录和站内通知推送</p>
-          <p>• 开启 Telegram 注册后，用户可在 Bot 中发送 /register 用户名 密码 注册账号</p>
+          <p>
+            • 开启 Telegram 注册后，用户可在 Bot 中发送 /register 用户名 密码
+            注册账号
+          </p>
           <p>• Webhook 地址需在 Telegram Bot API 中手动设置</p>
           <p>• Bot Token 和 Webhook Secret 仅服务端保存，不会暴露给前端</p>
         </div>
@@ -14948,47 +15024,113 @@ const TelegramConfigComponent = ({
       <div className='space-y-4'>
         <div className='flex items-center justify-between py-3 border-b border-gray-200 dark:border-gray-700'>
           <div>
-            <h3 className='text-sm font-medium text-gray-900 dark:text-white'>启用 Telegram Bot</h3>
-            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>开启后显示绑定与 Telegram 登录入口</p>
+            <h3 className='text-sm font-medium text-gray-900 dark:text-white'>
+              启用 Telegram Bot
+            </h3>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+              开启后显示绑定与 Telegram 登录入口
+            </p>
           </div>
           <button
             onClick={() => setEnabled(!enabled)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              enabled ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'
+            }`}
           >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                enabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
           </button>
         </div>
 
         <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
           <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>Bot Token *</label>
-            <input type='password' value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder='123456:ABC...' className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+              Bot Token *
+            </label>
+            <input
+              type='password'
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+              placeholder='123456:ABC...'
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+            />
           </div>
           <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>Bot 用户名 *</label>
-            <input type='text' value={botUsername} onChange={(e) => setBotUsername(e.target.value)} placeholder='your_bot' className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+              Bot 用户名 *
+            </label>
+            <input
+              type='text'
+              value={botUsername}
+              onChange={(e) => setBotUsername(e.target.value)}
+              placeholder='your_bot'
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+            />
           </div>
         </div>
 
         <div>
-          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>Webhook Secret</label>
-          <input type='password' value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} placeholder='建议填写随机长字符串' className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
-          {webhookUrl && <p className='mt-2 break-all text-xs text-gray-500 dark:text-gray-400'>Webhook URL：{webhookUrl}</p>}
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+            Webhook Secret
+          </label>
+          <input
+            type='password'
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+            placeholder='建议填写随机长字符串'
+            className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+          />
+          {webhookUrl && (
+            <p className='mt-2 break-all text-xs text-gray-500 dark:text-gray-400'>
+              Webhook URL：{webhookUrl}
+            </p>
+          )}
           <div className='mt-3 flex flex-col gap-2 sm:flex-row'>
-            <button onClick={handleSetWebhook} disabled={isLoading('setTelegramWebhook')} className={`w-full sm:w-auto ${buttonStyles.primary}`}>{isLoading('setTelegramWebhook') ? '设置中...' : '一键设置 Webhook'}</button>
+            <button
+              onClick={handleSetWebhook}
+              disabled={isLoading('setTelegramWebhook')}
+              className={`w-full sm:w-auto ${buttonStyles.primary}`}
+            >
+              {isLoading('setTelegramWebhook')
+                ? '设置中...'
+                : '一键设置 Webhook'}
+            </button>
           </div>
         </div>
 
         <div className='grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700'>
           <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>系统代理</label>
-            <input type='text' value={apiProxy} onChange={(e) => setApiProxy(e.target.value)} placeholder='http://127.0.0.1:7890' className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>Node 部署可用；Cloudflare/Edge 环境会忽略。</p>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+              系统代理
+            </label>
+            <input
+              type='text'
+              value={apiProxy}
+              onChange={(e) => setApiProxy(e.target.value)}
+              placeholder='http://127.0.0.1:7890'
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              Node 部署可用；Cloudflare/Edge 环境会忽略。
+            </p>
           </div>
           <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>反代 Base URL</label>
-            <input type='text' value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} placeholder='https://telegram-api.example.com' className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>用于替换 https://api.telegram.org。</p>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+              反代 Base URL
+            </label>
+            <input
+              type='text'
+              value={apiBaseUrl}
+              onChange={(e) => setApiBaseUrl(e.target.value)}
+              placeholder='https://telegram-api.example.com'
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              用于替换 https://api.telegram.org。
+            </p>
           </div>
         </div>
 
@@ -14997,26 +15139,61 @@ const TelegramConfigComponent = ({
             ['允许绑定', bindingEnabled, setBindingEnabled],
             ['允许 Telegram 注册', registrationEnabled, setRegistrationEnabled],
             ['允许 Telegram 登录', loginEnabled, setLoginEnabled],
-            ['启用 Telegram 通知', notificationsEnabled, setNotificationsEnabled],
-            ['新绑定默认开启通知', defaultNotifications, setDefaultNotifications],
+            [
+              '启用 Telegram 通知',
+              notificationsEnabled,
+              setNotificationsEnabled,
+            ],
+            [
+              '新绑定默认开启通知',
+              defaultNotifications,
+              setDefaultNotifications,
+            ],
           ].map(([label, value, setter]) => (
-            <label key={label as string} className='flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300'>
-              <input type='checkbox' checked={value as boolean} onChange={(e) => (setter as (value: boolean) => void)(e.target.checked)} />
+            <label
+              key={label as string}
+              className='flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300'
+            >
+              <input
+                type='checkbox'
+                checked={value as boolean}
+                onChange={(e) =>
+                  (setter as (value: boolean) => void)(e.target.checked)
+                }
+              />
               {label as string}
             </label>
           ))}
         </div>
 
         <div className='rounded-lg border border-gray-200 p-4 dark:border-gray-700'>
-          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>测试 Chat ID</label>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1'>
+            测试 Chat ID
+          </label>
           <div className='flex flex-col gap-2 sm:flex-row'>
-            <input type='text' value={testChatId} onChange={(e) => setTestChatId(e.target.value)} placeholder='用户或群组 chat_id' className='min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white' />
-            <button onClick={handleTest} disabled={isLoading('testTelegram')} className={`w-full shrink-0 sm:w-auto ${buttonStyles.primary}`}>{isLoading('testTelegram') ? '发送中...' : '测试'}</button>
+            <input
+              type='text'
+              value={testChatId}
+              onChange={(e) => setTestChatId(e.target.value)}
+              placeholder='用户或群组 chat_id'
+              className='min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
+            />
+            <button
+              onClick={handleTest}
+              disabled={isLoading('testTelegram')}
+              className={`w-full shrink-0 sm:w-auto ${buttonStyles.primary}`}
+            >
+              {isLoading('testTelegram') ? '发送中...' : '测试'}
+            </button>
           </div>
         </div>
 
         <div className='flex justify-end'>
-          <button onClick={handleSave} disabled={isLoading('saveTelegram')} className={buttonStyles.success}>
+          <button
+            onClick={handleSave}
+            disabled={isLoading('saveTelegram')}
+            className={buttonStyles.success}
+          >
             {isLoading('saveTelegram') ? '保存中...' : '保存配置'}
           </button>
         </div>
@@ -17483,19 +17660,27 @@ const WebLiveConfig = ({
         platform: source.platform,
         roomId: source.roomId,
       });
-      const response = await fetch(`/api/web-live/stream?${params.toString()}`, {
-        cache: 'no-store',
-      });
+      const response = await fetch(
+        `/api/web-live/stream?${params.toString()}`,
+        {
+          cache: 'no-store',
+        }
+      );
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.url) {
         throw new Error(data.error || '没有解析到可播放直播流');
       }
       showSuccess(
-        `解析成功：${data.name || source.name}${data.title ? ` · ${data.title}` : ''}`,
+        `解析成功：${data.name || source.name}${
+          data.title ? ` · ${data.title}` : ''
+        }`,
         showAlert
       );
     }).catch((error) => {
-      showError(error instanceof Error ? error.message : '解析测试失败', showAlert);
+      showError(
+        error instanceof Error ? error.message : '解析测试失败',
+        showAlert
+      );
     });
   };
 
@@ -17628,7 +17813,9 @@ const WebLiveConfig = ({
         )}
 
       <div className='rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs leading-5 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'>
-        可填写房间 ID，也可直接粘贴虎牙、哔哩哔哩或抖音的完整直播间链接；保存时会自动提取 ID。添加后先点击“解析测试”，成功后再去网络直播页面播放。
+        可填写房间
+        ID，也可直接粘贴虎牙、哔哩哔哩或抖音的完整直播间链接；保存时会自动提取
+        ID。添加后先点击“解析测试”，成功后再去网络直播页面播放。
       </div>
 
       <div className='flex items-center justify-between'>
@@ -17882,7 +18069,9 @@ const WebLiveConfig = ({
                           : ''
                       }`}
                     >
-                      {isLoading(`testWebLive_${source.key}`) ? '测试中' : '解析测试'}
+                      {isLoading(`testWebLive_${source.key}`)
+                        ? '测试中'
+                        : '解析测试'}
                     </button>
                     {source.from !== 'config' && (
                       <>
@@ -18007,7 +18196,13 @@ function AdminPageClient() {
     tags?: string[];
     enabledApis?: string[];
     access?: {
-      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      plan:
+        | '1_day'
+        | '1_month'
+        | '3_months'
+        | '6_months'
+        | '12_months'
+        | 'permanent';
       status: 'active' | 'disabled';
       expiresAt: number | null;
       isExpired: boolean;

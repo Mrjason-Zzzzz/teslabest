@@ -5,9 +5,10 @@ import {
   createAccountPolicy,
   getRedemptionCodeState,
   hashRedemptionCode,
+  isAccessPlan,
   RedemptionCodeRecord,
 } from '@/lib/account-access';
-import { getConfig, setCachedConfig } from '@/lib/config';
+import { getFreshConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { lockManager } from '@/lib/lock';
 import {
@@ -28,18 +29,24 @@ const STORAGE_TYPE =
     | undefined) || 'localstorage';
 
 // 验证Cloudflare Turnstile Token
-async function verifyTurnstileToken(token: string, secretKey: string): Promise<boolean> {
+async function verifyTurnstileToken(
+  token: string,
+  secretKey: string
+): Promise<boolean> {
   try {
-    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        secret: secretKey,
-        response: token,
-      }),
-    });
+    const response = await fetch(
+      'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          secret: secretKey,
+          response: token,
+        }),
+      }
+    );
 
     const data = await response.json();
     return data.success === true;
@@ -60,24 +67,16 @@ export async function POST(req: NextRequest) {
     }
 
     // 获取站点配置
-    const config = await getConfig();
+    const config = await getFreshConfig();
     const siteConfig = config.SiteConfig;
 
     // 检查是否开启注册
     if (!siteConfig.EnableRegistration) {
-      return NextResponse.json(
-        { error: '注册功能未开启' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: '注册功能未开启' }, { status: 403 });
     }
 
-    const {
-      username,
-      password,
-      inviteCode,
-      redemptionCode,
-      turnstileToken,
-    } = await req.json();
+    const { username, password, inviteCode, redemptionCode, turnstileToken } =
+      await req.json();
 
     // 验证输入
     if (!username || typeof username !== 'string') {
@@ -103,22 +102,21 @@ export async function POST(req: NextRequest) {
 
     // 验证密码长度
     if (password.length < 6) {
-      return NextResponse.json(
-        { error: '密码长度至少为6位' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '密码长度至少为6位' }, { status: 400 });
     }
 
     // 检查是否与站长同名
     if (username === process.env.USERNAME) {
-      return NextResponse.json(
-        { error: '该用户名不可用' },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: '该用户名不可用' }, { status: 409 });
     }
 
-    if (siteConfig.RequireRegistrationInviteCode && !siteConfig.RequireRedemptionCode) {
-      const expectedInviteCode = (siteConfig.RegistrationInviteCode || '').trim();
+    if (
+      siteConfig.RequireRegistrationInviteCode &&
+      !siteConfig.RequireRedemptionCode
+    ) {
+      const expectedInviteCode = (
+        siteConfig.RegistrationInviteCode || ''
+      ).trim();
       if (!expectedInviteCode) {
         return NextResponse.json(
           { error: '服务器未配置邀请码' },
@@ -127,10 +125,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (!inviteCode || inviteCode.trim() !== expectedInviteCode) {
-        return NextResponse.json(
-          { error: '邀请码错误' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: '邀请码错误' }, { status: 400 });
       }
     }
 
@@ -145,7 +140,8 @@ export async function POST(req: NextRequest) {
     // 获取用户名锁和兑换码锁，防止并发重复注册/兑换
     let releaseLock: (() => void) | null = null;
     let releaseRedemptionLock: (() => void) | null = null;
-    let registrationConfig: Awaited<ReturnType<typeof getConfig>> | null = null;
+    let registrationConfig: Awaited<ReturnType<typeof getFreshConfig>> | null =
+      null;
     let redemptionRecord: RedemptionCodeRecord | null = null;
     try {
       releaseLock = await lockManager.acquire(`register:${username}`);
@@ -169,7 +165,7 @@ export async function POST(req: NextRequest) {
 
     try {
       if (redemptionHash) {
-        registrationConfig = await getConfig();
+        registrationConfig = await getFreshConfig();
         redemptionRecord =
           registrationConfig.UserConfig.RedemptionCodes?.find(
             (item) => item.codeHash === redemptionHash
@@ -183,15 +179,18 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
+        if (!isAccessPlan(redemptionRecord.plan)) {
+          return NextResponse.json(
+            { error: '兑换码套餐无效，请联系管理员作废后重新生成' },
+            { status: 400 }
+          );
+        }
       }
 
       // 检查用户是否已存在（只检查V2存储）
       const userExists = await db.checkUserExistV2(username);
       if (userExists) {
-        return NextResponse.json(
-          { error: '用户名已存在' },
-          { status: 409 }
-        );
+        return NextResponse.json({ error: '用户名已存在' }, { status: 409 });
       }
 
       // 如果开启了Turnstile验证
@@ -212,7 +211,10 @@ export async function POST(req: NextRequest) {
         }
 
         // 验证Turnstile Token
-        const isValid = await verifyTurnstileToken(turnstileToken, siteConfig.TurnstileSecretKey);
+        const isValid = await verifyTurnstileToken(
+          turnstileToken,
+          siteConfig.TurnstileSecretKey
+        );
         if (!isValid) {
           return NextResponse.json(
             { error: '人机验证失败，请重试' },
@@ -224,22 +226,23 @@ export async function POST(req: NextRequest) {
       // 创建用户
       try {
         // 使用新版本创建用户（带SHA256加密）
-        const defaultTags = siteConfig.DefaultUserTags && siteConfig.DefaultUserTags.length > 0
-          ? siteConfig.DefaultUserTags
-          : undefined;
+        const defaultTags =
+          siteConfig.DefaultUserTags && siteConfig.DefaultUserTags.length > 0
+            ? siteConfig.DefaultUserTags
+            : undefined;
 
         await db.createUserV2(username, password, 'user', defaultTags);
 
         if (redemptionRecord && registrationConfig) {
           const now = Date.now();
           registrationConfig.UserConfig.AccessPolicies ||= {};
-          registrationConfig.UserConfig.AccessPolicies[username] =
-            createAccountPolicy(
-              redemptionRecord.plan,
-              'redemption',
-              now,
-              'active'
-            );
+          const accessPolicy = createAccountPolicy(
+            redemptionRecord.plan,
+            'redemption',
+            now,
+            'active'
+          );
+          registrationConfig.UserConfig.AccessPolicies[username] = accessPolicy;
           redemptionRecord.status = 'used';
           redemptionRecord.usedAt = now;
           redemptionRecord.usedBy = username;
@@ -254,31 +257,50 @@ export async function POST(req: NextRequest) {
         }
 
         const telegramConfig = await getTelegramConfig();
-        if (telegramConfig.enabled && telegramConfig.bindingEnabled && telegramConfig.botToken) {
+        if (
+          telegramConfig.enabled &&
+          telegramConfig.bindingEnabled &&
+          telegramConfig.botToken
+        ) {
           const bindSession = await createTelegramBindSession(username);
           return NextResponse.json({
             ok: true,
             message: '注册成功',
+            membership: redemptionRecord
+              ? registrationConfig?.UserConfig.AccessPolicies?.[username]
+              : undefined,
             telegramBind: {
               code: bindSession.code,
               expiresAt: bindSession.expiresAt,
               botUsername: telegramConfig.botUsername,
               deepLink: telegramConfig.botUsername
-                ? getTelegramDeepLink(telegramConfig.botUsername, `bind_${bindSession.code}`)
+                ? getTelegramDeepLink(
+                    telegramConfig.botUsername,
+                    `bind_${bindSession.code}`
+                  )
                 : '',
             },
           });
         }
 
         // 注册成功
-        return NextResponse.json({ ok: true, message: '注册成功' });
+        return NextResponse.json({
+          ok: true,
+          message: '注册成功',
+          membership: redemptionRecord
+            ? registrationConfig?.UserConfig.AccessPolicies?.[username]
+            : undefined,
+        });
       } catch (err: any) {
         console.error('创建用户失败', err);
         // 如果是用户已存在的错误，返回409
         if (err.message === '用户已存在') {
           return NextResponse.json({ error: '用户名已存在' }, { status: 409 });
         }
-        return NextResponse.json({ error: '注册失败，请稍后重试' }, { status: 500 });
+        return NextResponse.json(
+          { error: '注册失败，请稍后重试' },
+          { status: 500 }
+        );
       }
     } finally {
       // 释放锁

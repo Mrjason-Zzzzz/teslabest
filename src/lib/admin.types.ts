@@ -28,11 +28,7 @@ export interface AdminConfig {
     TMDBProxy?: string;
     TMDBReverseProxy?: string;
     // 动漫/Bangumi配置
-    BangumiDataSource?:
-      | 'direct'
-      | 'server-proxy'
-      | 'custom-baseurl'
-      | 'sakura';
+    BangumiDataSource?: 'direct' | 'server-proxy' | 'custom-baseurl' | 'sakura';
     BangumiApiBaseUrl?: string;
     BangumiImageBaseUrl?: string;
     BangumiProxy?: string;
@@ -101,7 +97,13 @@ export interface AdminConfig {
     AccessPolicies?: Record<
       string,
       {
-        plan: '1_month' | '3_months' | '12_months' | 'permanent';
+        plan:
+          | '1_day'
+          | '1_month'
+          | '3_months'
+          | '6_months'
+          | '12_months'
+          | 'permanent';
         status: 'active' | 'disabled';
         expiresAt: number | null;
         source: 'legacy' | 'admin' | 'redemption';
@@ -113,7 +115,13 @@ export interface AdminConfig {
       id: string;
       codeHash: string;
       codeHint: string;
-      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      plan:
+        | '1_day'
+        | '1_month'
+        | '3_months'
+        | '6_months'
+        | '12_months'
+        | 'permanent';
       status: 'active' | 'used' | 'revoked';
       label?: string;
       createdAt: number;

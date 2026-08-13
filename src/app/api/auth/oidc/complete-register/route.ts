@@ -1,7 +1,7 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import {
   generateRefreshToken,
@@ -50,7 +50,11 @@ function getDeviceInfo(userAgent: string): string {
     return 'OrionTV';
   }
 
-  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
+  if (
+    ua.includes('mobile') ||
+    ua.includes('android') ||
+    ua.includes('iphone')
+  ) {
     if (ua.includes('android')) return 'Android Mobile';
     if (ua.includes('iphone')) return 'iPhone';
     return 'Mobile Device';
@@ -89,7 +93,7 @@ async function generateAuthCookie(
       role: authData.role,
       timestamp: authData.timestamp,
       accountStatus: authData.accountStatus,
-      accountExpiresAt: authData.accountExpiresAt
+      accountExpiresAt: authData.accountExpiresAt,
     });
     const signature = await generateSignature(dataToSign, process.env.PASSWORD);
     authData.signature = signature;
@@ -147,10 +151,7 @@ export async function POST(request: NextRequest) {
     try {
       oidcSession = JSON.parse(oidcSessionCookie);
     } catch {
-      return NextResponse.json(
-        { error: 'OIDC会话无效' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'OIDC会话无效' }, { status: 400 });
     }
 
     // 检查session是否过期(10分钟)
@@ -161,15 +162,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const config = await getConfig();
+    const config = await getFreshConfig();
     const siteConfig = config.SiteConfig;
 
     // 检查是否启用OIDC注册
     if (!siteConfig.EnableOIDCRegistration) {
-      return NextResponse.json(
-        { error: 'OIDC注册未启用' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: 'OIDC注册未启用' }, { status: 403 });
     }
     if (siteConfig.RequireRedemptionCode) {
       return NextResponse.json(
@@ -184,7 +182,9 @@ export async function POST(request: NextRequest) {
       const userTrustLevel = oidcSession.trust_level ?? 0;
       if (userTrustLevel < minTrustLevel) {
         return NextResponse.json(
-          { error: `您的信任等级(${userTrustLevel})不满足最低要求(${minTrustLevel})` },
+          {
+            error: `您的信任等级(${userTrustLevel})不满足最低要求(${minTrustLevel})`,
+          },
           { status: 403 }
         );
       }
@@ -192,19 +192,13 @@ export async function POST(request: NextRequest) {
 
     // 检查是否与站长同名
     if (username === process.env.USERNAME) {
-      return NextResponse.json(
-        { error: '该用户名不可用' },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: '该用户名不可用' }, { status: 409 });
     }
 
     // 检查用户名是否已存在
     const userExists = await db.checkUserExistV2(username);
     if (userExists) {
-      return NextResponse.json(
-        { error: '用户名已存在' },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: '用户名已存在' }, { status: 409 });
     }
 
     // 检查OIDC sub是否已被使用
@@ -222,18 +216,29 @@ export async function POST(request: NextRequest) {
       const randomPassword = crypto.randomUUID();
 
       // 获取默认用户组
-      const defaultTags = siteConfig.DefaultUserTags && siteConfig.DefaultUserTags.length > 0
-        ? siteConfig.DefaultUserTags
-        : undefined;
+      const defaultTags =
+        siteConfig.DefaultUserTags && siteConfig.DefaultUserTags.length > 0
+          ? siteConfig.DefaultUserTags
+          : undefined;
 
       // 使用新版本创建用户（带SHA256加密和OIDC绑定）
-      await db.createUserV2(username, randomPassword, 'user', defaultTags, oidcSession.sub);
+      await db.createUserV2(
+        username,
+        randomPassword,
+        'user',
+        defaultTags,
+        oidcSession.sub
+      );
 
       // 设置认证cookie
       const response = NextResponse.json({ ok: true, message: '注册成功' });
       const userAgent = request.headers.get('user-agent') || 'Unknown';
       const deviceInfo = getDeviceInfo(userAgent);
-      const cookieValue = await generateAuthCookie(username, 'user', deviceInfo);
+      const cookieValue = await generateAuthCookie(
+        username,
+        'user',
+        deviceInfo
+      );
       const expires = new Date(Date.now() + TOKEN_CONFIG.REFRESH_TOKEN_AGE);
 
       response.cookies.set('auth', cookieValue, {
@@ -250,7 +255,10 @@ export async function POST(request: NextRequest) {
       return response;
     } catch (err) {
       console.error('创建用户失败', err);
-      return NextResponse.json({ error: '注册失败，请稍后重试' }, { status: 500 });
+      return NextResponse.json(
+        { error: '注册失败，请稍后重试' },
+        { status: 500 }
+      );
     }
   } catch (error) {
     console.error('OIDC注册完成失败:', error);

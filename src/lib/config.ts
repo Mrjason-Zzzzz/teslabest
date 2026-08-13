@@ -128,10 +128,12 @@ export function refineConfig(adminConfig: AdminConfig): AdminConfig {
     ? fileConfig.specialSourceApis
     : undefined;
   if (specialApisFromFile) {
-    const sourceKeys = new Set(adminConfig.SourceConfig.map((source) => source.key));
-    adminConfig.SpecialSourceApis = Array.from(new Set(specialApisFromFile)).filter((key) =>
-      sourceKeys.has(key)
+    const sourceKeys = new Set(
+      adminConfig.SourceConfig.map((source) => source.key)
     );
+    adminConfig.SpecialSourceApis = Array.from(
+      new Set(specialApisFromFile)
+    ).filter((key) => sourceKeys.has(key));
   }
 
   // 覆盖 CustomCategories
@@ -266,9 +268,7 @@ async function getInitConfig(
         process.env.ANNOUNCEMENT ||
         '本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。',
       AnnouncementDisplayMode:
-        process.env.ANNOUNCEMENT_DISPLAY_MODE === 'every'
-          ? 'every'
-          : 'once',
+        process.env.ANNOUNCEMENT_DISPLAY_MODE === 'every' ? 'every' : 'once',
       SearchDownstreamMaxPage:
         Number(process.env.NEXT_PUBLIC_SEARCH_MAX_PAGE) || 5,
       SiteInterfaceCacheTime: cfgFile.cache_time || 7200,
@@ -343,7 +343,9 @@ async function getInitConfig(
     CustomCategories: [],
     LiveConfig: [],
     TelegramConfig: {
-      enabled: process.env.TELEGRAM_BOT_ENABLED === 'true' || Boolean(process.env.TELEGRAM_BOT_TOKEN),
+      enabled:
+        process.env.TELEGRAM_BOT_ENABLED === 'true' ||
+        Boolean(process.env.TELEGRAM_BOT_TOKEN),
       botToken: process.env.TELEGRAM_BOT_TOKEN || '',
       botUsername: process.env.TELEGRAM_BOT_USERNAME || '',
       webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
@@ -352,8 +354,10 @@ async function getInitConfig(
       loginEnabled: process.env.TELEGRAM_LOGIN_ENABLED !== 'false',
       bindingEnabled: process.env.TELEGRAM_BINDING_ENABLED !== 'false',
       registrationEnabled: process.env.TELEGRAM_REGISTRATION_ENABLED === 'true',
-      notificationsEnabled: process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== 'false',
-      defaultNotifications: process.env.TELEGRAM_DEFAULT_NOTIFICATIONS !== 'false',
+      notificationsEnabled:
+        process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== 'false',
+      defaultNotifications:
+        process.env.TELEGRAM_DEFAULT_NOTIFICATIONS !== 'false',
     },
     SpecialSourceApis: Array.isArray(cfgFile.special_source_apis)
       ? cfgFile.special_source_apis
@@ -509,6 +513,23 @@ export async function getConfig(): Promise<AdminConfig> {
   return configInitPromise;
 }
 
+/**
+ * Read the persisted configuration instead of a process-local snapshot.
+ * Account expiry and redemption state must be visible across Vercel instances;
+ * using getConfig() alone can leave one warm instance showing a redeemed code
+ * as active after another instance already saved the change.
+ */
+export async function getFreshConfig(): Promise<AdminConfig> {
+  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  if (storageType === 'localstorage') return getConfig();
+
+  const persisted = await db.getAdminConfig();
+  if (!persisted) return getConfig();
+  cachedConfig = configSelfCheck(persisted);
+  configInitPromise = null;
+  return cachedConfig;
+}
+
 export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   // 确保必要的属性存在和初始化
   if (!adminConfig.SiteConfig) {
@@ -618,7 +639,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   }
   if (!adminConfig.TelegramConfig) {
     adminConfig.TelegramConfig = {
-      enabled: process.env.TELEGRAM_BOT_ENABLED === 'true' || Boolean(process.env.TELEGRAM_BOT_TOKEN),
+      enabled:
+        process.env.TELEGRAM_BOT_ENABLED === 'true' ||
+        Boolean(process.env.TELEGRAM_BOT_TOKEN),
       botToken: process.env.TELEGRAM_BOT_TOKEN || '',
       botUsername: process.env.TELEGRAM_BOT_USERNAME || '',
       webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
@@ -627,8 +650,10 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       loginEnabled: process.env.TELEGRAM_LOGIN_ENABLED !== 'false',
       bindingEnabled: process.env.TELEGRAM_BINDING_ENABLED !== 'false',
       registrationEnabled: process.env.TELEGRAM_REGISTRATION_ENABLED === 'true',
-      notificationsEnabled: process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== 'false',
-      defaultNotifications: process.env.TELEGRAM_DEFAULT_NOTIFICATIONS !== 'false',
+      notificationsEnabled:
+        process.env.TELEGRAM_NOTIFICATIONS_ENABLED !== 'false',
+      defaultNotifications:
+        process.env.TELEGRAM_DEFAULT_NOTIFICATIONS !== 'false',
     };
   }
   if (adminConfig.TelegramConfig.registrationEnabled === undefined) {
@@ -745,12 +770,22 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     return true;
   });
 
-  const validSourceKeys = new Set(adminConfig.SourceConfig.map((source) => source.key));
+  const validSourceKeys = new Set(
+    adminConfig.SourceConfig.map((source) => source.key)
+  );
   adminConfig.SpecialSourceApis = Array.from(
-    new Set((adminConfig.SpecialSourceApis || []).filter((key) => validSourceKeys.has(key)))
+    new Set(
+      (adminConfig.SpecialSourceApis || []).filter((key) =>
+        validSourceKeys.has(key)
+      )
+    )
   );
   adminConfig.ClientAdSourceApis = Array.from(
-    new Set((adminConfig.ClientAdSourceApis || []).filter((key) => validSourceKeys.has(key)))
+    new Set(
+      (adminConfig.ClientAdSourceApis || []).filter((key) =>
+        validSourceKeys.has(key)
+      )
+    )
   );
 
   // 自定义分类去重

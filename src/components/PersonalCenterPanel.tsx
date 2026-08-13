@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, KeyRound, Monitor, X } from 'lucide-react';
+import { Bell, Crown, KeyRound, Monitor, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 interface PersonalCenterPanelProps {
@@ -12,6 +12,10 @@ interface PersonalCenterPanelProps {
   showRoleBadge: boolean;
   avatarText: string;
   roleBadgeClassName: string;
+  membershipLabel?: string;
+  membershipExpiresAt?: number | null;
+  membershipStatus?: 'active' | 'disabled';
+  membershipIsExpired?: boolean;
   showDeviceManagement: boolean;
   showChangePassword: boolean;
   onOpenEmailSettings: () => void;
@@ -28,6 +32,10 @@ export function PersonalCenterPanel({
   showRoleBadge,
   avatarText,
   roleBadgeClassName,
+  membershipLabel,
+  membershipExpiresAt,
+  membershipStatus,
+  membershipIsExpired,
   showDeviceManagement,
   showChangePassword,
   onOpenEmailSettings,
@@ -80,6 +88,22 @@ export function PersonalCenterPanel({
             <h3 className='text-xl font-bold text-gray-900 dark:text-gray-100'>
               {username}
             </h3>
+            {membershipLabel && (
+              <div className='mt-3 flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:bg-amber-900/25 dark:text-amber-300'>
+                <Crown className='h-4 w-4' />
+                <span>
+                  {membershipStatus === 'disabled'
+                    ? `${membershipLabel} · 已停用`
+                    : membershipIsExpired
+                    ? `${membershipLabel} · 已到期`
+                    : typeof membershipExpiresAt !== 'number'
+                    ? `${membershipLabel} · 永久有效`
+                    : `${membershipLabel} · 有效期至 ${new Date(
+                        membershipExpiresAt
+                      ).toLocaleDateString('zh-CN')}`}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className='space-y-3'>

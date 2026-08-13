@@ -7,7 +7,7 @@ import { cookies } from 'next/headers';
 import './globals.css';
 
 import { parseAuthInfo } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getConfig, getFreshConfig } from '@/lib/config';
 import { getUserFeatureAccess } from '@/lib/permissions';
 import { listEnabledSourceScripts } from '@/lib/source-script';
 
@@ -148,7 +148,7 @@ export default async function RootLayout({
     const authInfo = parseAuthInfo(cookieStore.get('auth')?.value);
     userFeatureAccess = await getUserFeatureAccess(authInfo?.username);
 
-    const config = await getConfig();
+    const config = await getFreshConfig();
     siteName = config.SiteConfig.SiteName;
     announcement = config.SiteConfig.Announcement;
     announcementDisplayMode =
@@ -185,8 +185,7 @@ export default async function RootLayout({
     enableRegistration = config.SiteConfig.EnableRegistration || false;
     requireRegistrationInviteCode =
       config.SiteConfig.RequireRegistrationInviteCode || false;
-    requireRedemptionCode =
-      config.SiteConfig.RequireRedemptionCode === true;
+    requireRedemptionCode = config.SiteConfig.RequireRedemptionCode === true;
     loginRequireTurnstile = config.SiteConfig.LoginRequireTurnstile || false;
     registrationRequireTurnstile =
       config.SiteConfig.RegistrationRequireTurnstile || false;
@@ -198,11 +197,15 @@ export default async function RootLayout({
     oidcButtonText = config.SiteConfig.OIDCButtonText || '';
     telegramLoginEnabled = Boolean(
       config.TelegramConfig?.enabled &&
-      config.TelegramConfig?.loginEnabled &&
-      (config.TelegramConfig?.botToken || process.env.TELEGRAM_BOT_TOKEN) &&
-      (config.TelegramConfig?.botUsername || process.env.TELEGRAM_BOT_USERNAME)
+        config.TelegramConfig?.loginEnabled &&
+        (config.TelegramConfig?.botToken || process.env.TELEGRAM_BOT_TOKEN) &&
+        (config.TelegramConfig?.botUsername ||
+          process.env.TELEGRAM_BOT_USERNAME)
     );
-    telegramBotUsername = config.TelegramConfig?.botUsername || process.env.TELEGRAM_BOT_USERNAME || '';
+    telegramBotUsername =
+      config.TelegramConfig?.botUsername ||
+      process.env.TELEGRAM_BOT_USERNAME ||
+      '';
     // AI配置
     aiEnabled = config.AIConfig?.Enabled || false;
     aiEnableHomepageEntry = config.AIConfig?.EnableHomepageEntry || false;
@@ -359,43 +362,51 @@ export default async function RootLayout({
           }}
         />
         {/* 流量统计脚本 */}
-        {analyticsEnabled && analyticsProvider === 'umami' && analyticsScriptUrl && (
-          <>
-            {/* eslint-disable-next-line @next/next/no-sync-scripts */}
-            <script
-              async
-              defer
-              data-website-id={analyticsWebsiteId}
-              src={analyticsScriptUrl}
-            />
-          </>
-        )}
-        {analyticsEnabled && analyticsProvider === 'google' && analyticsWebsiteId && (
-          <>
-            {/* eslint-disable-next-line @next/next/no-sync-scripts */}
-            <script
-              async
-              src={`https://www.googletagmanager.com/gtag/js?id=${analyticsWebsiteId}`}
-            />
+        {analyticsEnabled &&
+          analyticsProvider === 'umami' &&
+          analyticsScriptUrl && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+              <script
+                async
+                defer
+                data-website-id={analyticsWebsiteId}
+                src={analyticsScriptUrl}
+              />
+            </>
+          )}
+        {analyticsEnabled &&
+          analyticsProvider === 'google' &&
+          analyticsWebsiteId && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+              <script
+                async
+                src={`https://www.googletagmanager.com/gtag/js?id=${analyticsWebsiteId}`}
+              />
+              <script
+                dangerouslySetInnerHTML={{
+                  __html: `window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', '${analyticsWebsiteId}');`,
+                }}
+              />
+            </>
+          )}
+        {analyticsEnabled &&
+          analyticsProvider === 'clarity' &&
+          analyticsWebsiteId && (
             <script
               dangerouslySetInnerHTML={{
-                __html: `window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', '${analyticsWebsiteId}');`,
+                __html: `(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","${analyticsWebsiteId}");`,
               }}
             />
-          </>
-        )}
-        {analyticsEnabled && analyticsProvider === 'clarity' && analyticsWebsiteId && (
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","${analyticsWebsiteId}");`,
-            }}
-          />
-        )}
-        {analyticsEnabled && analyticsProvider === 'custom' && analyticsCustomScript && (
-          <script
-            dangerouslySetInnerHTML={{ __html: analyticsCustomScript }}
-          />
-        )}
+          )}
+        {analyticsEnabled &&
+          analyticsProvider === 'custom' &&
+          analyticsCustomScript && (
+            <script
+              dangerouslySetInnerHTML={{ __html: analyticsCustomScript }}
+            />
+          )}
       </head>
       <body
         className={`${inter.className} min-h-screen bg-white text-gray-900 dark:bg-black dark:text-gray-200`}

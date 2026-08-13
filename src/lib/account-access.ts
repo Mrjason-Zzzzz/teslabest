@@ -1,4 +1,10 @@
-export type AccessPlan = '1_month' | '3_months' | '12_months' | 'permanent';
+export type AccessPlan =
+  | '1_day'
+  | '1_month'
+  | '3_months'
+  | '6_months'
+  | '12_months'
+  | 'permanent';
 export type AccountAccessStatus = 'active' | 'disabled';
 export type AccountAccessSource = 'legacy' | 'admin' | 'redemption';
 
@@ -32,16 +38,20 @@ type AccessConfig = {
 };
 
 export const ACCESS_PLAN_LABELS: Record<AccessPlan, string> = {
+  '1_day': '天卡',
   '1_month': '1个月',
   '3_months': '3个月',
+  '6_months': '半年',
   '12_months': '1年',
   permanent: '永久',
 };
 
 export function isAccessPlan(value: unknown): value is AccessPlan {
   return (
+    value === '1_day' ||
     value === '1_month' ||
     value === '3_months' ||
+    value === '6_months' ||
     value === '12_months' ||
     value === 'permanent'
   );
@@ -65,11 +75,17 @@ export function createAccountPolicy(
   now = Date.now(),
   status: AccountAccessStatus = 'active'
 ): AccountAccessPolicy {
+  if (!isAccessPlan(plan)) {
+    throw new Error('账户有效期套餐无效');
+  }
+
   const months =
     plan === '1_month'
       ? 1
       : plan === '3_months'
       ? 3
+      : plan === '6_months'
+      ? 6
       : plan === '12_months'
       ? 12
       : 0;
@@ -77,7 +93,12 @@ export function createAccountPolicy(
   return {
     plan,
     status,
-    expiresAt: months > 0 ? addUtcMonths(now, months) : null,
+    expiresAt:
+      plan === '1_day'
+        ? now + 24 * 60 * 60 * 1000
+        : months > 0
+        ? addUtcMonths(now, months)
+        : null,
     source,
     createdAt: now,
     updatedAt: now,
@@ -96,7 +117,8 @@ export function resolveAccountAccess(
           plan: policy.plan,
           status: policy.status === 'disabled' ? 'disabled' : 'active',
           expiresAt:
-            typeof policy.expiresAt === 'number' && Number.isFinite(policy.expiresAt)
+            typeof policy.expiresAt === 'number' &&
+            Number.isFinite(policy.expiresAt)
               ? policy.expiresAt
               : null,
           source: policy.source || 'admin',
@@ -107,8 +129,7 @@ export function resolveAccountAccess(
 
   return {
     ...normalized,
-    isExpired:
-      normalized.expiresAt !== null && normalized.expiresAt <= now,
+    isExpired: normalized.expiresAt !== null && normalized.expiresAt <= now,
   };
 }
 
@@ -131,8 +152,14 @@ export function generateRedemptionCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  const body = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
-  return `TSLA-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}`;
+  const body = Array.from(
+    bytes,
+    (byte) => alphabet[byte % alphabet.length]
+  ).join('');
+  return `TSLA-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(
+    8,
+    12
+  )}-${body.slice(12, 16)}`;
 }
 
 export function getRedemptionCodeState(

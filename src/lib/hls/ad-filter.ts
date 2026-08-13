@@ -2,15 +2,7 @@
 
 import Hls from 'hls.js';
 
-const AD_KEYWORDS = [
-  'sponsor',
-  '/ad/',
-  '/ads/',
-  'advert',
-  'advertisement',
-  '/adjump',
-  'redtraffic',
-];
+import { filterAdsFromMediaPlaylist } from './ad-filter-core';
 
 /**
  * Safely remove only explicit ad media segments from a media playlist.
@@ -21,71 +13,7 @@ const AD_KEYWORDS = [
  */
 export function filterAdsFromM3U8(type: string, m3u8Content: string): string {
   void type;
-
-  if (!m3u8Content || !m3u8Content.includes('#EXTM3U')) {
-    return m3u8Content || '';
-  }
-
-  // Master playlists do not contain media segments and must remain untouched.
-  if (!m3u8Content.includes('#EXTINF:')) {
-    return m3u8Content;
-  }
-
-  const lines = m3u8Content.replace(/\r\n/g, '\n').split('\n');
-  const output: string[] = [];
-
-  const isAdUrl = (url: string) => {
-    const normalized = url.toLowerCase();
-    return AD_KEYWORDS.some((keyword) => normalized.includes(keyword));
-  };
-
-  const hasUnsafeSegmentStructure = (tags: string[]) =>
-    tags.some((line) =>
-      /^#EXT-X-(BYTERANGE|MAP|KEY|PART|PRELOAD-HINT|GAP)/i.test(line.trim()),
-    );
-
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim().startsWith('#EXTINF:')) {
-      // In particular, retain EXT-X-DISCONTINUITY and
-      // EXT-X-DISCONTINUITY-SEQUENCE. They are timing metadata, not ads.
-      output.push(line);
-      index++;
-      continue;
-    }
-
-    let uriIndex = index + 1;
-    while (
-      uriIndex < lines.length &&
-      (!lines[uriIndex].trim() || lines[uriIndex].trim().startsWith('#'))
-    ) {
-      uriIndex++;
-    }
-
-    // Unknown or incomplete structures remain byte-for-byte unchanged.
-    if (uriIndex >= lines.length) {
-      output.push(line);
-      index++;
-      continue;
-    }
-
-    const segmentTags = lines.slice(index + 1, uriIndex);
-    const segmentUri = lines[uriIndex].trim();
-
-    // Skip only a complete, ordinary EXTINF -> URI media segment. Keep any
-    // segment requiring a key/map/byte range/partial segment to avoid a
-    // desynchronized or unplayable playlist.
-    if (isAdUrl(segmentUri) && !hasUnsafeSegmentStructure(segmentTags)) {
-      index = uriIndex + 1;
-      continue;
-    }
-
-    output.push(...lines.slice(index, uriIndex + 1));
-    index = uriIndex + 1;
-  }
-
-  return output.join('\n');
+  return filterAdsFromMediaPlaylist(m3u8Content);
 }
 
 /**
@@ -101,11 +29,16 @@ export function createAdFilteringPlaylistLoader() {
       const onSuccess = callbacks.onSuccess;
       const wrappedCallbacks = {
         ...callbacks,
-        onSuccess: (response: any, stats: any, currentContext: any, networkDetails: any) => {
+        onSuccess: (
+          response: any,
+          stats: any,
+          currentContext: any,
+          networkDetails: any
+        ) => {
           if (typeof response?.data === 'string') {
             response.data = filterAdsFromM3U8(
               currentContext?.type || context?.type || 'hls',
-              response.data,
+              response.data
             );
           }
           onSuccess(response, stats, currentContext, networkDetails);

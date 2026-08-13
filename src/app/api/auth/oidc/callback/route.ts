@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveAccountAccess } from '@/lib/account-access';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import {
   generateRefreshToken,
@@ -51,7 +51,11 @@ function getDeviceInfo(userAgent: string): string {
     return 'OrionTV';
   }
 
-  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
+  if (
+    ua.includes('mobile') ||
+    ua.includes('android') ||
+    ua.includes('iphone')
+  ) {
     if (ua.includes('android')) return 'Android Mobile';
     if (ua.includes('iphone')) return 'iPhone';
     return 'Mobile Device';
@@ -91,7 +95,7 @@ async function generateAuthCookie(
       role: authData.role,
       timestamp: authData.timestamp,
       accountStatus: authData.accountStatus,
-      accountExpiresAt: authData.accountExpiresAt
+      accountExpiresAt: authData.accountExpiresAt,
     });
     const signature = await generateSignature(dataToSign, process.env.PASSWORD);
     authData.signature = signature;
@@ -152,11 +156,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const config = await getConfig();
+    const config = await getFreshConfig();
     const siteConfig = config.SiteConfig;
 
     // 检查OIDC配置
-    if (!siteConfig.OIDCTokenEndpoint || !siteConfig.OIDCUserInfoEndpoint || !siteConfig.OIDCClientId || !siteConfig.OIDCClientSecret) {
+    if (
+      !siteConfig.OIDCTokenEndpoint ||
+      !siteConfig.OIDCUserInfoEndpoint ||
+      !siteConfig.OIDCClientId ||
+      !siteConfig.OIDCClientSecret
+    ) {
       return NextResponse.redirect(
         new URL('/login?error=' + encodeURIComponent('OIDC配置不完整'), origin)
       );
@@ -199,14 +208,17 @@ export async function GET(request: NextRequest) {
     // 获取用户信息
     const userInfoResponse = await fetch(siteConfig.OIDCUserInfoEndpoint, {
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
       },
     });
 
     if (!userInfoResponse.ok) {
       console.error('获取用户信息失败:', await userInfoResponse.text());
       return NextResponse.redirect(
-        new URL('/login?error=' + encodeURIComponent('获取用户信息失败'), origin)
+        new URL(
+          '/login?error=' + encodeURIComponent('获取用户信息失败'),
+          origin
+        )
       );
     }
 
@@ -286,7 +298,10 @@ export async function GET(request: NextRequest) {
     // 用户不存在,检查是否允许注册
     if (!siteConfig.EnableOIDCRegistration) {
       return NextResponse.redirect(
-        new URL('/login?error=' + encodeURIComponent('该OIDC账号未注册'), origin)
+        new URL(
+          '/login?error=' + encodeURIComponent('该OIDC账号未注册'),
+          origin
+        )
       );
     }
 

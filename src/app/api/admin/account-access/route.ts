@@ -11,7 +11,7 @@ import {
   RedemptionCodeRecord,
 } from '@/lib/account-access';
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig, setCachedConfig } from '@/lib/config';
+import { getFreshConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { revokeAllRefreshTokens } from '@/lib/refresh-token';
 
@@ -26,7 +26,7 @@ async function requireOwner(request: NextRequest) {
   return authInfo;
 }
 
-async function saveConfig(config: Awaited<ReturnType<typeof getConfig>>) {
+async function saveConfig(config: Awaited<ReturnType<typeof getFreshConfig>>) {
   await db.saveAdminConfig(config);
   await setCachedConfig(config);
 }
@@ -43,10 +43,13 @@ function safeCodes(codes: RedemptionCodeRecord[]) {
 
 export async function GET(request: NextRequest) {
   if (!(await requireOwner(request))) {
-    return NextResponse.json({ error: '仅站长可管理兑换码和有效期' }, { status: 403 });
+    return NextResponse.json(
+      { error: '仅站长可管理兑换码和有效期' },
+      { status: 403 }
+    );
   }
 
-  const config = await getConfig();
+  const config = await getFreshConfig();
   return NextResponse.json(
     {
       requireRedemptionCode: config.SiteConfig.RequireRedemptionCode === true,
@@ -59,12 +62,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   if (!(await requireOwner(request))) {
-    return NextResponse.json({ error: '仅站长可管理兑换码和有效期' }, { status: 403 });
+    return NextResponse.json(
+      { error: '仅站长可管理兑换码和有效期' },
+      { status: 403 }
+    );
   }
 
   try {
     const body = await request.json();
-    const config = await getConfig();
+    const config = await getFreshConfig();
     config.UserConfig.AccessPolicies ||= {};
     config.UserConfig.RedemptionCodes ||= [];
 
@@ -102,7 +108,8 @@ export async function POST(request: NextRequest) {
               : undefined,
           createdAt: Date.now(),
           codeExpiresAt:
-            typeof body.codeExpiresAt === 'number' && body.codeExpiresAt > Date.now()
+            typeof body.codeExpiresAt === 'number' &&
+            body.codeExpiresAt > Date.now()
               ? body.codeExpiresAt
               : null,
         });
@@ -121,7 +128,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: '兑换码不存在' }, { status: 404 });
       }
       if (record.status === 'used') {
-        return NextResponse.json({ error: '已使用的兑换码不能作废' }, { status: 400 });
+        return NextResponse.json(
+          { error: '已使用的兑换码不能作废' },
+          { status: 400 }
+        );
       }
       record.status = 'revoked';
       await saveConfig(config);
@@ -135,7 +145,10 @@ export async function POST(request: NextRequest) {
       const status = body.status === 'disabled' ? 'disabled' : 'active';
 
       if (!username || username === process.env.USERNAME) {
-        return NextResponse.json({ error: '不能修改站长有效期' }, { status: 400 });
+        return NextResponse.json(
+          { error: '不能修改站长有效期' },
+          { status: 400 }
+        );
       }
       if (!isAccessPlan(plan)) {
         return NextResponse.json({ error: '有效期套餐无效' }, { status: 400 });
