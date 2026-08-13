@@ -550,6 +550,8 @@ export class WebCodecsPlayer {
     const response = await fetch(url, {
       headers: { Range: range },
       cache: "no-store",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
       signal,
     });
     if (response.status !== 206) {
@@ -582,6 +584,8 @@ export class WebCodecsPlayer {
     const response = await fetch(url, {
       headers: { Range: `bytes=${start}-` },
       cache: "no-store",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
       signal,
     });
     if (response.status !== 206 || !response.body) {
