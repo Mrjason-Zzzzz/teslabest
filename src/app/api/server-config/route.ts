@@ -56,11 +56,14 @@ export async function GET(request: NextRequest) {
     EnableOfflineDownload: process.env.NEXT_PUBLIC_ENABLE_OFFLINE_DOWNLOAD === 'true',
     EnableRegistration: config.SiteConfig.EnableRegistration || false,
     RequireRegistrationInviteCode: config.SiteConfig.RequireRegistrationInviteCode || false,
+    RequireRedemptionCode: config.SiteConfig.RequireRedemptionCode === true,
     RegistrationRequireTurnstile: config.SiteConfig.RegistrationRequireTurnstile || false,
     LoginRequireTurnstile: config.SiteConfig.LoginRequireTurnstile || false,
     TurnstileSiteKey: config.SiteConfig.TurnstileSiteKey || '',
     EnableOIDCLogin: config.SiteConfig.EnableOIDCLogin || false,
-    EnableOIDCRegistration: config.SiteConfig.EnableOIDCRegistration || false,
+    EnableOIDCRegistration:
+      (config.SiteConfig.EnableOIDCRegistration || false) &&
+      config.SiteConfig.RequireRedemptionCode !== true,
     OIDCButtonText: config.SiteConfig.OIDCButtonText || '',
     EnableTelegramLogin: Boolean(
       config.TelegramConfig?.enabled &&

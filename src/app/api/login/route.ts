@@ -1,6 +1,7 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { resolveAccountAccess } from '@/lib/account-access';
 import { parseAuthInfo } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
@@ -76,10 +77,15 @@ async function generateAuthCookie(
   password?: string,
   role?: 'owner' | 'admin' | 'user',
   includePassword = false,
-  deviceInfo?: string
+  deviceInfo?: string,
+  accountExpiresAt: number | null = null
 ): Promise<string> {
   const now = Date.now();
-  const authData: any = { role: role || 'user' };
+  const authData: any = {
+    role: role || 'user',
+    accountStatus: 'active',
+    accountExpiresAt,
+  };
 
   // 只在需要时包含 password
   if (includePassword && password) {
@@ -118,7 +124,9 @@ async function generateAuthCookie(
     const dataToSign = JSON.stringify({
       username: authData.username,
       role: authData.role,
-      timestamp: authData.timestamp
+      timestamp: authData.timestamp,
+      accountStatus: authData.accountStatus,
+      accountExpiresAt: authData.accountExpiresAt
     });
     const signature = await generateSignature(dataToSign, process.env.PASSWORD);
     authData.signature = signature;
@@ -351,6 +359,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '用户被封禁' }, { status: 401 });
     }
 
+    const accountAccess = resolveAccountAccess(adminConfig, username);
+    if (accountAccess.status === 'disabled') {
+      return NextResponse.json(
+        { error: '账户已停用，请联系管理员', code: 'ACCOUNT_DISABLED' },
+        { status: 403 }
+      );
+    }
+    if (accountAccess.isExpired) {
+      return NextResponse.json(
+        {
+          error: '账户已到期，请使用新的兑换码或联系管理员',
+          code: 'ACCOUNT_EXPIRED',
+          expiresAt: accountAccess.expiresAt,
+        },
+        { status: 403 }
+      );
+    }
+
     if (!pass) {
       recordLoginFailure(clientIp);
       return NextResponse.json(
@@ -368,11 +394,16 @@ export async function POST(req: NextRequest) {
       password,
       userRole,
       false,
-      deviceInfo
+      deviceInfo,
+      accountAccess.expiresAt
     ); // 数据库模式不包含 password
     const response = buildLoginResponse(cookieValue);
-    const expires = new Date();
-    expires.setDate(expires.getDate() + 60); // 60天过期（Refresh Token 有效期）
+    const refreshCookieExpires = Date.now() + TOKEN_CONFIG.REFRESH_TOKEN_AGE;
+    const expires = new Date(
+      accountAccess.expiresAt
+        ? Math.min(refreshCookieExpires, accountAccess.expiresAt)
+        : refreshCookieExpires
+    );
 
   response.cookies.set('auth', cookieValue, {
     path: '/',

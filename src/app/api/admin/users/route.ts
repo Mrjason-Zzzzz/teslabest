@@ -1,7 +1,9 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { resolveAccountAccess } from '@/lib/account-access';
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -51,10 +53,15 @@ export async function GET(request: NextRequest) {
     const result = await db.getUserListV2(offset, limit, process.env.USERNAME, search);
 
     if (result.users.length > 0) {
+      const config = await getConfig();
+      const users = result.users.map((user) => ({
+        ...user,
+        access: resolveAccountAccess(config, user.username),
+      }));
       // 使用新版本数据
       return NextResponse.json(
         {
-          users: result.users,
+          users,
           total: result.total,
           page,
           limit,

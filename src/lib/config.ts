@@ -324,6 +324,7 @@ async function getInitConfig(
       EnableRegistration: false,
       RequireRegistrationInviteCode: false,
       RegistrationInviteCode: '',
+      RequireRedemptionCode: false,
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -540,6 +541,7 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       EnableRegistration: false,
       RequireRegistrationInviteCode: false,
       RegistrationInviteCode: '',
+      RequireRedemptionCode: false,
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -580,6 +582,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   }
   if (adminConfig.SiteConfig.RegistrationInviteCode === undefined) {
     adminConfig.SiteConfig.RegistrationInviteCode = '';
+  }
+  if (adminConfig.SiteConfig.RequireRedemptionCode === undefined) {
+    adminConfig.SiteConfig.RequireRedemptionCode = false;
   }
   if (adminConfig.SiteConfig.RegistrationRequireTurnstile === undefined) {
     adminConfig.SiteConfig.RegistrationRequireTurnstile = false;
@@ -657,6 +662,12 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     !Array.isArray(adminConfig.UserConfig.Users)
   ) {
     adminConfig.UserConfig.Users = [];
+  }
+  if (!adminConfig.UserConfig.AccessPolicies) {
+    adminConfig.UserConfig.AccessPolicies = {};
+  }
+  if (!Array.isArray(adminConfig.UserConfig.RedemptionCodes)) {
+    adminConfig.UserConfig.RedemptionCodes = [];
   }
   if (!adminConfig.SourceConfig || !Array.isArray(adminConfig.SourceConfig)) {
     adminConfig.SourceConfig = [];

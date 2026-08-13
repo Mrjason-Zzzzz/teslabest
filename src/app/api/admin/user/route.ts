@@ -3,6 +3,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { invalidateUserAccessTokens } from '@/lib/access-token-invalidation';
+import {
+  AccessPlan,
+  createAccountPolicy,
+  isAccessPlan,
+} from '@/lib/account-access';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db, getStorage } from '@/lib/db';
@@ -175,11 +180,21 @@ export async function POST(request: NextRequest) {
         }
 
         // 获取用户组信息
-        const { userGroup } = body as { userGroup?: string };
+        const { userGroup, accessPlan } = body as {
+          userGroup?: string;
+          accessPlan?: AccessPlan;
+        };
         const tags = userGroup && userGroup.trim() ? [userGroup] : undefined;
 
         // 使用新版本创建用户
         await db.createUserV2(targetUsername!, targetPassword, 'user', tags);
+
+        adminConfig.UserConfig.AccessPolicies ||= {};
+        adminConfig.UserConfig.AccessPolicies[targetUsername!] =
+          createAccountPolicy(
+            isAccessPlan(accessPlan) ? accessPlan : 'permanent',
+            'admin'
+          );
 
         // 不再更新配置，因为用户已经存储在新版本中
         // 构造一个虚拟的targetEntry用于后续逻辑
@@ -342,6 +357,9 @@ export async function POST(request: NextRequest) {
         // 先终止目标用户所有会话，再删除V2存储中的用户
         await terminateUserSessions(targetUsername!, 'user deleted');
         await db.deleteUserV2(targetUsername!);
+        if (adminConfig.UserConfig.AccessPolicies) {
+          delete adminConfig.UserConfig.AccessPolicies[targetUsername!];
+        }
 
         break;
       }

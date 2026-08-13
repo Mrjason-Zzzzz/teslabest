@@ -106,6 +106,7 @@ export default async function RootLayout({
   let progressThumbCustomUrl = '';
   let enableRegistration = false;
   let requireRegistrationInviteCode = false;
+  let requireRedemptionCode = false;
   let loginRequireTurnstile = false;
   let registrationRequireTurnstile = false;
   let turnstileSiteKey = '';
@@ -188,12 +189,16 @@ export default async function RootLayout({
     enableRegistration = config.SiteConfig.EnableRegistration || false;
     requireRegistrationInviteCode =
       config.SiteConfig.RequireRegistrationInviteCode || false;
+    requireRedemptionCode =
+      config.SiteConfig.RequireRedemptionCode === true;
     loginRequireTurnstile = config.SiteConfig.LoginRequireTurnstile || false;
     registrationRequireTurnstile =
       config.SiteConfig.RegistrationRequireTurnstile || false;
     turnstileSiteKey = config.SiteConfig.TurnstileSiteKey || '';
     enableOIDCLogin = config.SiteConfig.EnableOIDCLogin || false;
-    enableOIDCRegistration = config.SiteConfig.EnableOIDCRegistration || false;
+    enableOIDCRegistration =
+      (config.SiteConfig.EnableOIDCRegistration || false) &&
+      config.SiteConfig.RequireRedemptionCode !== true;
     oidcButtonText = config.SiteConfig.OIDCButtonText || '';
     telegramLoginEnabled = Boolean(
       config.TelegramConfig?.enabled &&
@@ -304,6 +309,7 @@ export default async function RootLayout({
     PROGRESS_THUMB_CUSTOM_URL: progressThumbCustomUrl,
     ENABLE_REGISTRATION: enableRegistration,
     REQUIRE_REGISTRATION_INVITE_CODE: requireRegistrationInviteCode,
+    REQUIRE_REDEMPTION_CODE: requireRedemptionCode,
     LOGIN_REQUIRE_TURNSTILE: loginRequireTurnstile,
     REGISTRATION_REQUIRE_TURNSTILE: registrationRequireTurnstile,
     TURNSTILE_SITE_KEY: turnstileSiteKey,
