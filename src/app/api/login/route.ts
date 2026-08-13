@@ -369,7 +369,7 @@ export async function POST(req: NextRequest) {
     if (accountAccess.isExpired) {
       return NextResponse.json(
         {
-          error: '账户已到期，请使用新的兑换码或联系管理员',
+          error: '账户已到期，请联系管理员续期',
           code: 'ACCOUNT_EXPIRED',
           expiresAt: accountAccess.expiresAt,
         },
