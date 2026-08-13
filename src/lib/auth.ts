@@ -11,6 +11,8 @@ export type AuthInfo = {
   tokenId?: string;
   refreshToken?: string;
   refreshExpires?: number;
+  accountStatus?: 'active';
+  accountExpiresAt?: number | null;
 };
 
 function getAuthTokenFromHeader(value: string): string {
