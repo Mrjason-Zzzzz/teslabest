@@ -69,6 +69,9 @@ export async function POST(request: NextRequest) {
 
     if (body.action === 'setRegistrationMode') {
       config.SiteConfig.RequireRedemptionCode = body.enabled === true;
+      if (body.enabled === true) {
+        config.SiteConfig.EnableRegistration = true;
+      }
       await saveConfig(config);
       return NextResponse.json({ ok: true });
     }
