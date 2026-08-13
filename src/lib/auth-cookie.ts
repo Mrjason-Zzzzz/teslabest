@@ -64,9 +64,14 @@ export async function generateAuthCookieValue(input: {
   role?: 'owner' | 'admin' | 'user';
   includePassword?: boolean;
   deviceInfo?: string;
+  accountExpiresAt?: number | null;
 }): Promise<string> {
   const now = Date.now();
-  const authData: any = { role: input.role || 'user' };
+  const authData: any = {
+    role: input.role || 'user',
+    accountStatus: 'active',
+    accountExpiresAt: input.accountExpiresAt ?? null,
+  };
 
   if (input.includePassword && input.password) {
     authData.password = input.password;
@@ -98,6 +103,8 @@ export async function generateAuthCookieValue(input: {
       username: authData.username,
       role: authData.role,
       timestamp: authData.timestamp,
+      accountStatus: authData.accountStatus,
+      accountExpiresAt: authData.accountExpiresAt,
     });
     authData.signature = await generateAuthSignature(
       dataToSign,
