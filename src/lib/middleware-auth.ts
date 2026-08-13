@@ -32,7 +32,8 @@ export async function refreshAccessToken(
   role: string,
   tokenId: string,
   refreshToken: string,
-  refreshExpires: number
+  refreshExpires: number,
+  accountExpiresAt: number | null
 ): Promise<string | null> {
   // 验证 Refresh Token
   const isValid = await verifyRefreshToken(username, tokenId, refreshToken);
@@ -48,7 +49,9 @@ export async function refreshAccessToken(
   const dataToSign = JSON.stringify({
     username,
     role,
-    timestamp: now
+    timestamp: now,
+    accountStatus: 'active',
+    accountExpiresAt
   });
 
   const signature = await generateSignatureForMiddleware(
@@ -63,6 +66,8 @@ export async function refreshAccessToken(
     tokenId,
     refreshToken,
     refreshExpires,
+    accountStatus: 'active' as const,
+    accountExpiresAt,
     signature
   };
 
