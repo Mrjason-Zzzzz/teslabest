@@ -192,7 +192,9 @@ export default async function RootLayout({
       config.SiteConfig.RegistrationRequireTurnstile || false;
     turnstileSiteKey = config.SiteConfig.TurnstileSiteKey || '';
     enableOIDCLogin = config.SiteConfig.EnableOIDCLogin || false;
-    enableOIDCRegistration = config.SiteConfig.EnableOIDCRegistration || false;
+    enableOIDCRegistration =
+      (config.SiteConfig.EnableOIDCRegistration || false) &&
+      config.SiteConfig.RequireRedemptionCode !== true;
     oidcButtonText = config.SiteConfig.OIDCButtonText || '';
     telegramLoginEnabled = Boolean(
       config.TelegramConfig?.enabled &&
