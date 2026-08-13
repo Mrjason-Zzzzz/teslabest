@@ -158,11 +158,6 @@ export default function AccountAccessManager({
     }
   }
 
-  const formatTime = (value?: number | null) =>
-    value
-      ? new Date(value).toLocaleString('zh-CN', { hour12: false })
-      : '永久';
-
   if (role !== 'owner') {
     return (
       <div className='rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200'>
