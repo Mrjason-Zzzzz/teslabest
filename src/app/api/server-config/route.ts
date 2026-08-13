@@ -61,7 +61,9 @@ export async function GET(request: NextRequest) {
     LoginRequireTurnstile: config.SiteConfig.LoginRequireTurnstile || false,
     TurnstileSiteKey: config.SiteConfig.TurnstileSiteKey || '',
     EnableOIDCLogin: config.SiteConfig.EnableOIDCLogin || false,
-    EnableOIDCRegistration: config.SiteConfig.EnableOIDCRegistration || false,
+    EnableOIDCRegistration:
+      (config.SiteConfig.EnableOIDCRegistration || false) &&
+      config.SiteConfig.RequireRedemptionCode !== true,
     OIDCButtonText: config.SiteConfig.OIDCButtonText || '',
     EnableTelegramLogin: Boolean(
       config.TelegramConfig?.enabled &&
