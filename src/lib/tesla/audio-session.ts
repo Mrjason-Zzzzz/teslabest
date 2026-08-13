@@ -85,7 +85,9 @@ export function getTeslaAudioContext(): AudioContext | null {
   return sharedAudioContext;
 }
 
-function setMediaSessionState(state: MediaSessionPlaybackState): void {
+export function setTeslaMediaSessionState(
+  state: MediaSessionPlaybackState
+): void {
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator))
     return;
   try {
@@ -93,6 +95,68 @@ function setMediaSessionState(state: MediaSessionPlaybackState): void {
   } catch {
     // Media Session is best-effort on embedded Chromium builds.
   }
+}
+
+export interface TeslaMediaSessionOptions {
+  title?: string;
+  poster?: string;
+  onPlay: () => void;
+  onPause: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+}
+
+/**
+ * Bind the active web player to Tesla's system media controls.
+ *
+ * The handlers only call the existing player methods. They never create a
+ * second media element or audio graph, so Media Session cannot introduce echo
+ * or move the A/V clock.
+ */
+export function bindTeslaMediaSession(
+  options: TeslaMediaSessionOptions
+): () => void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
+    return () => {
+      // Media Session is unavailable on this browser.
+    };
+  }
+
+  const mediaSession = navigator.mediaSession;
+  try {
+    mediaSession.metadata = new MediaMetadata({
+      title: options.title || 'Tesla 视频播放',
+      artist: 'Tesla 播放器',
+      artwork: options.poster
+        ? [{ src: options.poster, sizes: '512x512' }]
+        : undefined,
+    });
+  } catch {
+    // Artwork and metadata support differs between vehicle browser releases.
+  }
+
+  const register = (
+    action: MediaSessionAction,
+    handler: MediaSessionActionHandler | null
+  ) => {
+    try {
+      mediaSession.setActionHandler(action, handler);
+    } catch {
+      // Some Tesla Chromium versions expose Media Session but omit track keys.
+    }
+  };
+
+  register('play', options.onPlay);
+  register('pause', options.onPause);
+  register('previoustrack', options.onPrevious || null);
+  register('nexttrack', options.onNext || null);
+
+  return () => {
+    register('play', null);
+    register('pause', null);
+    register('previoustrack', null);
+    register('nexttrack', null);
+  };
 }
 
 function ensureFocusKeeper(context: AudioContext): HTMLAudioElement | null {
@@ -172,15 +236,18 @@ export async function claimTeslaAudioFocus(
   const keeper = ensureFocusKeeper(context);
   try {
     if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title,
-        artist: 'Tesla 播放器',
-      });
+      const existingMetadata = navigator.mediaSession.metadata;
+      if (!existingMetadata || existingMetadata.title !== title) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title,
+          artist: 'Tesla 播放器',
+        });
+      }
     }
   } catch {
     // Metadata support differs between Tesla browser releases.
   }
-  setMediaSessionState('playing');
+  setTeslaMediaSessionState('playing');
 
   if (!keeper) return context.state === 'running';
   try {
@@ -202,7 +269,7 @@ export function deferTeslaAudioFocusRelease(delayMs = 2500): void {
     } catch {
       // The page may already be tearing down; focus release is best-effort.
     }
-    setMediaSessionState('none');
+    setTeslaMediaSessionState('none');
   }, Math.max(0, delayMs));
 }
 

@@ -15,6 +15,10 @@ export async function GET(request: NextRequest) {
 
   const config = await getFreshConfig();
   const access = resolveAccountAccess(config, authInfo.username);
+  const remainingDays =
+    access.expiresAt === null
+      ? null
+      : Math.max(0, Math.ceil((access.expiresAt - Date.now()) / 86_400_000));
 
   return NextResponse.json(
     {
@@ -22,8 +26,13 @@ export async function GET(request: NextRequest) {
       planLabel: ACCESS_PLAN_LABELS[access.plan],
       status: access.status,
       expiresAt: access.expiresAt,
+      remainingDays,
       isExpired: access.isExpired,
       source: access.source,
+      renewalMessage:
+        access.expiresAt === null
+          ? ''
+          : config.SiteConfig.MembershipRenewalMessage || '如需续费请联系站长',
     },
     {
       headers: {

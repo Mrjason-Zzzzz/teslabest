@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 
 import './globals.css';
 
+import { isRedemptionRegistrationRequired } from '@/lib/account-access';
 import { parseAuthInfo } from '@/lib/auth';
 import { getConfig, getFreshConfig } from '@/lib/config';
 import { getUserFeatureAccess } from '@/lib/permissions';
@@ -185,7 +186,7 @@ export default async function RootLayout({
     enableRegistration = config.SiteConfig.EnableRegistration || false;
     requireRegistrationInviteCode =
       config.SiteConfig.RequireRegistrationInviteCode || false;
-    requireRedemptionCode = config.SiteConfig.RequireRedemptionCode === true;
+    requireRedemptionCode = isRedemptionRegistrationRequired(config.SiteConfig);
     loginRequireTurnstile = config.SiteConfig.LoginRequireTurnstile || false;
     registrationRequireTurnstile =
       config.SiteConfig.RegistrationRequireTurnstile || false;
@@ -193,7 +194,7 @@ export default async function RootLayout({
     enableOIDCLogin = config.SiteConfig.EnableOIDCLogin || false;
     enableOIDCRegistration =
       (config.SiteConfig.EnableOIDCRegistration || false) &&
-      config.SiteConfig.RequireRedemptionCode !== true;
+      !requireRedemptionCode;
     oidcButtonText = config.SiteConfig.OIDCButtonText || '';
     telegramLoginEnabled = Boolean(
       config.TelegramConfig?.enabled &&
@@ -329,6 +330,7 @@ export default async function RootLayout({
     ENABLE_MOVIE_REQUEST: enableMovieRequest,
     LIVE_ENABLED: liveEnabled && userFeatureAccess.live,
     WEB_LIVE_ENABLED: webLiveEnabled && userFeatureAccess.web_live,
+    SHORT_VIDEO_ENABLED: userFeatureAccess.short_video,
     ADVANCED_RECOMMENDATION_ENABLED: advancedRecommendationEnabled,
     CUSTOM_AD_FILTER_VERSION: customAdFilterVersion,
     MUSIC_ENABLED: musicFeatureEnabled && userFeatureAccess.music,

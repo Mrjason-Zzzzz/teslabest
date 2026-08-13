@@ -7,6 +7,7 @@ import {
   generateRedemptionCode,
   getRedemptionCodeState,
   hashRedemptionCode,
+  isRedemptionRegistrationRequired,
   isAccessPlan,
   RedemptionCodeRecord,
 } from '@/lib/account-access';
@@ -52,7 +53,11 @@ export async function GET(request: NextRequest) {
   const config = await getFreshConfig();
   return NextResponse.json(
     {
-      requireRedemptionCode: config.SiteConfig.RequireRedemptionCode === true,
+      requireRedemptionCode: isRedemptionRegistrationRequired(
+        config.SiteConfig
+      ),
+      membershipRenewalMessage:
+        config.SiteConfig.MembershipRenewalMessage || '如需续费请联系站长',
       codes: safeCodes(config.UserConfig.RedemptionCodes || []),
       policies: config.UserConfig.AccessPolicies || {},
     },
@@ -76,11 +81,28 @@ export async function POST(request: NextRequest) {
 
     if (body.action === 'setRegistrationMode') {
       config.SiteConfig.RequireRedemptionCode = body.enabled === true;
+      config.SiteConfig.RegistrationAccessMode = body.enabled
+        ? 'redemption'
+        : 'open';
       if (body.enabled === true) {
         config.SiteConfig.EnableRegistration = true;
       }
       await saveConfig(config);
       return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === 'setMembershipRenewalMessage') {
+      const message =
+        typeof body.message === 'string'
+          ? body.message.trim().slice(0, 120)
+          : '';
+      config.SiteConfig.MembershipRenewalMessage =
+        message || '如需续费请联系站长';
+      await saveConfig(config);
+      return NextResponse.json({
+        ok: true,
+        message: config.SiteConfig.MembershipRenewalMessage,
+      });
     }
 
     if (body.action === 'generateCodes') {

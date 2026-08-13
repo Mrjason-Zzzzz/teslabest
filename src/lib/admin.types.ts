@@ -55,6 +55,8 @@ export interface AdminConfig {
     RequireRegistrationInviteCode?: boolean; // 注册时要求邀请码
     RegistrationInviteCode?: string; // 通用注册邀请码
     RequireRedemptionCode?: boolean; // 注册时要求一次性兑换码
+    RegistrationAccessMode?: 'redemption' | 'open'; // P002 注册模式，默认兑换码
+    MembershipRenewalMessage?: string; // 会员续费提示语
     RegistrationRequireTurnstile?: boolean; // 注册启用Cloudflare Turnstile
     LoginRequireTurnstile?: boolean; // 登录启用Cloudflare Turnstile
     TurnstileSiteKey?: string; // Cloudflare Turnstile Site Key
@@ -141,6 +143,8 @@ export interface AdminConfig {
     disabled?: boolean;
     proxyMode?: boolean; // 代理模式开关：启用后由服务器代理m3u8和ts分片
     weight?: number; // 权重：用于排序和优选评分，默认0，范围0-100
+    allowedUsers?: string[]; // 留空表示不限制指定用户
+    allowedTags?: string[]; // 留空表示不限制用户组
   }[];
   CustomCategories: {
     name?: string;
@@ -160,6 +164,8 @@ export interface AdminConfig {
     channelNumber?: number;
     disabled?: boolean;
     proxyMode?: 'full' | 'm3u8-only' | 'direct'; // 代理模式：full=全量代理，m3u8-only=仅代理m3u8，direct=直连
+    allowedUsers?: string[];
+    allowedTags?: string[];
   }[];
   WebLiveConfig?: {
     key: string;
@@ -168,6 +174,8 @@ export interface AdminConfig {
     roomId: string; // 房间ID
     from: 'config' | 'custom';
     disabled?: boolean;
+    allowedUsers?: string[];
+    allowedTags?: string[];
   }[];
   WebLiveEnabled?: boolean; // 网络直播功能总开关
   ThemeConfig?: {

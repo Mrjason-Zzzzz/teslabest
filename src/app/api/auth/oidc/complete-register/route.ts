@@ -1,6 +1,7 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { isRedemptionRegistrationRequired } from '@/lib/account-access';
 import { getFreshConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import {
@@ -169,7 +170,7 @@ export async function POST(request: NextRequest) {
     if (!siteConfig.EnableOIDCRegistration) {
       return NextResponse.json({ error: 'OIDC注册未启用' }, { status: 403 });
     }
-    if (siteConfig.RequireRedemptionCode) {
+    if (isRedemptionRegistrationRequired(siteConfig)) {
       return NextResponse.json(
         { error: '当前启用了兑换码注册，请返回普通注册页完成注册' },
         { status: 403 }

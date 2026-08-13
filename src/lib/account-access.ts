@@ -37,6 +37,25 @@ type AccessConfig = {
   };
 };
 
+type RegistrationSiteConfig = {
+  RegistrationAccessMode?: 'redemption' | 'open';
+  RequireRedemptionCode?: boolean;
+};
+
+export const DEFAULT_MEMBERSHIP_RENEWAL_MESSAGE = '如需续费请联系站长';
+
+export function isRedemptionRegistrationRequired(
+  siteConfig: RegistrationSiteConfig
+): boolean {
+  if (siteConfig.RegistrationAccessMode) {
+    return siteConfig.RegistrationAccessMode === 'redemption';
+  }
+  // Existing installations did not have an explicit mode and could silently
+  // inherit `false`. P002 migrates that ambiguous state to redemption mode;
+  // the owner can explicitly switch it to `open` from the admin panel.
+  return true;
+}
+
 export const ACCESS_PLAN_LABELS: Record<AccessPlan, string> = {
   '1_day': '天卡',
   '1_month': '1个月',

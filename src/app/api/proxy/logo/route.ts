@@ -1,15 +1,26 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
+import {
+  isSourceAllowedForUser,
+  requireFeaturePermission,
+} from '@/lib/permissions';
 
 export const runtime = 'nodejs';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const authResult = await requireFeaturePermission(
+    request,
+    'live',
+    '无权限访问电视直播'
+  );
+  if (authResult instanceof NextResponse) return authResult;
   const { searchParams } = new URL(request.url);
   const imageUrl = searchParams.get('url');
-  const source = searchParams.get('moontv-source') || searchParams.get('source');
+  const source =
+    searchParams.get('moontv-source') || searchParams.get('source');
 
   if (!imageUrl) {
     return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
@@ -17,6 +28,12 @@ export async function GET(request: Request) {
 
   const config = await getConfig();
   const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
+  if (
+    !liveSource ||
+    !(await isSourceAllowedForUser(authResult.username, liveSource))
+  ) {
+    return NextResponse.json({ error: '无权限访问该直播源' }, { status: 403 });
+  }
   const ua = liveSource?.ua || 'AptvPlayer/1.4.10';
 
   try {

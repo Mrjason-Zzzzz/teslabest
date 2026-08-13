@@ -1,39 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
-function normalizeRoomInput(platform: string, input: string): string {
-  const value = input.trim();
-  try {
-    const parsed = new URL(value.startsWith('http') ? value : `https://${value}`);
-    const host = parsed.hostname.toLowerCase();
-    const roomId = parsed.pathname.split('/').filter(Boolean)[0];
-    if (
-      roomId &&
-      ((platform === 'douyin' && host === 'live.douyin.com') ||
-        (platform === 'bilibili' && host === 'live.bilibili.com') ||
-        (platform === 'huya' && (host === 'huya.com' || host.endsWith('.huya.com'))))
-    ) {
-      return roomId;
-    }
-  } catch {
-    // Plain room id.
-  }
-  return value;
+function sanitizeAcl(value: unknown): string[] {
+  return Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .filter((item): item is string => typeof item === 'string')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 100)
+    : [];
 }
 
 export async function POST(request: NextRequest) {
   try {
     const authInfo = getAuthInfoFromCookie(request);
     const username = authInfo?.username;
-    const config = await getConfig();
+    const config = await getFreshConfig();
     if (username !== process.env.USERNAME) {
-      const userInfo = await db.getUserInfoV2(username || '');
-      if (!userInfo || userInfo.role !== 'admin' || userInfo.banned) {
-        return NextResponse.json({ error: '权限不足' }, { status: 401 });
-      }
+      return NextResponse.json(
+        { error: '仅站长可管理网络直播源' },
+        { status: 403 }
+      );
     }
 
     const body = await request.json();
@@ -55,7 +48,7 @@ export async function POST(request: NextRequest) {
       }
 
       case 'add': {
-        const { name, platform, roomId } = body;
+        const { name, platform, roomId, allowedUsers, allowedTags } = body;
         if (!name || !platform || !roomId) {
           return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
         }
@@ -69,9 +62,11 @@ export async function POST(request: NextRequest) {
           key,
           name,
           platform,
-          roomId: normalizeRoomInput(platform, roomId),
+          roomId,
           from: 'custom',
           disabled: false,
+          allowedUsers: sanitizeAcl(allowedUsers),
+          allowedTags: sanitizeAcl(allowedTags),
         });
         break;
       }
@@ -83,9 +78,14 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: '源不存在' }, { status: 404 });
         }
         if (source.from === 'config') {
-          return NextResponse.json({ error: '无法删除配置文件中的源' }, { status: 400 });
+          return NextResponse.json(
+            { error: '无法删除配置文件中的源' },
+            { status: 400 }
+          );
         }
-        config.WebLiveConfig = config.WebLiveConfig.filter((s) => s.key !== key);
+        config.WebLiveConfig = config.WebLiveConfig.filter(
+          (s) => s.key !== key
+        );
         break;
       }
 
@@ -110,24 +110,36 @@ export async function POST(request: NextRequest) {
       }
 
       case 'edit': {
-        const { key, name, platform, roomId } = body;
+        const { key, name, platform, roomId, allowedUsers, allowedTags } = body;
         const source = config.WebLiveConfig.find((s) => s.key === key);
         if (!source) {
           return NextResponse.json({ error: '源不存在' }, { status: 404 });
         }
         if (source.from === 'config') {
-          return NextResponse.json({ error: '无法编辑配置文件中的源' }, { status: 400 });
+          return NextResponse.json(
+            { error: '无法编辑配置文件中的源' },
+            { status: 400 }
+          );
         }
         source.name = name;
         source.platform = platform;
-        source.roomId = normalizeRoomInput(platform, roomId);
+        source.roomId = roomId;
+        if (allowedUsers !== undefined) {
+          source.allowedUsers = sanitizeAcl(allowedUsers);
+        }
+        if (allowedTags !== undefined) {
+          source.allowedTags = sanitizeAcl(allowedTags);
+        }
         break;
       }
 
       case 'sort': {
         const { keys } = body;
         if (!Array.isArray(keys)) {
-          return NextResponse.json({ error: '无效的排序数据' }, { status: 400 });
+          return NextResponse.json(
+            { error: '无效的排序数据' },
+            { status: 400 }
+          );
         }
         const sortedSources = keys
           .map((key) => config.WebLiveConfig!.find((s) => s.key === key))
@@ -141,6 +153,7 @@ export async function POST(request: NextRequest) {
     }
 
     await db.saveAdminConfig(config);
+    await setCachedConfig(config);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(

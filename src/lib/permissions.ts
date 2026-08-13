@@ -29,7 +29,9 @@ function isPrivilegedRole(role?: string) {
   return role === 'owner' || role === 'admin';
 }
 
-async function getUserFeatureAccessMap(username: string): Promise<FeatureAccessMap> {
+async function getUserFeatureAccessMap(
+  username: string
+): Promise<FeatureAccessMap> {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   if (storageType === 'localstorage') {
     return createFullFeatureAccessMap();
@@ -67,7 +69,9 @@ async function getUserFeatureAccessMap(username: string): Promise<FeatureAccessM
   }, {} as FeatureAccessMap);
 }
 
-export async function getUserFeatureAccess(username?: string | null): Promise<FeatureAccessMap> {
+export async function getUserFeatureAccess(
+  username?: string | null
+): Promise<FeatureAccessMap> {
   if (!username) return createEmptyFeatureAccessMap();
   try {
     return await getUserFeatureAccessMap(username);
@@ -85,6 +89,32 @@ export async function hasFeaturePermission(
 ): Promise<boolean> {
   const accessMap = await getUserFeatureAccessMap(username);
   return accessMap[permission] === true;
+}
+
+export interface SourceAccessRule {
+  allowedUsers?: string[];
+  allowedTags?: string[];
+}
+
+export async function isSourceAllowedForUser(
+  username: string,
+  source: SourceAccessRule
+): Promise<boolean> {
+  const allowedUsers = Array.isArray(source.allowedUsers)
+    ? source.allowedUsers.filter(Boolean)
+    : [];
+  const allowedTags = Array.isArray(source.allowedTags)
+    ? source.allowedTags.filter(Boolean)
+    : [];
+  if (allowedUsers.length === 0 && allowedTags.length === 0) return true;
+
+  if (username === process.env.USERNAME) return true;
+  const userInfo = await db.getUserInfoV2(username);
+  if (!userInfo || userInfo.banned) return false;
+  if (userInfo.role === 'owner' || userInfo.role === 'admin') return true;
+  if (allowedUsers.includes(username)) return true;
+  const userTags = Array.isArray(userInfo.tags) ? userInfo.tags : [];
+  return userTags.some((tag) => allowedTags.includes(tag));
 }
 
 export async function requireFeaturePermission(

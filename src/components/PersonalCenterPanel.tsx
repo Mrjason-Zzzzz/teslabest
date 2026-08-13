@@ -3,6 +3,14 @@
 import { Bell, Crown, KeyRound, Monitor, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+function formatMembershipExpiry(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 interface PersonalCenterPanelProps {
   isOpen: boolean;
   mounted: boolean;
@@ -14,6 +22,8 @@ interface PersonalCenterPanelProps {
   roleBadgeClassName: string;
   membershipLabel?: string;
   membershipExpiresAt?: number | null;
+  membershipRemainingDays?: number | null;
+  membershipRenewalMessage?: string;
   membershipStatus?: 'active' | 'disabled';
   membershipIsExpired?: boolean;
   showDeviceManagement: boolean;
@@ -34,6 +44,8 @@ export function PersonalCenterPanel({
   roleBadgeClassName,
   membershipLabel,
   membershipExpiresAt,
+  membershipRemainingDays,
+  membershipRenewalMessage,
   membershipStatus,
   membershipIsExpired,
   showDeviceManagement,
@@ -98,12 +110,19 @@ export function PersonalCenterPanel({
                     ? `${membershipLabel} · 已到期`
                     : typeof membershipExpiresAt !== 'number'
                     ? `${membershipLabel} · 永久有效`
-                    : `${membershipLabel} · 有效期至 ${new Date(
+                    : `${membershipLabel} · 到期时间：${formatMembershipExpiry(
                         membershipExpiresAt
-                      ).toLocaleDateString('zh-CN')}`}
+                      )} · 剩余 ${membershipRemainingDays ?? 0} 天`}
                 </span>
               </div>
             )}
+            {membershipLabel &&
+              typeof membershipExpiresAt === 'number' &&
+              membershipRenewalMessage && (
+                <p className='mt-2 text-sm text-gray-500 dark:text-gray-400'>
+                  {membershipRenewalMessage}
+                </p>
+              )}
           </div>
 
           <div className='space-y-3'>

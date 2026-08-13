@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { db } from '@/lib/db';
 import {
   deleteSourceScript,
   getDefaultSourceScriptTemplate,
@@ -27,16 +26,7 @@ async function assertAdmin(request: NextRequest) {
     return null;
   }
 
-  if (authInfo.username === process.env.USERNAME) {
-    return authInfo.username;
-  }
-
-  const userInfoV2 = await db.getUserInfoV2(authInfo.username);
-  if (!userInfoV2 || (userInfoV2.role !== 'admin' && userInfoV2.role !== 'owner') || userInfoV2.banned) {
-    return null;
-  }
-
-  return authInfo.username;
+  return authInfo.username === process.env.USERNAME ? authInfo.username : null;
 }
 
 export async function GET(request: NextRequest) {

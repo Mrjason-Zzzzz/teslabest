@@ -3,12 +3,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
-import { requireFeaturePermission } from '@/lib/permissions';
+import {
+  isSourceAllowedForUser,
+  requireFeaturePermission,
+} from '@/lib/permissions';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const authResult = await requireFeaturePermission(request, 'live', '无权限访问电视直播');
+  const authResult = await requireFeaturePermission(
+    request,
+    'live',
+    '无权限访问电视直播'
+  );
   if (authResult instanceof NextResponse) return authResult;
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
@@ -21,6 +28,9 @@ export async function GET(request: NextRequest) {
   const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
   if (!liveSource) {
     return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+  }
+  if (!(await isSourceAllowedForUser(authResult.username, liveSource))) {
+    return NextResponse.json({ error: '无权限访问该直播源' }, { status: 403 });
   }
   const ua = liveSource.ua || 'AptvPlayer/1.4.10';
 
@@ -37,7 +47,10 @@ export async function GET(request: NextRequest) {
     });
 
     if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch', message: response.statusText }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to fetch', message: response.statusText },
+        { status: 500 }
+      );
     }
 
     const contentType = response.headers.get('Content-Type') || '';
@@ -47,7 +60,10 @@ export async function GET(request: NextRequest) {
     if (response.body) {
       response.body.cancel();
     }
-    if (normalizedContentType.includes('video/mp4') || normalizedUrl.endsWith('.mp4')) {
+    if (
+      normalizedContentType.includes('video/mp4') ||
+      normalizedUrl.endsWith('.mp4')
+    ) {
       return NextResponse.json({ success: true, type: 'mp4' }, { status: 200 });
     }
     if (
@@ -63,7 +79,10 @@ export async function GET(request: NextRequest) {
       normalizedUrl.endsWith('.m3u8') ||
       normalizedUrl.endsWith('.m3u')
     ) {
-      return NextResponse.json({ success: true, type: 'm3u8' }, { status: 200 });
+      return NextResponse.json(
+        { success: true, type: 'm3u8' },
+        { status: 200 }
+      );
     }
     return NextResponse.json(
       {
@@ -73,6 +92,9 @@ export async function GET(request: NextRequest) {
       { status: 415 }
     );
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to fetch', message: error }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to fetch', message: error },
+      { status: 500 }
+    );
   }
 }

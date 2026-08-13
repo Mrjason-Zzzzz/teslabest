@@ -63,7 +63,9 @@ interface AccountAccessInfo {
   planLabel: string;
   status: 'active' | 'disabled';
   expiresAt: number | null;
+  remainingDays: number | null;
   isExpired: boolean;
+  renewalMessage: string;
 }
 
 export const UserMenu: React.FC = () => {
@@ -5361,6 +5363,8 @@ export const UserMenu: React.FC = () => {
         roleBadgeClassName={roleBadgeClassName}
         membershipLabel={accountAccess?.planLabel}
         membershipExpiresAt={accountAccess?.expiresAt}
+        membershipRemainingDays={accountAccess?.remainingDays}
+        membershipRenewalMessage={accountAccess?.renewalMessage}
         membershipStatus={accountAccess?.status}
         membershipIsExpired={accountAccess?.isExpired}
         showDeviceManagement={storageType !== 'localstorage'}

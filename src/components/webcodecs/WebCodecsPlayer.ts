@@ -89,6 +89,10 @@ export class WebCodecsPlayer {
   private bufferingStartedAtMs = 0;
   private recoveryAttempts = 0;
   private recoveryInFlight = false;
+  private videoDecoderRecoveryInFlight = false;
+  private videoDecoderRecoveryStartedAtMs = 0;
+  private videoDecoderRecoveryTimestamps: number[] = [];
+  private videoDecoderRecoveryCount = 0;
   private hlsNetworkRecoveryAttempts = 0;
   private hlsNetworkRecoveryTimer: number | null = null;
   private checkedTsContainer = false;
@@ -158,8 +162,14 @@ export class WebCodecsPlayer {
 
   async load(url: string, startAt = 0): Promise<void> {
     const isNewSource = this.sourceUrl !== url;
-    if (isNewSource) this.recoveryAttempts = 0;
+    if (isNewSource) {
+      this.recoveryAttempts = 0;
+      this.videoDecoderRecoveryTimestamps = [];
+      this.videoDecoderRecoveryCount = 0;
+    }
     this.hlsNetworkRecoveryAttempts = 0;
+    this.videoDecoderRecoveryInFlight = false;
+    this.videoDecoderRecoveryStartedAtMs = 0;
     const generation = ++this.loadGeneration;
     this.teardown();
     this.teardownAudioGraph();
@@ -902,9 +912,9 @@ export class WebCodecsPlayer {
     }
   }
 
-  private setupDecoders(generation = this.loadGeneration) {
+  private createVideoDecoder(generation = this.loadGeneration) {
     this.needVideoKey = true;
-    this.videoDecoder = new VideoDecoder({
+    const decoder = new VideoDecoder({
       output: (frame) => {
         if (this.destroyed || generation !== this.loadGeneration) {
           frame.close();
@@ -913,10 +923,87 @@ export class WebCodecsPlayer {
         this.onVideoFrame(frame);
       },
       error: (e) => {
-        if (generation === this.loadGeneration)
-          this.fail('video decoder: ' + e.message);
+        if (generation === this.loadGeneration) {
+          this.recoverVideoDecoder(e, generation);
+        }
       },
     });
+    this.videoDecoder = decoder;
+    if (this.videoConfig) {
+      decoder.configure({
+        codec: this.videoConfig.codec,
+        codedWidth: this.videoConfig.codedWidth,
+        codedHeight: this.videoConfig.codedHeight,
+        description: this.videoConfig.description,
+        optimizeForLatency: false,
+      });
+    }
+    return decoder;
+  }
+
+  private recoverVideoDecoder(error: Error, generation = this.loadGeneration) {
+    if (
+      this.destroyed ||
+      generation !== this.loadGeneration ||
+      this.videoDecoderRecoveryInFlight
+    )
+      return;
+
+    const now = Date.now();
+    this.videoDecoderRecoveryTimestamps =
+      this.videoDecoderRecoveryTimestamps.filter(
+        (timestamp) => now - timestamp < 60_000
+      );
+    if (this.videoDecoderRecoveryTimestamps.length >= 6) {
+      this.fail('video decoder: 连续恢复失败，请重试当前线路');
+      return;
+    }
+
+    this.videoDecoderRecoveryInFlight = true;
+    this.videoDecoderRecoveryStartedAtMs = performance.now();
+    this.videoDecoderRecoveryTimestamps.push(now);
+    this.videoDecoderRecoveryCount++;
+    this.debugStats.lastError = `video decoder recovered: ${error.message}`;
+    console.warn(
+      '[WebCodecsPlayer] rebuilding video decoder without resetting audio:',
+      error
+    );
+
+    const failedDecoder = this.videoDecoder;
+    this.videoDecoder = null;
+    try {
+      if (failedDecoder && failedDecoder.state !== 'closed') {
+        failedDecoder.close();
+      }
+    } catch {}
+
+    for (const frame of this.frameQueue) frame.close();
+    this.frameQueue = [];
+    this.needVideoKey = true;
+    this.lastRenderedAtMs = performance.now();
+
+    try {
+      this.createVideoDecoder(generation);
+    } catch (decoderError) {
+      this.videoDecoderRecoveryInFlight = false;
+      this.videoDecoderRecoveryStartedAtMs = 0;
+      this.fail(
+        'video decoder: ' +
+          (decoderError instanceof Error
+            ? decoderError.message
+            : '视频轨道重建失败')
+      );
+      return;
+    }
+
+    // Keep ctxStartTime, scheduled audio and the shared AudioContext intact.
+    // The video pump resumes at the next keyframe and catches up to the same
+    // audio master clock, avoiding the overlapping-audio regression caused by
+    // rebuilding the full player.
+  }
+
+  private setupDecoders(generation = this.loadGeneration) {
+    this.createVideoDecoder(generation);
     this.audioDecoder = new AudioDecoder({
       output: (data) => {
         if (this.destroyed || generation !== this.loadGeneration) {
@@ -948,8 +1035,10 @@ export class WebCodecsPlayer {
   }
 
   private onVideoFrame(frame: VideoFrame) {
+    this.videoDecoderRecoveryInFlight = false;
+    this.videoDecoderRecoveryStartedAtMs = 0;
     this.decodedFrames++;
-    const frameLimit = this.isLivePlaylist ? 24 : 48;
+    const frameLimit = this.isLivePlaylist ? 16 : 48;
     while (this.frameQueue.length >= frameLimit) {
       this.frameQueue.shift()?.close();
       this.droppedFrames++;
@@ -1008,11 +1097,13 @@ export class WebCodecsPlayer {
   }
 
   private compactEncodedQueues() {
-    if (this.vIdx > 600) {
+    const videoCompactThreshold = this.isLivePlaylist ? 120 : 600;
+    const audioCompactThreshold = this.isLivePlaylist ? 240 : 1200;
+    if (this.vIdx > videoCompactThreshold) {
       this.encodedVideo = this.encodedVideo.slice(this.vIdx);
       this.vIdx = 0;
     }
-    if (this.aIdx > 1200) {
+    if (this.aIdx > audioCompactThreshold) {
       this.encodedAudio = this.encodedAudio.slice(this.aIdx);
       this.aIdx = 0;
     }
@@ -1050,6 +1141,7 @@ export class WebCodecsPlayer {
       this.canvasSized
     );
     const videoStarved =
+      !this.videoDecoderRecoveryInFlight &&
       noVideoReady &&
       now - this.lastRenderedAtMs >= syncPolicy.videoStarvationMs;
     const audioStarved =
@@ -1081,6 +1173,15 @@ export class WebCodecsPlayer {
 
   private maybeRecoverFromStall() {
     const now = performance.now();
+    if (this.videoDecoderRecoveryInFlight) {
+      if (now - this.videoDecoderRecoveryStartedAtMs < 15_000) return;
+      this.videoDecoderRecoveryInFlight = false;
+      this.recoverVideoDecoder(
+        new Error('视频轨道重建后未收到关键帧'),
+        this.loadGeneration
+      );
+      return;
+    }
     const syncPolicy = getTeslaAvSyncPolicy(
       this.isLivePlaylist,
       this.playbackRate,
@@ -1129,7 +1230,7 @@ export class WebCodecsPlayer {
   private pumpVideo() {
     const dec = this.videoDecoder;
     if (!dec || dec.state !== 'configured') return;
-    const MAX_OUTSTANDING = this.isLivePlaylist ? 18 : 50;
+    const MAX_OUTSTANDING = this.isLivePlaylist ? 12 : 50;
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
@@ -1150,7 +1251,10 @@ export class WebCodecsPlayer {
         );
       } catch (e) {
         console.warn('[WebCodecsPlayer] video decode error:', e);
-        this.needVideoKey = true;
+        this.recoverVideoDecoder(
+          e instanceof Error ? e : new Error('视频帧解码失败')
+        );
+        break;
       }
     }
   }
@@ -1752,6 +1856,7 @@ export class WebCodecsPlayer {
       demuxVideoQueue: this.encodedVideo.length - this.vIdx,
       demuxAudioQueue: this.encodedAudio.length - this.aIdx,
       audioCtx: this.audioCtx?.state ?? 'none',
+      videoDecoderRecoveries: this.videoDecoderRecoveryCount,
     };
   }
 

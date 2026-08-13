@@ -18,7 +18,11 @@ interface PageLayoutProps {
   hideNavigation?: boolean; // 控制是否隐藏顶部和底部导航栏
 }
 
-const PageLayout = ({ children, activePath = '/', hideNavigation = false }: PageLayoutProps) => {
+const PageLayout = ({
+  children,
+  activePath = '/',
+  hideNavigation = false,
+}: PageLayoutProps) => {
   const router = useRouter();
   const [backgroundImage, setBackgroundImage] = useState('');
   const shouldShowSharedBackground = !hideNavigation && activePath !== '/play';
@@ -26,7 +30,15 @@ const PageLayout = ({ children, activePath = '/', hideNavigation = false }: Page
   useEffect(() => {
     router.prefetch('/search');
     router.prefetch('/play');
-    router.prefetch('/short-video');
+    if (
+      (
+        window as Window & {
+          RUNTIME_CONFIG?: { SHORT_VIDEO_ENABLED?: boolean };
+        }
+      ).RUNTIME_CONFIG?.SHORT_VIDEO_ENABLED
+    ) {
+      router.prefetch('/short-video');
+    }
   }, [router]);
 
   useEffect(() => {
@@ -76,7 +88,9 @@ const PageLayout = ({ children, activePath = '/', hideNavigation = false }: Page
 
         {/* 移动端头部 */}
         {!hideNavigation && (
-          <MobileHeader showBackButton={['/play', '/live'].includes(activePath)} />
+          <MobileHeader
+            showBackButton={['/play', '/live'].includes(activePath)}
+          />
         )}
 
         {/* 主要布局容器 */}

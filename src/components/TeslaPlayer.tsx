@@ -30,9 +30,11 @@ import {
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import {
+  bindTeslaMediaSession,
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
   getTeslaAudioSession,
+  setTeslaMediaSessionState,
   unlockTeslaAudioSession,
   updateTeslaAudioSession,
 } from '@/lib/tesla/audio-session';
@@ -47,6 +49,8 @@ interface TeslaPlayerProps {
   defaultMode?: PlayMode;
   onBackToOriginal?: () => void;
   onEnded?: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
   playRecordKey?: string;
   initialTime?: number;
   onProgress?: (currentTime: number, duration: number) => void;
@@ -118,6 +122,8 @@ export default function TeslaPlayer({
   defaultMode: defaultModeProp = 'webcodecs',
   onBackToOriginal,
   onEnded: onEndedCallback,
+  onPrevious,
+  onNext,
   playRecordKey,
   initialTime = 0,
   onProgress,
@@ -469,7 +475,25 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     playingRef.current = playing;
+    setTeslaMediaSessionState(playing ? 'playing' : 'paused');
   }, [playing]);
+
+  useEffect(
+    () =>
+      bindTeslaMediaSession({
+        title,
+        poster,
+        onPlay: () => {
+          if (!playingRef.current) togglePlay();
+        },
+        onPause: () => {
+          if (playingRef.current) togglePlay();
+        },
+        onPrevious: live ? undefined : onPrevious,
+        onNext: live ? undefined : onNext,
+      }),
+    [live, onNext, onPrevious, poster, title, togglePlay]
+  );
 
   const resetControlsTimer = useCallback(() => {
     if (hideControlsTimerRef.current)
@@ -625,7 +649,7 @@ export default function TeslaPlayer({
       () => {
         const message = live
           ? '直播持续缓冲，已尝试重新连接；当前线路可能不稳定'
-          : '播放持续缓冲，当前资源可能不稳定';
+          : '视频加载失败，请切换源或重试';
         setError(message);
         setLoading(false);
         reportPlaybackError(message);
@@ -1117,8 +1141,12 @@ export default function TeslaPlayer({
         reportPlaybackError(message);
       });
 
-      firstFrameTimer = window.setTimeout(
-        () => {
+      // Live needs an explicit real-picture deadline because a channel can
+      // keep returning audio/network data while the video track is dead. VOD
+      // must not inherit that rule: slow MP4 range probing and sparse-keyframe
+      // HLS are valid and are covered by the generic loading timeout instead.
+      if (live) {
+        firstFrameTimer = window.setTimeout(() => {
           if (
             destroyed ||
             playbackReadyReportedRef.current ||
@@ -1131,9 +1159,8 @@ export default function TeslaPlayer({
           setBuffering(false);
           setError(message);
           reportPlaybackError(message);
-        },
-        live ? 18000 : 12000
-      );
+        }, 18000);
+      }
 
       const statsTimer = window.setInterval(() => {
         if (showDebug && !destroyed) {
@@ -1162,7 +1189,10 @@ export default function TeslaPlayer({
         destroyed = true;
       };
     }
-  }, [url, mode, playbackSession]);
+    // Player instances are rebuilt only when their source identity changes.
+    // Callback/state dependencies here would tear down the decoder mid-play.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, mode, live, playbackSession]);
 
   useEffect(() => {
     wcPlayerRef.current?.setShowDebug(showDebug);

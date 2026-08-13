@@ -323,7 +323,9 @@ async function getInitConfig(
       EnableRegistration: false,
       RequireRegistrationInviteCode: false,
       RegistrationInviteCode: '',
-      RequireRedemptionCode: false,
+      RequireRedemptionCode: true,
+      RegistrationAccessMode: 'redemption',
+      MembershipRenewalMessage: '如需续费请联系站长',
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -561,7 +563,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       EnableRegistration: false,
       RequireRegistrationInviteCode: false,
       RegistrationInviteCode: '',
-      RequireRedemptionCode: false,
+      RequireRedemptionCode: true,
+      RegistrationAccessMode: 'redemption',
+      MembershipRenewalMessage: '如需续费请联系站长',
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -603,8 +607,13 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   if (adminConfig.SiteConfig.RegistrationInviteCode === undefined) {
     adminConfig.SiteConfig.RegistrationInviteCode = '';
   }
-  if (adminConfig.SiteConfig.RequireRedemptionCode === undefined) {
-    adminConfig.SiteConfig.RequireRedemptionCode = false;
+  if (adminConfig.SiteConfig.RegistrationAccessMode === undefined) {
+    adminConfig.SiteConfig.RegistrationAccessMode = 'redemption';
+  }
+  adminConfig.SiteConfig.RequireRedemptionCode =
+    adminConfig.SiteConfig.RegistrationAccessMode === 'redemption';
+  if (adminConfig.SiteConfig.MembershipRenewalMessage === undefined) {
+    adminConfig.SiteConfig.MembershipRenewalMessage = '如需续费请联系站长';
   }
   if (adminConfig.SiteConfig.RegistrationRequireTurnstile === undefined) {
     adminConfig.SiteConfig.RegistrationRequireTurnstile = false;

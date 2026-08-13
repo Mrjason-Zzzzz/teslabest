@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { isRedemptionRegistrationRequired } from '@/lib/account-access';
 import { getFreshConfig } from '@/lib/config';
 import { CURRENT_VERSION } from '@/lib/version';
 
@@ -53,6 +54,9 @@ export async function GET(request: NextRequest) {
 
   // 非 localStorage 模式，从数据库读取配置
   const config = await getFreshConfig();
+  const requireRedemptionCode = isRedemptionRegistrationRequired(
+    config.SiteConfig
+  );
   const result = {
     SiteName: config.SiteConfig.SiteName,
     StorageType: storageType,
@@ -64,7 +68,7 @@ export async function GET(request: NextRequest) {
     EnableRegistration: config.SiteConfig.EnableRegistration || false,
     RequireRegistrationInviteCode:
       config.SiteConfig.RequireRegistrationInviteCode || false,
-    RequireRedemptionCode: config.SiteConfig.RequireRedemptionCode === true,
+    RequireRedemptionCode: requireRedemptionCode,
     RegistrationRequireTurnstile:
       config.SiteConfig.RegistrationRequireTurnstile || false,
     LoginRequireTurnstile: config.SiteConfig.LoginRequireTurnstile || false,
@@ -72,7 +76,7 @@ export async function GET(request: NextRequest) {
     EnableOIDCLogin: config.SiteConfig.EnableOIDCLogin || false,
     EnableOIDCRegistration:
       (config.SiteConfig.EnableOIDCRegistration || false) &&
-      config.SiteConfig.RequireRedemptionCode !== true,
+      !requireRedemptionCode,
     OIDCButtonText: config.SiteConfig.OIDCButtonText || '',
     EnableTelegramLogin: Boolean(
       config.TelegramConfig?.enabled &&

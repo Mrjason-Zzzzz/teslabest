@@ -1,94 +1,161 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from 'next/server';
 
-import { getConfig } from "@/lib/config";
-import { getBaseUrl, resolveUrl } from "@/lib/live";
+import { getConfig } from '@/lib/config';
+import { getBaseUrl, resolveUrl } from '@/lib/live';
+import {
+  isSourceAllowedForUser,
+  requireFeaturePermission,
+} from '@/lib/permissions';
 
 export const runtime = 'nodejs';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const authResult = await requireFeaturePermission(
+    request,
+    'live',
+    '无权限访问电视直播'
+  );
+  if (authResult instanceof NextResponse) return authResult;
   const { searchParams } = new URL(request.url);
-  // URLSearchParams already returns the decoded value. Decoding a second time
-  // corrupts signed URLs containing percent sequences.
-  const targetUrl = searchParams.get('url');
+  const url = searchParams.get('url');
   const allowCORS = searchParams.get('allowCORS') === 'true';
   const source = searchParams.get('moontv-source');
-  if (!targetUrl) {
+  if (!url) {
     return NextResponse.json({ error: 'Missing url' }, { status: 400 });
   }
 
   const config = await getConfig();
-  const liveSource = config.LiveConfig?.find((item: any) => item.key === source);
+  const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
   if (!liveSource) {
     return NextResponse.json({ error: 'Source not found' }, { status: 404 });
   }
+  if (!(await isSourceAllowedForUser(authResult.username, liveSource))) {
+    return NextResponse.json({ error: '无权限访问该直播源' }, { status: 403 });
+  }
+  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  let response: Response | null = null;
+  let responseUsed = false;
+
   try {
-    const upstream = await fetch(targetUrl, {
-      cache: 'no-store',
+    const decodedUrl = decodeURIComponent(url);
+
+    response = await fetch(decodedUrl, {
+      cache: 'no-cache',
       redirect: 'follow',
-      signal: controller.signal,
+      credentials: 'same-origin',
       headers: {
-        'User-Agent': liveSource.ua || 'AptvPlayer/1.4.10',
-        Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
+        'User-Agent': ua,
       },
     });
-    clearTimeout(timeout);
 
-    if (!upstream.ok) {
+    if (!response.ok) {
       return NextResponse.json(
-        { error: 'Failed to fetch playlist', upstreamStatus: upstream.status },
-        { status: upstream.status === 404 ? 404 : 502 },
+        { error: 'Failed to fetch m3u8' },
+        { status: 500 }
       );
     }
 
-    const bytes = await upstream.arrayBuffer();
-    const contentType = upstream.headers.get('Content-Type') || '';
-    const preview = new TextDecoder().decode(bytes.slice(0, Math.min(bytes.byteLength, 32))).trimStart();
-    const pathname = new URL(upstream.url || targetUrl).pathname.toLowerCase();
-    const isPlaylist =
+    const contentType = response.headers.get('Content-Type') || '';
+    // rewrite m3u8
+    if (
       contentType.toLowerCase().includes('mpegurl') ||
-      pathname.endsWith('.m3u8') ||
-      preview.startsWith('#EXTM3U');
+      contentType.toLowerCase().includes('octet-stream')
+    ) {
+      // 获取最终的响应URL（处理重定向后的URL）
+      const finalUrl = response.url;
+      const m3u8Content = await response.text();
+      responseUsed = true; // 标记 response 已被使用
 
-    const headers = new Headers();
-    headers.set('Access-Control-Allow-Origin', '*');
-    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Content-Type, Range, Origin, Accept');
-    headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-    headers.set('Cache-Control', isPlaylist ? 'no-store' : 'public, max-age=30, s-maxage=120');
+      // 使用最终的响应URL作为baseUrl，而不是原始的请求URL
+      const baseUrl = getBaseUrl(finalUrl);
 
-    if (!isPlaylist) {
-      // application/octet-stream is frequently used for TS/fMP4 fragments.
-      // Never decode it as text solely because of that generic MIME type.
-      headers.set('Content-Type', contentType || 'application/octet-stream');
-      return new Response(bytes, { status: 200, headers });
+      // 重写 M3U8 内容
+      const modifiedContent = rewriteM3U8Content(
+        m3u8Content,
+        baseUrl,
+        request,
+        allowCORS
+      );
+
+      const headers = new Headers();
+      headers.set('Content-Type', contentType);
+      headers.set('Access-Control-Allow-Origin', '*');
+      headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      headers.set(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Range, Origin, Accept'
+      );
+      headers.set('Cache-Control', 'no-cache');
+      headers.set(
+        'Access-Control-Expose-Headers',
+        'Content-Length, Content-Range'
+      );
+      return new Response(modifiedContent, { headers });
     }
+    // just proxy
+    const headers = new Headers();
+    headers.set(
+      'Content-Type',
+      response.headers.get('Content-Type') || 'application/vnd.apple.mpegurl'
+    );
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    headers.set(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Range, Origin, Accept'
+    );
+    headers.set('Cache-Control', 'no-cache');
+    headers.set(
+      'Access-Control-Expose-Headers',
+      'Content-Length, Content-Range'
+    );
 
-    const playlist = new TextDecoder().decode(bytes);
-    const modified = rewriteM3U8Content(
-      playlist,
-      getBaseUrl(upstream.url || targetUrl),
-      request,
-      allowCORS,
-    );
-    headers.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
-    return new Response(modified, { status: 200, headers });
-  } catch (error: any) {
-    clearTimeout(timeout);
-    const timedOut = error?.name === 'AbortError';
+    // 直接返回视频流
+    return new Response(response.body, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
     return NextResponse.json(
-      { error: timedOut ? 'Playlist upstream timed out' : 'Failed to fetch playlist' },
-      { status: timedOut ? 504 : 502 },
+      { error: 'Failed to fetch m3u8' },
+      { status: 500 }
     );
+  } finally {
+    // 确保 response 被正确关闭以释放资源
+    if (response && !responseUsed) {
+      try {
+        response.body?.cancel();
+      } catch (error) {
+        // 忽略关闭时的错误
+        console.warn('Failed to close response body:', error);
+      }
+    }
   }
 }
 
-function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allowCORS: boolean) {
-  const proxyBase = `${new URL(req.url).origin}/api/proxy`;
+function rewriteM3U8Content(
+  content: string,
+  baseUrl: string,
+  req: Request,
+  allowCORS: boolean
+) {
+  // 从 referer 头提取协议信息
+  const referer = req.headers.get('referer');
+  let protocol = 'http';
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer);
+      protocol = refererUrl.protocol.replace(':', '');
+    } catch (error) {
+      // ignore
+    }
+  }
+
+  const host = req.headers.get('host');
+  const proxyBase = `${protocol}://${host}/api/proxy`;
 
   // 获取 moontv-source 参数
   const reqUrl = new URL(req.url);
@@ -103,7 +170,11 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
     // 处理 TS 片段 URL 和其他媒体文件
     if (line && !line.startsWith('#')) {
       const resolvedUrl = resolveUrl(baseUrl, line);
-      const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
+      const proxyUrl = allowCORS
+        ? resolvedUrl
+        : `${proxyBase}/segment?url=${encodeURIComponent(
+            resolvedUrl
+          )}&moontv-source=${source}`;
       rewrittenLines.push(proxyUrl);
       continue;
     }
@@ -127,7 +198,9 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
         const nextLine = lines[i].trim();
         if (nextLine && !nextLine.startsWith('#')) {
           const resolvedUrl = resolveUrl(baseUrl, nextLine);
-          const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
+          const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(
+            resolvedUrl
+          )}&moontv-source=${source}`;
           rewrittenLines.push(proxyUrl);
         } else {
           rewrittenLines.push(nextLine);
@@ -142,23 +215,43 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
   return rewrittenLines.join('\n');
 }
 
-function rewriteMapUri(line: string, baseUrl: string, proxyBase: string, allowCORS: boolean, source: string) {
+function rewriteMapUri(
+  line: string,
+  baseUrl: string,
+  proxyBase: string,
+  allowCORS: boolean,
+  source: string
+) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     const originalUri = uriMatch[1];
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/segment?url=${encodeURIComponent(
+          resolvedUrl
+        )}&moontv-source=${source}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
 }
 
-function rewriteKeyUri(line: string, baseUrl: string, proxyBase: string, allowCORS: boolean, source: string) {
+function rewriteKeyUri(
+  line: string,
+  baseUrl: string,
+  proxyBase: string,
+  allowCORS: boolean,
+  source: string
+) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     const originalUri = uriMatch[1];
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = allowCORS ? resolvedUrl : `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}&moontv-source=${source}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/key?url=${encodeURIComponent(
+          resolvedUrl
+        )}&moontv-source=${source}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;

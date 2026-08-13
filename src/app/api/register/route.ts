@@ -6,6 +6,7 @@ import {
   getRedemptionCodeState,
   hashRedemptionCode,
   isAccessPlan,
+  isRedemptionRegistrationRequired,
   RedemptionCodeRecord,
 } from '@/lib/account-access';
 import { getFreshConfig, setCachedConfig } from '@/lib/config';
@@ -69,6 +70,7 @@ export async function POST(req: NextRequest) {
     // 获取站点配置
     const config = await getFreshConfig();
     const siteConfig = config.SiteConfig;
+    const requireRedemptionCode = isRedemptionRegistrationRequired(siteConfig);
 
     // 检查是否开启注册
     if (!siteConfig.EnableRegistration) {
@@ -110,10 +112,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '该用户名不可用' }, { status: 409 });
     }
 
-    if (
-      siteConfig.RequireRegistrationInviteCode &&
-      !siteConfig.RequireRedemptionCode
-    ) {
+    if (siteConfig.RequireRegistrationInviteCode && !requireRedemptionCode) {
       const expectedInviteCode = (
         siteConfig.RegistrationInviteCode || ''
       ).trim();
@@ -130,7 +129,7 @@ export async function POST(req: NextRequest) {
     }
 
     let redemptionHash: string | null = null;
-    if (siteConfig.RequireRedemptionCode) {
+    if (requireRedemptionCode) {
       if (!redemptionCode || !redemptionCode.trim()) {
         return NextResponse.json({ error: '请输入兑换码' }, { status: 400 });
       }

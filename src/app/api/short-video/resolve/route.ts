@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
+import { requireFeaturePermission } from '@/lib/permissions';
 import {
   getShortVideoResolverStatus,
   resolveShortVideo,
@@ -14,20 +14,13 @@ const NO_STORE_HEADERS = {
   'Cache-Control': 'private, no-store, max-age=0',
 };
 
-function requireLogin(request: NextRequest): NextResponse | null {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo?.username) {
-    return NextResponse.json(
-      { error: 'Unauthorized', code: 'UNAUTHORIZED' },
-      { status: 401, headers: NO_STORE_HEADERS }
-    );
-  }
-  return null;
-}
-
 export async function GET(request: NextRequest) {
-  const unauthorized = requireLogin(request);
-  if (unauthorized) return unauthorized;
+  const authResult = await requireFeaturePermission(
+    request,
+    'short_video',
+    '无权限访问刷视频'
+  );
+  if (authResult instanceof NextResponse) return authResult;
 
   return NextResponse.json(getShortVideoResolverStatus(), {
     headers: NO_STORE_HEADERS,
@@ -35,8 +28,12 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const unauthorized = requireLogin(request);
-  if (unauthorized) return unauthorized;
+  const authResult = await requireFeaturePermission(
+    request,
+    'short_video',
+    '无权限访问刷视频'
+  );
+  if (authResult instanceof NextResponse) return authResult;
 
   const contentLength = Number(request.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > 4_096) {

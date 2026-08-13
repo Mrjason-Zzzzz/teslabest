@@ -57,6 +57,7 @@ export default function AccountAccessManager({
 }: AccountAccessManagerProps) {
   const [loading, setLoading] = useState(false);
   const [requireCode, setRequireCode] = useState(false);
+  const [renewalMessage, setRenewalMessage] = useState('如需续费请联系站长');
   const [codes, setCodes] = useState<SafeCode[]>([]);
   const [policies, setPolicies] = useState<Record<string, Policy>>({});
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
@@ -76,6 +77,7 @@ export default function AccountAccessManager({
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '读取账户权限失败');
     setRequireCode(Boolean(data.requireRedemptionCode));
+    setRenewalMessage(data.membershipRenewalMessage || '如需续费请联系站长');
     setCodes(data.codes || []);
     setPolicies(data.policies || {});
   }, [role]);
@@ -130,6 +132,19 @@ export default function AccountAccessManager({
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '生成失败');
+    }
+  }
+
+  async function saveRenewalMessage() {
+    try {
+      const data = await post({
+        action: 'setMembershipRenewalMessage',
+        message: renewalMessage,
+      });
+      setRenewalMessage(data.message || '如需续费请联系站长');
+      setMessage('会员续费提示语已保存并实时生效');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '保存失败');
     }
   }
 
@@ -204,6 +219,32 @@ export default function AccountAccessManager({
           {message}
         </div>
       )}
+
+      <div className='rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
+        <label className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+          会员续费提示语
+        </label>
+        <div className='mt-2 flex flex-col gap-2 sm:flex-row'>
+          <input
+            value={renewalMessage}
+            maxLength={120}
+            onChange={(event) => setRenewalMessage(event.target.value)}
+            className='min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+            placeholder='如需续费请联系站长'
+          />
+          <button
+            type='button'
+            disabled={loading}
+            onClick={saveRenewalMessage}
+            className='rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
+          >
+            保存提示语
+          </button>
+        </div>
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          保存后用户个人中心立即读取新文案；永久会员不会显示该提示。
+        </p>
+      </div>
 
       <div className='grid gap-4 lg:grid-cols-2'>
         <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
