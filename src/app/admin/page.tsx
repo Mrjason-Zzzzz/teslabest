@@ -77,6 +77,7 @@ import {
   FEATURE_PERMISSION_OPTIONS,
 } from '@/lib/feature-permissions';
 
+import AccountAccessManager from '@/components/AccountAccessManager';
 import AnimeSubscriptionComponent from '@/components/AnimeSubscriptionComponent';
 import CorrectDialog from '@/components/CorrectDialog';
 import DataMigration from '@/components/DataMigration';
@@ -531,6 +532,12 @@ interface UserConfigProps {
     tags?: string[];
     oidcSub?: string;
     enabledApis?: string[];
+    access?: {
+      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      status: 'active' | 'disabled';
+      expiresAt: number | null;
+      isExpired: boolean;
+    };
     created_at: number;
   }> | null;
   userPage: number;
@@ -565,6 +572,11 @@ const UserConfig = ({
     username: '',
     password: '',
     userGroup: '', // 新增用户组字段
+    accessPlan: 'permanent' as
+      | '1_month'
+      | '3_months'
+      | '12_months'
+      | 'permanent',
   });
   const [changePasswordUser, setChangePasswordUser] = useState({
     username: '',
@@ -673,6 +685,12 @@ const UserConfig = ({
     tags?: string[];
     created_at?: number;
     oidcSub?: string;
+    access?: {
+      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      status: 'active' | 'disabled';
+      expiresAt: number | null;
+      isExpired: boolean;
+    };
   }> = !hasOldUserData && usersV2 ? usersV2 : config?.UserConfig?.Users || [];
 
   // 使用 useMemo 计算全选状态，避免每次渲染都重新计算
@@ -867,9 +885,15 @@ const UserConfig = ({
         'add',
         newUser.username,
         newUser.password,
-        newUser.userGroup
+        newUser.userGroup,
+        newUser.accessPlan
       );
-      setNewUser({ username: '', password: '', userGroup: '' });
+      setNewUser({
+        username: '',
+        password: '',
+        userGroup: '',
+        accessPlan: 'permanent',
+      });
       setShowAddUserForm(false);
     });
   };
@@ -1146,7 +1170,8 @@ const UserConfig = ({
       | 'deleteUser',
     targetUsername: string,
     targetPassword?: string,
-    userGroup?: string
+    userGroup?: string,
+    accessPlan?: '1_month' | '3_months' | '12_months' | 'permanent'
   ) => {
     try {
       const res = await fetch('/api/admin/user', {
@@ -1156,6 +1181,7 @@ const UserConfig = ({
           targetUsername,
           ...(targetPassword ? { targetPassword } : {}),
           ...(userGroup ? { userGroup } : {}),
+          ...(accessPlan ? { accessPlan } : {}),
           action,
         }),
       });
@@ -1196,6 +1222,8 @@ const UserConfig = ({
 
   return (
     <div className='space-y-6'>
+      <AccountAccessManager role={role} onChanged={refreshConfig} />
+
       {/* 用户统计 */}
       <div>
         <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300 mb-3'>
@@ -1516,7 +1544,8 @@ const UserConfig = ({
                   className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
                 />
               </div>
-              <div>
+              <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+                <div>
                 <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
                   用户组（可选）
                 </label>
@@ -1541,6 +1570,31 @@ const UserConfig = ({
                     </option>
                   ))}
                 </select>
+                </div>
+                <div>
+                  <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                    账户有效期
+                  </label>
+                  <select
+                    value={newUser.accessPlan}
+                    onChange={(e) =>
+                      setNewUser((prev) => ({
+                        ...prev,
+                        accessPlan: e.target.value as
+                          | '1_month'
+                          | '3_months'
+                          | '12_months'
+                          | 'permanent',
+                      }))
+                    }
+                    className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+                  >
+                    <option value='1_month'>1个月</option>
+                    <option value='3_months'>3个月</option>
+                    <option value='12_months'>1年</option>
+                    <option value='permanent'>永久</option>
+                  </select>
+                </div>
               </div>
               <div className='flex justify-end'>
                 <button
@@ -1699,6 +1753,12 @@ const UserConfig = ({
                     scope='col'
                     className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'
                   >
+                    有效期
+                  </th>
+                  <th
+                    scope='col'
+                    className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'
+                  >
                     用户组
                   </th>
                   <th
@@ -1723,7 +1783,7 @@ const UserConfig = ({
                     <tbody>
                       <tr>
                         <td
-                          colSpan={8}
+                          colSpan={9}
                           className='px-6 py-8 text-center text-gray-500 dark:text-gray-400'
                         >
                           加载中...
@@ -1748,7 +1808,7 @@ const UserConfig = ({
                     <tbody>
                       <tr>
                         <td
-                          colSpan={8}
+                          colSpan={9}
                           className='px-6 py-8 text-center text-gray-500 dark:text-gray-400'
                         >
                           {trimmedUserSearch
@@ -1852,6 +1912,29 @@ const UserConfig = ({
                             >
                               {!user.banned ? '正常' : '已封禁'}
                             </span>
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm'>
+                            {user.role === 'owner' ||
+                            !user.access ||
+                            user.access.expiresAt === null ? (
+                              <span className='text-green-700 dark:text-green-300'>
+                                永久
+                              </span>
+                            ) : user.access.status === 'disabled' ? (
+                              <span className='text-red-700 dark:text-red-300'>
+                                已停用
+                              </span>
+                            ) : user.access.isExpired ? (
+                              <span className='text-red-700 dark:text-red-300'>
+                                已到期
+                              </span>
+                            ) : (
+                              <span className='text-gray-700 dark:text-gray-300'>
+                                {new Date(user.access.expiresAt).toLocaleDateString(
+                                  'zh-CN'
+                                )}
+                              </span>
+                            )}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap'>
                             <div className='flex items-center space-x-2'>
@@ -17923,6 +18006,12 @@ function AdminPageClient() {
     banned: boolean;
     tags?: string[];
     enabledApis?: string[];
+    access?: {
+      plan: '1_month' | '3_months' | '12_months' | 'permanent';
+      status: 'active' | 'disabled';
+      expiresAt: number | null;
+      isExpired: boolean;
+    };
     created_at: number;
   }> | null>(null);
 
