@@ -518,7 +518,11 @@ export class WebCodecsPlayer {
     const seekOffset = Number(seekResult?.offset) || 0;
     file.start();
 
-    const nextOffset = Math.max(metadataOffset, seekOffset);
+    // MP4Box may discard mdat bytes that arrived before extraction was
+    // configured. Re-read from the keyframe offset returned by seek() instead
+    // of skipping to the end of the metadata probe, otherwise the first
+    // undecoded sample leaves extraction permanently blocked.
+    const nextOffset = Math.max(0, seekOffset);
     await this.streamMp4Range(
       url,
       nextOffset,
