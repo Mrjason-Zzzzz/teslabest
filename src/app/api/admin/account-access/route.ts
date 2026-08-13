@@ -33,10 +33,11 @@ async function saveConfig(config: Awaited<ReturnType<typeof getConfig>>) {
 
 function safeCodes(codes: RedemptionCodeRecord[]) {
   return codes
-    .map(({ codeHash: _codeHash, ...code }) => ({
-      ...code,
-      state: getRedemptionCodeState(code),
-    }))
+    .map((record) => {
+      const state = getRedemptionCodeState(record);
+      const { codeHash: _codeHash, ...code } = record;
+      return { ...code, state };
+    })
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
