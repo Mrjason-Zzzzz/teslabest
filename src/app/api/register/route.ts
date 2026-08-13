@@ -1,7 +1,13 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getConfig } from '@/lib/config';
+import {
+  createAccountPolicy,
+  getRedemptionCodeState,
+  hashRedemptionCode,
+  RedemptionCodeRecord,
+} from '@/lib/account-access';
+import { getConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { lockManager } from '@/lib/lock';
 import {
@@ -65,7 +71,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { username, password, inviteCode, turnstileToken } = await req.json();
+    const {
+      username,
+      password,
+      inviteCode,
+      redemptionCode,
+      turnstileToken,
+    } = await req.json();
 
     // 验证输入
     if (!username || typeof username !== 'string') {
@@ -76,6 +88,9 @@ export async function POST(req: NextRequest) {
     }
     if (inviteCode !== undefined && typeof inviteCode !== 'string') {
       return NextResponse.json({ error: '邀请码格式错误' }, { status: 400 });
+    }
+    if (redemptionCode !== undefined && typeof redemptionCode !== 'string') {
+      return NextResponse.json({ error: '兑换码格式错误' }, { status: 400 });
     }
 
     // 验证用户名格式（只允许字母、数字、下划线，长度3-20）
@@ -102,7 +117,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (siteConfig.RequireRegistrationInviteCode) {
+    if (siteConfig.RequireRegistrationInviteCode && !siteConfig.RequireRedemptionCode) {
       const expectedInviteCode = (siteConfig.RegistrationInviteCode || '').trim();
       if (!expectedInviteCode) {
         return NextResponse.json(
@@ -119,10 +134,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 获取用户名锁，防止并发注册
+    let redemptionHash: string | null = null;
+    if (siteConfig.RequireRedemptionCode) {
+      if (!redemptionCode || !redemptionCode.trim()) {
+        return NextResponse.json({ error: '请输入兑换码' }, { status: 400 });
+      }
+      redemptionHash = await hashRedemptionCode(redemptionCode);
+    }
+
+    // 获取用户名锁和兑换码锁，防止并发重复注册/兑换
     let releaseLock: (() => void) | null = null;
+    let releaseRedemptionLock: (() => void) | null = null;
+    let registrationConfig: Awaited<ReturnType<typeof getConfig>> | null = null;
+    let redemptionRecord: RedemptionCodeRecord | null = null;
     try {
       releaseLock = await lockManager.acquire(`register:${username}`);
+      if (redemptionHash) {
+        releaseRedemptionLock = await lockManager.acquire(
+          `redemption:${redemptionHash}`
+        );
+      }
     } catch (error) {
       return NextResponse.json(
         { error: '服务器繁忙，请稍后重试' },
@@ -131,6 +162,23 @@ export async function POST(req: NextRequest) {
     }
 
     try {
+      if (redemptionHash) {
+        registrationConfig = await getConfig();
+        redemptionRecord =
+          registrationConfig.UserConfig.RedemptionCodes?.find(
+            (item) => item.codeHash === redemptionHash
+          ) || null;
+        if (
+          !redemptionRecord ||
+          getRedemptionCodeState(redemptionRecord) !== 'active'
+        ) {
+          return NextResponse.json(
+            { error: '兑换码无效、已使用或已过期' },
+            { status: 400 }
+          );
+        }
+      }
+
       // 检查用户是否已存在（只检查V2存储）
       const userExists = await db.checkUserExistV2(username);
       if (userExists) {
@@ -176,6 +224,29 @@ export async function POST(req: NextRequest) {
 
         await db.createUserV2(username, password, 'user', defaultTags);
 
+        if (redemptionRecord && registrationConfig) {
+          const now = Date.now();
+          registrationConfig.UserConfig.AccessPolicies ||= {};
+          registrationConfig.UserConfig.AccessPolicies[username] =
+            createAccountPolicy(
+              redemptionRecord.plan,
+              'redemption',
+              now,
+              'active'
+            );
+          redemptionRecord.status = 'used';
+          redemptionRecord.usedAt = now;
+          redemptionRecord.usedBy = username;
+
+          try {
+            await db.saveAdminConfig(registrationConfig);
+            await setCachedConfig(registrationConfig);
+          } catch (saveError) {
+            await db.deleteUserV2(username).catch(() => undefined);
+            throw saveError;
+          }
+        }
+
         const telegramConfig = await getTelegramConfig();
         if (telegramConfig.enabled && telegramConfig.bindingEnabled && telegramConfig.botToken) {
           const bindSession = await createTelegramBindSession(username);
@@ -205,6 +276,9 @@ export async function POST(req: NextRequest) {
       }
     } finally {
       // 释放锁
+      if (releaseRedemptionLock) {
+        releaseRedemptionLock();
+      }
       if (releaseLock) {
         releaseLock();
       }
