@@ -6,6 +6,7 @@
 
 import { fetchDoubanData as fetchDoubanAPI } from '@/lib/douban';
 import { getNextApiKey } from '@/lib/tmdb.client';
+import { normalizeApiBaseUrl } from '@/lib/url';
 
 export interface VideoContext {
   title?: string;
@@ -54,9 +55,24 @@ export function analyzeIntent(
 
   // 时效性关键词 - 需要最新信息的问题
   const timeKeywords = [
-    '最新', '今年', '2024', '2025', '即将', '上映', '新出',
-    '什么时候', '何时', '几时', '播出', '更新', '下一季',
-    '第二季', '第三季', '续集', '下季', '下部'
+    '最新',
+    '今年',
+    '2024',
+    '2025',
+    '即将',
+    '上映',
+    '新出',
+    '什么时候',
+    '何时',
+    '几时',
+    '播出',
+    '更新',
+    '下一季',
+    '第二季',
+    '第三季',
+    '续集',
+    '下季',
+    '下部',
   ];
   const hasTimeKeyword = timeKeywords.some((k) => message.includes(k));
 
@@ -119,7 +135,9 @@ export function analyzeIntent(
 /**
  * 提取实体（简化版，基于关键词匹配）
  */
-function extractEntities(message: string): Array<{ type: string; value: string }> {
+function extractEntities(
+  message: string
+): Array<{ type: string; value: string }> {
   const entities: Array<{ type: string; value: string }> = [];
 
   // 简单的人名匹配（中文2-4字）
@@ -151,7 +169,12 @@ async function fetchWebSearch(
           api_key: apiKey,
           query,
           search_depth: 'basic',
-          include_domains: ['douban.com', 'imdb.com', 'themoviedb.org', 'mtime.com'],
+          include_domains: [
+            'douban.com',
+            'imdb.com',
+            'themoviedb.org',
+            'mtime.com',
+          ],
           max_results: 5,
         }),
       });
@@ -181,7 +204,9 @@ async function fetchWebSearch(
       return await response.json();
     } else if (provider === 'serpapi') {
       const response = await fetch(
-        `https://serpapi.com/search?engine=google&q=${encodeURIComponent(query)}&api_key=${apiKey}&num=5`
+        `https://serpapi.com/search?engine=google&q=${encodeURIComponent(
+          query
+        )}&api_key=${apiKey}&num=5`
       );
 
       if (!response.ok) {
@@ -217,15 +242,26 @@ async function fetchDoubanData(params: {
 
     // 2. 通过分类获取热门列表
     if (params.kind && params.category && params.type) {
-      const url = `https://m.douban.com/rexxar/api/v2/subject/recent_hot/${params.kind}?start=0&limit=20&category=${encodeURIComponent(params.category)}&type=${encodeURIComponent(params.type)}`;
-      console.log('📡 获取豆瓣分类:', params.kind, params.category, params.type);
+      const url = `https://m.douban.com/rexxar/api/v2/subject/recent_hot/${
+        params.kind
+      }?start=0&limit=20&category=${encodeURIComponent(
+        params.category
+      )}&type=${encodeURIComponent(params.type)}`;
+      console.log(
+        '📡 获取豆瓣分类:',
+        params.kind,
+        params.category,
+        params.type
+      );
       return await fetchDoubanAPI(url);
     }
 
     // 3. 通过搜索查询
     if (params.query) {
       const kind = params.kind || 'movie';
-      const url = `https://movie.douban.com/j/search_subjects?type=${kind}&tag=${encodeURIComponent(params.query)}&sort=recommend&page_limit=20&page_start=0`;
+      const url = `https://movie.douban.com/j/search_subjects?type=${kind}&tag=${encodeURIComponent(
+        params.query
+      )}&sort=recommend&page_limit=20&page_start=0`;
       console.log('📡 搜索豆瓣:', params.query, kind);
       return await fetchDoubanAPI(url);
     }
@@ -283,7 +319,11 @@ async function fetchTMDBData(
     const response = await fetch(url, fetchOptions);
 
     if (!response.ok) {
-      console.error('❌ TMDB API 请求失败:', response.status, response.statusText);
+      console.error(
+        '❌ TMDB API 请求失败:',
+        response.status,
+        response.statusText
+      );
       return null;
     }
 
@@ -339,7 +379,7 @@ function formatSearchResults(
     console.error('Format search results error:', error);
   }
 
-  return ''
+  return '';
 }
 
 /**
@@ -384,26 +424,42 @@ async function callDecisionModel(
   // 构建可用数据源列表
   const availableSources: string[] = [];
   if (availableDataSources.webSearch) {
-    availableSources.push('1. **联网搜索** - 获取最新的实时信息（新闻、上映时间、续集信息等）');
+    availableSources.push(
+      '1. **联网搜索** - 获取最新的实时信息（新闻、上映时间、续集信息等）'
+    );
   }
   if (availableDataSources.douban) {
-    availableSources.push('2. **豆瓣API** - 获取中文影视数据（评分、演员、简介、用户评论等）');
+    availableSources.push(
+      '2. **豆瓣API** - 获取中文影视数据（评分、演员、简介、用户评论等）'
+    );
   }
   if (availableDataSources.tmdb) {
-    availableSources.push('3. **TMDB API** - 获取国际影视数据（详细元数据、相似推荐等）');
+    availableSources.push(
+      '3. **TMDB API** - 获取国际影视数据（详细元数据、相似推荐等）'
+    );
   }
 
   const systemPrompt = `你是一个影视问答决策系统。请分析用户的问题，判断需要调用哪些数据源来回答。
 
 当前可用的数据源：
 ${availableSources.join('\n')}
-${availableSources.length === 0 ? '⚠️ 没有可用的数据源，请返回所有字段为false' : ''}
+${
+  availableSources.length === 0
+    ? '⚠️ 没有可用的数据源，请返回所有字段为false'
+    : ''
+}
 
 请以JSON格式返回决策结果，包含以下字段：
 {
-  "needWebSearch": boolean,  // 是否需要联网搜索${!availableDataSources.webSearch ? ' (当前不可用，必须返回false)' : ''}
-  "needDouban": boolean,     // 是否需要豆瓣数据${!availableDataSources.douban ? ' (当前不可用，必须返回false)' : ''}
-  "needTMDB": boolean,       // 是否需要TMDB数据${!availableDataSources.tmdb ? ' (当前不可用，必须返回false)' : ''}
+  "needWebSearch": boolean,  // 是否需要联网搜索${
+    !availableDataSources.webSearch ? ' (当前不可用，必须返回false)' : ''
+  }
+  "needDouban": boolean,     // 是否需要豆瓣数据${
+    !availableDataSources.douban ? ' (当前不可用，必须返回false)' : ''
+  }
+  "needTMDB": boolean,       // 是否需要TMDB数据${
+    !availableDataSources.tmdb ? ' (当前不可用，必须返回false)' : ''
+  }
   "webSearchQuery": string,  // 如果需要联网，用什么关键词搜索（可选）
   "doubanQuery": string,     // 如果需要豆瓣，用什么关键词搜索（可选）
   "reasoning": string        // 简要说明决策理由
@@ -412,12 +468,16 @@ ${availableSources.length === 0 ? '⚠️ 没有可用的数据源，请返回�
 决策原则：
 - **只能选择当前可用的数据源，不可用的数据源必须返回false**
 - **优先使用最少的数据源来满足需求，避免不必要的API调用**
-- 时效性问题（最新、上映时间、续集、播出、更新等）→ 需要联网搜索${!availableDataSources.webSearch ? '（但当前不可用）' : ''}
+- 时效性问题（最新、上映时间、续集、播出、更新等）→ 需要联网搜索${
+    !availableDataSources.webSearch ? '（但当前不可用）' : ''
+  }
 - 演员/导演相关问题 → 优先豆瓣，如果问"最近作品"则额外联网
 - 推荐类问题 → 仅豆瓣（如果包含"最新""今年"等时效性关键词则额外联网）
 - 剧情、评分等静态信息 → 仅豆瓣或TMDB，不需要联网
 - 当前视频的详细信息（有视频上下文） → 豆瓣+TMDB，通常不需要联网
-- 新闻、热点、讨论等 → 需要联网搜索${!availableDataSources.webSearch ? '（但当前不可用）' : ''}
+- 新闻、热点、讨论等 → 需要联网搜索${
+    !availableDataSources.webSearch ? '（但当前不可用）' : ''
+  }
 
 只返回JSON，不要其他内容。`;
 
@@ -425,8 +485,12 @@ ${availableSources.length === 0 ? '⚠️ 没有可用的数据源，请返回�
   if (context?.title) {
     contextInfo = `\n\n当前视频上下文：\n- 标题：${context.title}`;
     if (context.year) contextInfo += `\n- 年份：${context.year}`;
-    if (context.type) contextInfo += `\n- 类型：${context.type === 'movie' ? '电影' : '电视剧'}`;
-    if (context.currentEpisode) contextInfo += `\n- 当前集数：第${context.currentEpisode}集`;
+    if (context.type)
+      contextInfo += `\n- 类型：${
+        context.type === 'movie' ? '电影' : '电视剧'
+      }`;
+    if (context.currentEpisode)
+      contextInfo += `\n- 当前集数：第${context.currentEpisode}集`;
   }
 
   const userPrompt = `用户问题：${userMessage}${contextInfo}`;
@@ -468,7 +532,9 @@ ${availableSources.length === 0 ? '⚠️ 没有可用的数据源，请返回�
       }
     } else {
       // OpenAI 或 自定义 (OpenAI兼容格式)
-      const baseURL = config.baseURL || 'https://api.openai.com/v1';
+      const baseURL = normalizeApiBaseUrl(
+        config.baseURL || 'https://api.openai.com/v1'
+      );
       response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -537,19 +603,24 @@ export async function orchestrateDataSources(
 
   // 1. 使用决策模型或传统意图分析
   let decision: DecisionResult | null = null;
-  if (config?.enableDecisionModel && config.decisionProvider && config.decisionApiKey && config.decisionModel) {
+  if (
+    config?.enableDecisionModel &&
+    config.decisionProvider &&
+    config.decisionApiKey &&
+    config.decisionModel
+  ) {
     console.log('🤖 使用决策模型分析...');
 
     // 确定哪些数据源是可用的
-    const hasWebSearchProvider = !!(config.enableWebSearch &&
+    const hasWebSearchProvider = !!(
+      config.enableWebSearch &&
       config.webSearchProvider &&
-      (
-        (config.webSearchProvider === 'tavily' && config.tavilyApiKey) ||
+      ((config.webSearchProvider === 'tavily' && config.tavilyApiKey) ||
         (config.webSearchProvider === 'serper' && config.serperApiKey) ||
-        (config.webSearchProvider === 'serpapi' && config.serpApiKey)
-      ));
+        (config.webSearchProvider === 'serpapi' && config.serpApiKey))
+    );
 
-    const hasTMDB = !!(config.tmdbApiKey);
+    const hasTMDB = false;
 
     decision = await callDecisionModel(
       userMessage,
@@ -582,8 +653,12 @@ export async function orchestrateDataSources(
     // 将决策结果转换为 IntentAnalysisResult 格式
     // 保留决策模型的查询优化
     intent = {
-      type: decision.needDouban && !decision.needWebSearch ? 'detail' :
-            decision.needWebSearch ? 'query' : 'general',
+      type:
+        decision.needDouban && !decision.needWebSearch
+          ? 'detail'
+          : decision.needWebSearch
+          ? 'query'
+          : 'general',
       needWebSearch: decision.needWebSearch,
       needDouban: decision.needDouban,
       needTMDB: decision.needTMDB,
@@ -595,6 +670,9 @@ export async function orchestrateDataSources(
     (intent as any).optimizedWebSearchQuery = decision.webSearchQuery;
     (intent as any).optimizedDoubanQuery = decision.doubanQuery;
   }
+
+  // P002 不部署 TMDB 运行时：AI 只能使用豆瓣与管理员配置的联网搜索。
+  intent.needTMDB = false;
 
   // 2. 并行获取所需的数据源
   const dataPromises: Promise<any>[] = [];
@@ -614,12 +692,13 @@ export async function orchestrateDataSources(
       provider === 'tavily'
         ? config.tavilyApiKey
         : provider === 'serper'
-          ? config.serperApiKey
-          : config.serpApiKey;
+        ? config.serperApiKey
+        : config.serpApiKey;
 
     if (apiKey) {
       // 使用决策模型优化的查询，如果没有则使用原始消息
-      const searchQuery = (intent as any).optimizedWebSearchQuery || userMessage;
+      const searchQuery =
+        (intent as any).optimizedWebSearchQuery || userMessage;
       webSearchPromise = fetchWebSearch(searchQuery, provider, apiKey);
       dataPromises.push(webSearchPromise);
     }
@@ -733,7 +812,9 @@ ${today}
     systemPrompt += `\n## 【豆瓣数据】（权威中文评分和信息）\n`;
     if (doubanData.list) {
       // 列表数据
-      systemPrompt += `推荐列表（${doubanData.list.length}部）:\n${JSON.stringify(
+      systemPrompt += `推荐列表（${
+        doubanData.list.length
+      }部）:\n${JSON.stringify(
         doubanData.list.slice(0, 10).map((item: any) => ({
           title: item.title,
           rating: item.rating,

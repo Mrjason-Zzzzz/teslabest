@@ -4,13 +4,12 @@ import {
   Cloud,
   ExternalLink,
   Heart,
-  Info,
   Link,
+  ListPlus,
   PlayCircleIcon,
   Radio,
   Sparkles,
   Trash2,
-  Youtube,
 } from 'lucide-react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -21,10 +20,12 @@ import React, {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 
+import { isAnimeCategoryText } from '@/lib/anime-keyword-expr';
+import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
+import { getBangumiSubjectUrl } from '@/lib/bangumi.client';
 import {
   deleteFavorite,
   deletePlayRecord,
@@ -33,7 +34,6 @@ import {
   saveFavorite,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { getBangumiSubjectUrl } from '@/lib/bangumi.client';
 import { isNetdiskSource } from '@/lib/netdisk/source';
 import {
   base58Decode,
@@ -48,12 +48,10 @@ import {
 import { useLongPress } from '@/hooks/useLongPress';
 
 import AIChatPanel from '@/components/AIChatPanel';
-import DetailPanel from '@/components/DetailPanel';
+import AnimeSubscribeModal from '@/components/AnimeSubscribeModal';
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
 import ImageViewer from '@/components/ImageViewer';
 import MobileActionSheet from '@/components/MobileActionSheet';
-import TrailerPickerDialog from '@/components/TrailerPickerDialog';
-import type { TMDBVideoItem } from '@/lib/tmdb.client';
 
 export interface VideoCardProps {
   id?: string;
@@ -80,6 +78,10 @@ export interface VideoCardProps {
   rate?: string;
   type?: string;
   isBangumi?: boolean;
+  /** 明确标记为动漫（豆瓣动漫页 / CMS 等） */
+  isAnime?: boolean;
+  /** CMS 分类名，用于启发式识别动漫 */
+  typeName?: string;
   isAggregate?: boolean;
   origin?: 'vod' | 'live';
   releaseDate?: string; // 上映日期，格式：YYYY-MM-DD
@@ -125,6 +127,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       rate,
       type = '',
       isBangumi = false,
+      isAnime = false,
+      typeName,
       isAggregate = false,
       origin = 'vod',
       releaseDate,
@@ -141,6 +145,16 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
     ref
   ) {
     const router = useRouter();
+    const [showAnimeSubscribe, setShowAnimeSubscribe] = useState(false);
+    const [animeSubscribeToast, setAnimeSubscribeToast] = useState('');
+    const isAdminUser = useMemo(() => {
+      const auth = getAuthInfoFromBrowserCookie();
+      return auth?.role === 'admin' || auth?.role === 'owner';
+    }, []);
+    const resolvedIsAnime = useMemo(
+      () => Boolean(isBangumi || isAnime || isAnimeCategoryText(typeName)),
+      [isBangumi, isAnime, typeName]
+    );
     const actualTitle = title;
     const actualPoster = poster;
     const netdiskPosterPlaceholder = useMemo(() => {
@@ -173,13 +187,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
     const [aiEnabled, setAiEnabled] = useState(false);
     const [aiDefaultMessageWithVideo, setAiDefaultMessageWithVideo] =
       useState('');
-    const [showDetailPanel, setShowDetailPanel] = useState(false);
     const [showImageViewer, setShowImageViewer] = useState(false);
     const [showUpcomingInfo, setShowUpcomingInfo] = useState(false); // 控制即将上映倒计时的显示
-    const [showTrailerPicker, setShowTrailerPicker] = useState(false);
-    const [trailerLoading, setTrailerLoading] = useState(false);
-    const [trailerError, setTrailerError] = useState<string | null>(null);
-    const [trailerVideos, setTrailerVideos] = useState<TMDBVideoItem[]>([]);
     const [displayPoster, setDisplayPoster] = useState(processedPoster);
 
     // 检查AI功能是否启用
@@ -430,7 +439,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
           isAggregate ? '&prefer=true' : ''
         }${
           actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${isDuanju ? '&duanju=1' : ''}`;
+        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${
+          isDuanju ? '&duanju=1' : ''
+        }`;
 
         if (isCurrentlyOnPlayPage) {
           // 在 play 页面内，添加 _reload 参数强制刷新
@@ -493,7 +504,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
           isAggregate ? '&prefer=true' : ''
         }${
           actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${isDuanju ? '&duanju=1' : ''}`;
+        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${
+          isDuanju ? '&duanju=1' : ''
+        }`;
         window.open(url, '_blank');
       }
     }, [
@@ -663,36 +676,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       return '已上映';
     }, [isUpcoming, daysUntilRelease]);
 
-
-    const openTrailerPicker = useCallback(async () => {
-      if (!actualTitle) return;
-      setShowMobileActions(false);
-      setTrailerError(null);
-      setTrailerLoading(true);
-      setShowTrailerPicker(true);
-
-      try {
-        const params = new URLSearchParams();
-        if (tmdb_id) params.set('id', String(tmdb_id));
-        if (actualSearchType) params.set('type', actualSearchType);
-        if (actualTitle) params.set('title', actualTitle);
-        if (actualYear) params.set('year', actualYear);
-
-        const res = await fetch(`/api/tmdb/videos?${params.toString()}`);
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || '获取预告片失败');
-        }
-
-        setTrailerVideos(data.videos || []);
-      } catch (err) {
-        setTrailerVideos([]);
-        setTrailerError(err instanceof Error ? err.message : '获取预告片失败');
-      } finally {
-        setTrailerLoading(false);
-      }
-    }, [actualSearchType, actualTitle, actualYear, tmdb_id]);
-
     // 移动端操作菜单配置
     const mobileActions = useMemo(() => {
       const actions = [];
@@ -825,34 +808,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
         });
       }
 
-      // 预告片操作：仅即将上映卡片显示
-      if (origin !== 'live' && isUpcoming && actualTitle) {
-        actions.push({
-          id: 'trailer',
-          label: '预告片',
-          icon: <Youtube size={20} />,
-          onClick: openTrailerPicker,
-          color: 'default' as const,
-        });
-      }
-
-      // 详情页面按钮（直播源不显示详情）
-      if (origin !== 'live') {
-        actions.push({
-          id: 'detail',
-          label: '详情',
-          icon: <Info size={20} />,
-          onClick: () => {
-            setShowMobileActions(false);
-            // 延迟打开 DetailPanel，确保 MobileActionSheet 完全清理完成
-            setTimeout(() => {
-              setShowDetailPanel(true);
-            }, 250);
-          },
-          color: 'default' as const,
-        });
-      }
-
       // AI问片功能
       if (aiEnabled && actualTitle) {
         actions.push({
@@ -867,6 +822,22 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
             }, 250);
           },
           color: 'default' as const,
+        });
+      }
+
+      // 添加追番订阅（仅管理员 + 判定为动漫）
+      if (isAdminUser && resolvedIsAnime && origin !== 'live' && actualTitle) {
+        actions.push({
+          id: 'anime-subscribe',
+          label: '添加追番订阅',
+          icon: <ListPlus size={20} />,
+          onClick: () => {
+            setShowMobileActions(false);
+            setTimeout(() => {
+              setShowAnimeSubscribe(true);
+            }, 250);
+          },
+          color: 'primary' as const,
         });
       }
 
@@ -892,7 +863,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       isUpcoming,
       origin,
       tmdb_id,
-      openTrailerPicker,
+      isAdminUser,
+      resolvedIsAnime,
     ]);
 
     return (
@@ -942,9 +914,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
             return false;
           }}
         >
-          {/* 海报容器 */}
+          {/* 海报容器：不在外层 overflow-hidden，避免裁切来源数量浮层 */}
           <div
-            className={`relative overflow-hidden rounded-lg ${
+            className={`relative rounded-lg ${
               origin === 'live'
                 ? 'ring-1 ring-gray-300/80 dark:ring-gray-600/80'
                 : ''
@@ -963,119 +935,119 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
               return false;
             }}
           >
-            {/* 骨架屏 */}
-            {!isLoading && !isDirectPlaySource && (
-              <ImagePlaceholder
-                aspectRatio={
-                  orientation === 'horizontal' ? 'aspect-[3/2]' : 'aspect-[2/3]'
-                }
-              />
-            )}
-            {isDirectPlaySource ? (
-              <div className='absolute inset-0 flex items-center justify-center bg-gray-200/80 dark:bg-gray-700/80'>
-                <Link className='w-8 h-8 text-blue-500' />
-              </div>
-            ) : isNetdiskSource(actualSource) &&
-              !actualPoster &&
-              displayPoster === netdiskPosterPlaceholder ? (
-              <div className='absolute inset-0 flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'>
-                <Cloud className='w-10 h-10 opacity-80' />
-              </div>
-            ) : (
-              <Image
-                src={displayPoster}
-                alt={actualTitle}
-                fill
-                className={
-                  origin === 'live'
-                    ? 'object-contain'
-                    : orientation === 'horizontal'
-                    ? 'object-cover object-center'
-                    : 'object-cover'
-                }
-                referrerPolicy='no-referrer'
-                loading='lazy'
-                onLoadingComplete={() => {
-                  setIsLoading(true);
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowImageViewer(true);
-                }}
-                onError={(e) => {
-                  const img = e.currentTarget as HTMLImageElement;
-                  const doubanFallbackPoster =
-                    getDoubanImageFallbackUrl(actualPoster);
-                  if (
-                    doubanFallbackPoster &&
-                    tryApplyDoubanImageFallback(img, actualPoster)
-                  ) {
-                    setDisplayPoster(doubanFallbackPoster);
-                    return;
+            {/* 仅图片层做圆角裁剪 */}
+            <div className='absolute inset-0 overflow-hidden rounded-lg'>
+              {/* 骨架屏 */}
+              {!isLoading && !isDirectPlaySource && (
+                <ImagePlaceholder
+                  aspectRatio={
+                    orientation === 'horizontal'
+                      ? 'aspect-[3/2]'
+                      : 'aspect-[2/3]'
                   }
-
-                  const bangumiFallbackPoster =
-                    getBangumiImageFallbackUrl(actualPoster);
-                  if (
-                    bangumiFallbackPoster &&
-                    tryApplyBangumiImageFallback(img, actualPoster)
-                  ) {
-                    setDisplayPoster(bangumiFallbackPoster);
-                    return;
+                />
+              )}
+              {isDirectPlaySource ? (
+                <div className='absolute inset-0 flex items-center justify-center bg-gray-200/80 dark:bg-gray-700/80'>
+                  <Link className='w-8 h-8 text-blue-500' />
+                </div>
+              ) : isNetdiskSource(actualSource) &&
+                !actualPoster &&
+                displayPoster === netdiskPosterPlaceholder ? (
+                <div className='absolute inset-0 flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'>
+                  <Cloud className='w-10 h-10 opacity-80' />
+                </div>
+              ) : (
+                <Image
+                  src={displayPoster}
+                  alt={actualTitle}
+                  fill
+                  className={
+                    origin === 'live'
+                      ? 'object-contain'
+                      : orientation === 'horizontal'
+                      ? 'object-cover object-center'
+                      : 'object-cover'
                   }
+                  referrerPolicy='no-referrer'
+                  loading='lazy'
+                  onLoadingComplete={() => {
+                    setIsLoading(true);
+                  }}
+                  onError={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    const doubanFallbackPoster =
+                      getDoubanImageFallbackUrl(actualPoster);
+                    if (
+                      doubanFallbackPoster &&
+                      tryApplyDoubanImageFallback(img, actualPoster)
+                    ) {
+                      setDisplayPoster(doubanFallbackPoster);
+                      return;
+                    }
 
-                  if (
-                    clearBangumiImageFallbackCacheIfFailed(img, actualPoster)
-                  ) {
-                    setDisplayPoster(processedPoster);
-                    return;
-                  }
+                    const bangumiFallbackPoster =
+                      getBangumiImageFallbackUrl(actualPoster);
+                    if (
+                      bangumiFallbackPoster &&
+                      tryApplyBangumiImageFallback(img, actualPoster)
+                    ) {
+                      setDisplayPoster(bangumiFallbackPoster);
+                      return;
+                    }
 
-                  // 图片加载失败时的重试机制
-                  if (!img.dataset.retried) {
-                    img.dataset.retried = 'true';
-                    setTimeout(() => {
+                    if (
+                      clearBangumiImageFallbackCacheIfFailed(img, actualPoster)
+                    ) {
                       setDisplayPoster(processedPoster);
-                      img.src = processedPoster;
-                    }, 2000);
+                      return;
+                    }
+
+                    // 图片加载失败时的重试机制
+                    if (!img.dataset.retried) {
+                      img.dataset.retried = 'true';
+                      setTimeout(() => {
+                        setDisplayPoster(processedPoster);
+                        img.src = processedPoster;
+                      }, 2000);
+                    }
+                  }}
+                  style={
+                    {
+                      // 禁用图片的默认长按效果
+                      WebkitUserSelect: 'none',
+                      userSelect: 'none',
+                      WebkitTouchCallout: 'none',
+                      pointerEvents: 'none', // 海报点击交给卡片外层处理，确保点击播放
+                    } as React.CSSProperties
                   }
-                }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    return false;
+                  }}
+                  onDragStart={(e) => {
+                    e.preventDefault();
+                    return false;
+                  }}
+                />
+              )}
+
+              {/* 悬浮遮罩 */}
+              <div
+                className='absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent transition-opacity duration-300 ease-in-out opacity-0 group-hover:opacity-100'
                 style={
                   {
-                    // 禁用图片的默认长按效果
                     WebkitUserSelect: 'none',
                     userSelect: 'none',
                     WebkitTouchCallout: 'none',
-                    pointerEvents: 'auto', // 改为auto以响应点击事件
-                    cursor: 'pointer', // 添加指针样式
                   } as React.CSSProperties
                 }
                 onContextMenu={(e) => {
                   e.preventDefault();
                   return false;
                 }}
-                onDragStart={(e) => {
-                  e.preventDefault();
-                  return false;
-                }}
               />
-            )}
-
-            {/* 悬浮遮罩 */}
-            <div
-              className='absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent transition-opacity duration-300 ease-in-out opacity-0 group-hover:opacity-100'
-              style={
-                {
-                  WebkitUserSelect: 'none',
-                  userSelect: 'none',
-                  WebkitTouchCallout: 'none',
-                } as React.CSSProperties
-              }
-              onContextMenu={(e) => {
-                e.preventDefault();
-                return false;
-              }}
-            />
+            </div>
 
             {/* 播放按钮或上映倒计时 */}
             {isUpcoming && daysUntilRelease !== null ? (
@@ -1113,8 +1085,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
             ) : (
               config.showPlayButton && (
                 <div
-                  data-button='true'
-                  className='absolute inset-0 flex items-center justify-center opacity-0 transition-all duration-300 ease-in-out delay-75 group-hover:opacity-100 group-hover:scale-100'
+                  className='pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-all duration-300 ease-in-out delay-75 group-hover:opacity-100 group-hover:scale-100'
                   style={
                     {
                       WebkitUserSelect: 'none',
@@ -1467,7 +1438,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
 
                 return (
                   <div
-                    className={`absolute bottom-1 right-1 sm:bottom-2 sm:right-2 transition-all duration-300 ease-in-out delay-75 ${
+                    data-button='true'
+                    className={`absolute bottom-1 right-1 z-[55] sm:bottom-2 sm:right-2 transition-all duration-300 ease-in-out delay-75 ${
                       from === 'search'
                         ? 'opacity-100'
                         : 'opacity-0 sm:group-hover:opacity-100'
@@ -1479,9 +1451,32 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                         WebkitTouchCallout: 'none',
                       } as React.CSSProperties
                     }
+                    // 阻止冒泡到卡片：避免长按/右键同时弹出操作菜单
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      return false;
+                      e.stopPropagation();
+                    }}
+                    onTouchStart={(e) => {
+                      e.stopPropagation();
+                    }}
+                    onTouchMove={(e) => {
+                      e.stopPropagation();
+                    }}
+                    onTouchEnd={(e) => {
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => {
+                      // 右键/中键按下时也不要触发卡片手势
+                      if (e.button !== 0) {
+                        e.stopPropagation();
+                      }
+                    }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
                     }}
                   >
                     <div
@@ -1503,10 +1498,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                             WebkitTouchCallout: 'none',
                           } as React.CSSProperties
                         }
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          return false;
-                        }}
                       >
                         {sourceCount}
                       </div>
@@ -1546,7 +1537,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
 
                         return (
                           <div
-                            className='absolute bottom-full mb-2 opacity-0 invisible group-hover/sources:opacity-100 group-hover/sources:visible transition-all duration-200 ease-out delay-100 pointer-events-none z-50 right-0 sm:right-0 -translate-x-0 sm:translate-x-0'
+                            className='absolute bottom-full right-0 z-[60] mb-2 -translate-x-0 opacity-0 invisible pointer-events-none transition-all duration-200 ease-out delay-100 group-hover/sources:opacity-100 group-hover/sources:visible sm:right-0 sm:translate-x-0'
                             style={
                               {
                                 WebkitUserSelect: 'none',
@@ -1560,7 +1551,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                             }}
                           >
                             <div
-                              className='bg-gray-800/90 backdrop-blur-sm text-white text-xs sm:text-xs rounded-lg shadow-xl border border-white/10 p-1.5 sm:p-2 min-w-[100px] sm:min-w-[120px] max-w-[140px] sm:max-w-[200px] overflow-hidden'
+                              className='relative rounded-lg border border-white/10 bg-gray-800/95 p-1.5 text-xs text-white shadow-xl backdrop-blur-sm sm:p-2 sm:text-xs min-w-[100px] max-w-[140px] sm:min-w-[120px] sm:max-w-[200px]'
                               style={
                                 {
                                   WebkitUserSelect: 'none',
@@ -1580,9 +1571,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
                                     key={index}
                                     className='flex items-center gap-1 sm:gap-1.5'
                                   >
-                                    <div className='w-0.5 h-0.5 sm:w-1 sm:h-1 bg-blue-400 rounded-full flex-shrink-0'></div>
+                                    <div className='h-0.5 w-0.5 flex-shrink-0 rounded-full bg-blue-400 sm:h-1 sm:w-1'></div>
                                     <span
-                                      className='truncate text-[10px] sm:text-xs leading-tight'
+                                      className='truncate text-[10px] leading-tight sm:text-xs'
                                       title={sourceName}
                                     >
                                       {sourceName}
@@ -1593,17 +1584,17 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
 
                               {/* 显示更多提示 */}
                               {hasMore && (
-                                <div className='mt-1 sm:mt-2 pt-1 sm:pt-1.5 border-t border-gray-700/50'>
+                                <div className='mt-1 border-t border-gray-700/50 pt-1 sm:mt-2 sm:pt-1.5'>
                                   <div className='flex items-center justify-center text-gray-400'>
-                                    <span className='text-[10px] sm:text-xs font-medium'>
+                                    <span className='text-[10px] font-medium sm:text-xs'>
                                       +{remainingCount} 播放源
                                     </span>
                                   </div>
                                 </div>
                               )}
 
-                              {/* 小箭头 */}
-                              <div className='absolute top-full right-2 sm:right-3 w-0 h-0 border-l-[4px] border-r-[4px] border-t-[4px] sm:border-l-[6px] sm:border-r-[6px] sm:border-t-[6px] border-transparent border-t-gray-800/90'></div>
+                              {/* 小箭头：放在内容盒外侧，避免被裁切 */}
+                              <div className='absolute top-full right-2 h-0 w-0 border-l-[4px] border-r-[4px] border-t-[4px] border-transparent border-t-gray-800/95 sm:right-3 sm:border-l-[6px] sm:border-r-[6px] sm:border-t-[6px]'></div>
                             </div>
                           </div>
                         );
@@ -2005,25 +1996,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
           }}
         />
 
-
-        <TrailerPickerDialog
-          isOpen={showTrailerPicker}
-          title={actualTitle}
-          loading={trailerLoading}
-          error={trailerError}
-          videos={trailerVideos}
-          onClose={() => setShowTrailerPicker(false)}
-          onRetry={openTrailerPicker}
-          onSelect={(video) => {
-            window.open(
-              `https://www.youtube.com/watch?v=${video.key}`,
-              '_blank',
-              'noopener,noreferrer'
-            );
-            setShowTrailerPicker(false);
-          }}
-        />
-
         {/* AI问片面板 - 只在打开或正在流式响应时渲染 */}
         {aiEnabled && (showAIChat || isAIStreaming) && (
           <AIChatPanel
@@ -2049,25 +2021,24 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
           />
         )}
 
-        {/* 详情面板 */}
-        {showDetailPanel && (
-          <DetailPanel
-            isOpen={showDetailPanel}
-            onClose={() => setShowDetailPanel(false)}
-            title={actualTitle}
-            poster={displayPoster}
-            doubanId={actualDoubanId}
-            bangumiId={isBangumi ? actualDoubanId : undefined}
-            isBangumi={isBangumi}
-            tmdbId={tmdb_id}
-            type={actualSearchType as 'movie' | 'tv'}
-            seasonNumber={seasonNumber}
-            currentEpisode={currentEpisode}
-            cmsData={cmsData}
-            sourceId={id}
-            source={source}
-          />
-        )}
+        {/* 添加追番订阅（管理员） */}
+        <AnimeSubscribeModal
+          isOpen={showAnimeSubscribe}
+          onClose={() => setShowAnimeSubscribe(false)}
+          initialTitle={actualTitle}
+          initialLastEpisode={
+            from === 'playrecord' && currentEpisode ? currentEpisode : 0
+          }
+          onSuccess={() => {
+            setAnimeSubscribeToast('已添加追番订阅');
+            window.setTimeout(() => setAnimeSubscribeToast(''), 2500);
+          }}
+        />
+        {animeSubscribeToast ? (
+          <div className='fixed bottom-24 left-1/2 z-[10001] -translate-x-1/2 rounded-full bg-green-600 px-4 py-2 text-sm text-white shadow-lg'>
+            {animeSubscribeToast}
+          </div>
+        ) : null}
 
         {/* 图片查看器 */}
         {showImageViewer && (

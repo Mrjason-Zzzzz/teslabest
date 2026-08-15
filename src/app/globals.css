@@ -25,7 +25,7 @@
   width: 100px;
   height: 100%;
   box-shadow: 0 0 10px rgba(59, 130, 246, 0.8), 0 0 5px rgba(59, 130, 246, 0.6);
-  opacity: 1.0;
+  opacity: 1;
   transform: rotate(3deg) translate(0px, -4px);
 }
 
@@ -218,7 +218,8 @@ div[data-media-provider] video {
     transform: scale(1);
     opacity: 0.6;
   }
-  75%, 100% {
+  75%,
+  100% {
     transform: scale(2);
     opacity: 0;
   }
@@ -226,7 +227,8 @@ div[data-media-provider] video {
 
 /* 水波纹缩放动画 - 第二层 (慢速脉冲) */
 @keyframes pulse-scale {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     opacity: 0.4;
   }
@@ -238,7 +240,8 @@ div[data-media-provider] video {
 
 /* 主体徽章缩放动画 */
 @keyframes badge-scale {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
   }
   50% {
@@ -247,7 +250,8 @@ div[data-media-provider] video {
 }
 
 @keyframes reader-book-flip {
-  0%, 100% {
+  0%,
+  100% {
     transform: perspective(120px) rotateY(0deg) translateY(0);
   }
   30% {
@@ -271,7 +275,6 @@ div[data-media-provider] video {
   color: #38bdf8;
 }
 
-
 /* TV 端遥控器焦点：深色选中 + 放大，而不是细边框 */
 .tv-focusable {
   position: relative;
@@ -281,12 +284,8 @@ div[data-media-provider] video {
   scroll-margin-right: 48px;
   transform-origin: center;
   scale: 1;
-  transition:
-    scale 180ms ease,
-    background-color 180ms ease,
-    color 180ms ease,
-    box-shadow 180ms ease,
-    opacity 180ms ease;
+  transition: scale 180ms ease, background-color 180ms ease, color 180ms ease,
+    box-shadow 180ms ease, opacity 180ms ease;
 }
 
 .tv-focusable:focus,
@@ -296,9 +295,7 @@ div[data-media-provider] video {
   scale: 1.055;
   background-color: rgba(15, 23, 42, 0.96) !important;
   color: #ffffff !important;
-  box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.68),
-    0 0 26px rgba(225, 29, 72, 0.38) !important;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.68), 0 0 26px rgba(225, 29, 72, 0.38) !important;
   z-index: 30;
 }
 
@@ -317,7 +314,11 @@ div[data-media-provider] video {
   position: absolute;
   inset: -3px;
   border-radius: inherit;
-  background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(225,29,72,0.28));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22),
+    rgba(225, 29, 72, 0.28)
+  );
   opacity: 0.45;
   pointer-events: none;
 }
@@ -333,4 +334,26 @@ div[data-media-provider] video {
   .tv-focused {
     transition: none;
   }
+}
+
+@keyframes tesla-danmaku-scroll {
+  from {
+    transform: translate3d(100vw, 0, 0);
+  }
+  to {
+    transform: translate3d(-110%, 0, 0);
+  }
+}
+
+.tesla-danmaku-comment {
+  left: 0;
+  max-width: 72vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: clamp(14px, 1.45vw, 24px);
+  line-height: 1.2;
+  text-shadow: -1px -1px 1px rgba(0, 0, 0, 0.9), 1px -1px 1px rgba(0, 0, 0, 0.9),
+    -1px 1px 1px rgba(0, 0, 0, 0.9), 1px 1px 1px rgba(0, 0, 0, 0.9);
+  will-change: transform;
+  animation: tesla-danmaku-scroll 9s linear forwards;
 }

@@ -7,12 +7,15 @@ import { getNextApiKey } from './tmdb.client';
 
 // TMDB API 默认 Base URL（不包含 /3/，由程序拼接）
 const DEFAULT_TMDB_BASE_URL = 'https://api.themoviedb.org';
+const TMDB_RUNTIME_ENABLED = false;
 
 /**
  * 检测是否在 Cloudflare 环境中运行
  */
 function isCloudflareEnvironment(): boolean {
-  return process.env.CF_PAGES === '1' || process.env.BUILD_TARGET === 'cloudflare';
+  return (
+    process.env.CF_PAGES === '1' || process.env.BUILD_TARGET === 'cloudflare'
+  );
 }
 
 /**
@@ -74,6 +77,10 @@ export async function searchTMDB(
   year?: number,
   reverseProxyBaseUrl?: string
 ): Promise<{ code: number; result: TMDBSearchResult | null }> {
+  if (!TMDB_RUNTIME_ENABLED) {
+    return { code: 410, result: null };
+  }
+
   try {
     const actualKey = getNextApiKey(apiKey);
     if (!actualKey) {
@@ -82,7 +89,9 @@ export async function searchTMDB(
 
     const baseUrl = reverseProxyBaseUrl || DEFAULT_TMDB_BASE_URL;
     // 使用 multi search 同时搜索电影和电视剧
-    let url = `${baseUrl}/3/search/multi?api_key=${actualKey}&language=zh-CN&query=${encodeURIComponent(query)}&page=1`;
+    let url = `${baseUrl}/3/search/multi?api_key=${actualKey}&language=zh-CN&query=${encodeURIComponent(
+      query
+    )}&page=1`;
 
     // 如果提供了年份，添加到搜索参数中
     if (year) {
@@ -97,7 +106,8 @@ export async function searchTMDB(
       return { code: response.status, result: null };
     }
 
-    const data: TMDBSearchResponse = await response.json() as TMDBSearchResponse;
+    const data: TMDBSearchResponse =
+      (await response.json()) as TMDBSearchResponse;
 
     // 过滤出电影和电视剧，取第一个结果
     const validResults = data.results.filter(
@@ -154,6 +164,10 @@ export async function getTVSeasons(
   proxy?: string,
   reverseProxyBaseUrl?: string
 ): Promise<{ code: number; seasons: TMDBSeasonInfo[] | null }> {
+  if (!TMDB_RUNTIME_ENABLED) {
+    return { code: 410, seasons: null };
+  }
+
   try {
     const actualKey = getNextApiKey(apiKey);
     if (!actualKey) {
@@ -166,14 +180,20 @@ export async function getTVSeasons(
     const response = await universalFetch(url, proxy);
 
     if (!response.ok) {
-      console.error('TMDB 获取电视剧详情失败:', response.status, response.statusText);
+      console.error(
+        'TMDB 获取电视剧详情失败:',
+        response.status,
+        response.statusText
+      );
       return { code: response.status, seasons: null };
     }
 
-    const data: TMDBTVDetails = await response.json() as TMDBTVDetails;
+    const data: TMDBTVDetails = (await response.json()) as TMDBTVDetails;
 
     // 过滤掉特殊季度（如 Season 0 通常是特别篇）
-    const validSeasons = data.seasons.filter((season) => season.season_number > 0);
+    const validSeasons = data.seasons.filter(
+      (season) => season.season_number > 0
+    );
 
     return {
       code: 200,
@@ -195,6 +215,10 @@ export async function getTVSeasonDetails(
   proxy?: string,
   reverseProxyBaseUrl?: string
 ): Promise<{ code: number; season: TMDBSeasonInfo | null }> {
+  if (!TMDB_RUNTIME_ENABLED) {
+    return { code: 410, season: null };
+  }
+
   try {
     const actualKey = getNextApiKey(apiKey);
     if (!actualKey) {
@@ -207,11 +231,15 @@ export async function getTVSeasonDetails(
     const response = await universalFetch(url, proxy);
 
     if (!response.ok) {
-      console.error('TMDB 获取季度详情失败:', response.status, response.statusText);
+      console.error(
+        'TMDB 获取季度详情失败:',
+        response.status,
+        response.statusText
+      );
       return { code: response.status, season: null };
     }
 
-    const data: TMDBSeasonInfo = await response.json() as TMDBSeasonInfo;
+    const data: TMDBSeasonInfo = (await response.json()) as TMDBSeasonInfo;
 
     return {
       code: 200,
@@ -226,19 +254,17 @@ export async function getTVSeasonDetails(
 /**
  * 获取 TMDB 图片完整 URL
  */
-export function getTMDBImageUrl(
-  path: string | null,
-  size = 'w500'
-): string {
-  if (!path) return '';
+export function getTMDBImageUrl(path: string | null, size = 'w500'): string {
+  if (!TMDB_RUNTIME_ENABLED || !path) return '';
 
   // 如果已经是完整的 URL (http:// 或 https://),直接返回
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
 
-  const baseUrl = typeof window !== 'undefined'
-    ? localStorage.getItem('tmdbImageBaseUrl') || 'https://image.tmdb.org'
-    : 'https://image.tmdb.org';
+  const baseUrl =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('tmdbImageBaseUrl') || 'https://image.tmdb.org'
+      : 'https://image.tmdb.org';
   return `${baseUrl}/t/p/${size}${path}`;
 }

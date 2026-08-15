@@ -75,7 +75,9 @@ export async function POST(request: NextRequest) {
       for (const url of urls) {
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
           return NextResponse.json(
-            { error: `登录界面背景图URL格式错误：${url}，每个URL必须以http://或https://开头` },
+            {
+              error: `登录界面背景图URL格式错误：${url}，每个URL必须以http://或https://开头`,
+            },
             { status: 400 }
           );
         }
@@ -91,7 +93,9 @@ export async function POST(request: NextRequest) {
       for (const url of urls) {
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
           return NextResponse.json(
-            { error: `注册界面背景图URL格式错误：${url}，每个URL必须以http://或https://开头` },
+            {
+              error: `注册界面背景图URL格式错误：${url}，每个URL必须以http://或https://开头`,
+            },
             { status: 400 }
           );
         }
@@ -107,7 +111,9 @@ export async function POST(request: NextRequest) {
       for (const url of urls) {
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
           return NextResponse.json(
-            { error: `首页背景图URL格式错误：${url}，每个URL必须以http://或https://开头` },
+            {
+              error: `首页背景图URL格式错误：${url}，每个URL必须以http://或https://开头`,
+            },
             { status: 400 }
           );
         }
@@ -116,12 +122,12 @@ export async function POST(request: NextRequest) {
 
     const adminConfig = await getConfig();
 
-    // 权限校验 - 使用v2用户系统
+    // 主题 CSS 与全站背景可影响全部用户，仅站长可改。
     if (username !== process.env.USERNAME) {
-      const userInfo = await db.getUserInfoV2(username);
-      if (!userInfo || userInfo.role !== 'admin' || userInfo.banned) {
-        return NextResponse.json({ error: '权限不足' }, { status: 401 });
-      }
+      return NextResponse.json(
+        { error: '仅站长可修改主题配置' },
+        { status: 403 }
+      );
     }
 
     // 获取当前版本号，如果CSS有变化则递增

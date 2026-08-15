@@ -27,11 +27,13 @@ export async function GET(request: NextRequest) {
     const config = await getConfig();
     const baseUrl = getDanmakuApiBaseUrl(config.SiteConfig);
 
-    const apiUrl = `${baseUrl}/api/v2/search/anime?keyword=${encodeURIComponent(keyword)}`;
+    const apiUrl = `${baseUrl}/api/v2/search/anime?keyword=${encodeURIComponent(
+      keyword
+    )}`;
 
     // 添加超时控制
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 10秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
       const response = await fetch(apiUrl, {
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
         },
         signal: controller.signal,
         keepalive: true,
+        next: { revalidate: 6 * 60 * 60 },
       });
 
       clearTimeout(timeoutId);
@@ -51,7 +54,12 @@ export async function GET(request: NextRequest) {
 
       const data = await response.json();
 
-      return NextResponse.json(data);
+      return NextResponse.json(data, {
+        headers: {
+          'Cache-Control':
+            'public, s-maxage=21600, stale-while-revalidate=86400',
+        },
+      });
     } catch (fetchError) {
       clearTimeout(timeoutId);
 

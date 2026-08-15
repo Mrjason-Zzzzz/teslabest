@@ -4,30 +4,30 @@
 
 import Hls from 'hls.js';
 import {
+  FastForward,
   Loader2,
   Maximize,
+  Maximize2,
+  MessageSquareText,
   Minimize,
   Pause,
   Play,
+  RefreshCw,
+  Rewind,
   RotateCcw,
   Volume2,
   VolumeX,
-  Rewind,
-  FastForward,
-  Maximize2,
-  RefreshCw,
   WifiOff,
 } from 'lucide-react';
 import {
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import {
   bindTeslaMediaSession,
@@ -39,6 +39,9 @@ import {
   unlockTeslaAudioSession,
   updateTeslaAudioSession,
 } from '@/lib/tesla/audio-session';
+
+import TeslaDanmakuOverlay from '@/components/TeslaDanmakuOverlay';
+import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -192,6 +195,8 @@ export default function TeslaPlayer({
     targetTime: number;
     delta: number;
   } | null>(null);
+  const [danmakuEnabled, setDanmakuEnabled] = useState(false);
+  const [danmakuStatus, setDanmakuStatus] = useState('');
 
   const [mode, setMode] = useState<PlayMode>(() =>
     getInitialMode(live ? 'webcodecs' : defaultModeProp)
@@ -202,6 +207,30 @@ export default function TeslaPlayer({
     setVolume(session.volume);
     setMuted(session.muted || !session.unlocked);
     setAudioUnlockRequired(!session.unlocked && !session.muted);
+  }, []);
+
+  useEffect(() => {
+    if (live) return;
+    try {
+      // New Tesla-specific key: old desktop preferences must not silently
+      // turn on a network-heavy overlay in the vehicle.
+      setDanmakuEnabled(
+        localStorage.getItem('tesla_danmaku_enabled') === 'true'
+      );
+    } catch {
+      setDanmakuEnabled(false);
+    }
+  }, [live]);
+
+  const toggleDanmaku = useCallback(() => {
+    setDanmakuEnabled((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem('tesla_danmaku_enabled', String(next));
+      } catch {}
+      if (!next) setDanmakuStatus('');
+      return next;
+    });
   }, []);
 
   const reportPlaybackReady = useCallback(() => {
@@ -1283,6 +1312,16 @@ export default function TeslaPlayer({
         />
       )}
 
+      {!live && (
+        <TeslaDanmakuOverlay
+          enabled={danmakuEnabled}
+          title={title}
+          currentTime={currentTime}
+          playing={playing}
+          onStatusChange={setDanmakuStatus}
+        />
+      )}
+
       {/* 调试信息 */}
       {showDebug && debugInfo && mode === 'webcodecs' && (
         <div className='absolute top-2 left-2 z-20 bg-black/70 p-2 text-xs text-green-400 font-mono pointer-events-none'>
@@ -1438,6 +1477,27 @@ export default function TeslaPlayer({
           </h1>
         </div>
         <div className='pointer-events-auto flex items-center gap-1'>
+          {!live && (
+            <button
+              type='button'
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleDanmaku();
+              }}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
+                danmakuEnabled
+                  ? 'bg-green-500 text-white'
+                  : 'bg-black/35 text-white/80 hover:bg-black/55'
+              }`}
+              title={
+                danmakuStatus || (danmakuEnabled ? '关闭弹幕' : '开启弹幕')
+              }
+              aria-pressed={danmakuEnabled}
+            >
+              <MessageSquareText className='h-3.5 w-3.5' />
+              <span>{danmakuEnabled ? '弹幕开' : '弹幕关'}</span>
+            </button>
+          )}
           {!live && (
             <div className='rounded bg-green-500/20 px-2 py-1 text-xs text-green-300'>
               {engineLabel}

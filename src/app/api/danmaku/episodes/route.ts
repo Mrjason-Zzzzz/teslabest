@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 
     // 添加超时控制和重试机制
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 10秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
       const response = await fetch(apiUrl, {
@@ -46,6 +46,7 @@ export async function GET(request: NextRequest) {
         signal: controller.signal,
         // 添加 keepalive 避免连接被重置
         keepalive: true,
+        next: { revalidate: 24 * 60 * 60 },
       });
 
       clearTimeout(timeoutId);
@@ -56,7 +57,12 @@ export async function GET(request: NextRequest) {
 
       const data = await response.json();
 
-      return NextResponse.json(data);
+      return NextResponse.json(data, {
+        headers: {
+          'Cache-Control':
+            'public, s-maxage=86400, stale-while-revalidate=604800',
+        },
+      });
     } catch (fetchError) {
       clearTimeout(timeoutId);
 

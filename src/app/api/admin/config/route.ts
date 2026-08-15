@@ -8,6 +8,48 @@ import { getConfig } from '@/lib/config';
 
 export const runtime = 'nodejs';
 
+function createAdminSafeConfig(config: AdminConfigResult['Config']) {
+  const safe = JSON.parse(
+    JSON.stringify(config)
+  ) as AdminConfigResult['Config'];
+  safe.ConfigFile = '';
+  safe.ConfigSubscribtion = {
+    ...safe.ConfigSubscribtion,
+    URL: '',
+    AutoUpdate: false,
+  };
+  safe.SiteConfig = {
+    ...safe.SiteConfig,
+    DanmakuApiToken: '',
+    TMDBApiKey: '',
+    TMDBProxy: '',
+    TMDBReverseProxy: '',
+    TurnstileSecretKey: '',
+    OIDCClientSecret: '',
+    AnalyticsCustomScript: '',
+  };
+  safe.UserConfig.RedemptionCodes = [];
+  safe.UserConfig.AccessPolicies = {};
+
+  const extensionKeys = [
+    'OpenListConfig',
+    'EmbyConfig',
+    'XiaoyaConfig',
+    'NetDiskConfig',
+    'AIConfig',
+    'EmailConfig',
+    'TelegramConfig',
+    'MusicConfig',
+    'SuwayomiConfig',
+    'OPDSConfig',
+  ];
+  const safeRecord = safe as unknown as Record<string, unknown>;
+  extensionKeys.forEach((key) => {
+    if (key in safeRecord) safeRecord[key] = {};
+  });
+  return safe;
+}
+
 export async function GET(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   if (storageType === 'localstorage') {
@@ -40,6 +82,7 @@ export async function GET(request: NextRequest) {
 
       if (userInfoV2 && userInfoV2.role === 'admin' && !userInfoV2.banned) {
         result.Role = 'admin';
+        result.Config = createAdminSafeConfig(config);
       } else {
         return NextResponse.json(
           { error: '你是管理员吗你就访问？' },
@@ -83,14 +126,12 @@ export async function POST(request: NextRequest) {
   try {
     const newConfig = await request.json();
 
-    // 权限检查
+    // 通用全量配置可覆盖密钥与权限策略，只允许站长写入。
     if (username !== process.env.USERNAME) {
-      const { db } = await import('@/lib/db');
-      const userInfoV2 = await db.getUserInfoV2(username);
-
-      if (!userInfoV2 || (userInfoV2.role !== 'admin' && userInfoV2.role !== 'owner') || userInfoV2.banned) {
-        return NextResponse.json({ error: '权限不足' }, { status: 401 });
-      }
+      return NextResponse.json(
+        { error: '仅站长可修改全局配置' },
+        { status: 403 }
+      );
     }
 
     // 保存配置

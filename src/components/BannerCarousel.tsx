@@ -17,11 +17,6 @@ import {
   useState,
 } from 'react';
 
-import {
-  type TMDBItem,
-  getGenreNames,
-  getTMDBImageUrl,
-} from '@/lib/tmdb.client';
 import { getDoubanDetail } from '@/lib/douban.client';
 
 import ProxyImage from '@/components/ProxyImage';
@@ -46,12 +41,17 @@ const getSavedBannerHeightScale = (): HomeBannerHeightScale => {
   return saved === '1.5' || saved === '2' ? saved : '1';
 };
 
-// 扩展TMDBItem类型以支持TX数据源的额外字段
-interface BannerItem extends TMDBItem {
-  subtitle?: string; // TX数据源的子标题
-  tags?: string[]; // TX数据源的标签
-  trailer_url?: string | null; // 豆瓣预告片直链
-  genres?: string[]; // 豆瓣数据源的类型标签
+interface BannerItem {
+  id: number | string;
+  title: string;
+  poster_path: string | null;
+  backdrop_path?: string | null;
+  release_date: string;
+  overview: string;
+  vote_average: number;
+  media_type: 'movie' | 'tv';
+  trailer_url?: string | null;
+  genres?: string[];
 }
 
 export default function BannerCarousel({
@@ -65,7 +65,6 @@ export default function BannerCarousel({
   const [shouldLoad, setShouldLoad] = useState(!delayLoad); // 是否应该开始加载数据
   const [isPaused, setIsPaused] = useState(false);
   const [skipNextAutoPlay, setSkipNextAutoPlay] = useState(false); // 跳过下一次自动播放
-  const [isYouTubeAccessible, setIsYouTubeAccessible] = useState(false); // YouTube连通性（默认false，检查后再决定）
   const [enableTrailers, setEnableTrailers] = useState(false); // 是否启用预告片（默认关闭）
   const [dataSource, setDataSource] = useState<string>(''); // 当前数据源
   const [trailersLoaded, setTrailersLoaded] = useState(false); // 预告片是否已加载
@@ -74,7 +73,6 @@ export default function BannerCarousel({
     useState<HomeBannerHeightScale>('1'); // 轮播图高度倍率
   const [isMobileView, setIsMobileView] = useState(false);
   const [mobileTitleFontSize, setMobileTitleFontSize] = useState(30);
-  const videoRef = useRef<HTMLVideoElement>(null); // 视频元素引用
   const videoRefs = useRef<Map<number, HTMLVideoElement>>(new Map()); // 所有视频元素的引用
   const titleRef = useRef<HTMLHeadingElement>(null);
   const titleTextRef = useRef<HTMLSpanElement>(null);
@@ -109,15 +107,10 @@ export default function BannerCarousel({
     }
   };
 
-  // 获取图片原始URL（处理TX完整URL和TMDB路径）
+  // 轮播数据只使用完整的豆瓣图片 URL。
   const getImageUrl = (path: string | null) => {
     if (!path) return '';
-    // 如果是完整URL（TX数据源或豆瓣），直接返回原始地址
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
-    // 否则使用TMDB的URL拼接原始地址
-    return getTMDBImageUrl(path, 'original');
+    return path;
   };
 
   // 获取视频URL（处理豆瓣视频代理）
@@ -211,38 +204,6 @@ export default function BannerCarousel({
     }
   }, [delayLoad]);
 
-  // 检测YouTube连通性 - 仅在启用预告片且数据源为TMDB时检测
-  useEffect(() => {
-    // 如果未启用预告片或数据源不是TMDB，不进行检测
-    if (!enableTrailers || dataSource !== 'TMDB') {
-      setIsYouTubeAccessible(false);
-      return;
-    }
-
-    const checkYouTubeAccess = () => {
-      const img = document.createElement('img');
-      const timeout = setTimeout(() => {
-        img.src = '';
-        setIsYouTubeAccessible(false);
-      }, 3000);
-
-      img.onload = () => {
-        clearTimeout(timeout);
-        setIsYouTubeAccessible(true);
-      };
-
-      img.onerror = () => {
-        clearTimeout(timeout);
-        setIsYouTubeAccessible(false);
-      };
-
-      // 添加随机查询参数避免缓存
-      img.src = `https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg?t=${Date.now()}`;
-    };
-
-    checkYouTubeAccess();
-  }, [enableTrailers, dataSource]);
-
   // 获取热门内容
   useEffect(() => {
     // 如果不应该加载，直接返回
@@ -251,7 +212,7 @@ export default function BannerCarousel({
     const fetchTrending = async () => {
       try {
         // 先尝试从所有可能的数据源缓存中读取，找到最新的缓存
-        const sources = ['TMDB', 'TX', 'Douban'];
+        const sources = ['Douban'];
         let cachedData = null;
         let validSource = null;
         let cacheExpired = false;
@@ -289,11 +250,11 @@ export default function BannerCarousel({
 
         // 如果缓存过期或没有缓存，后台更新数据
         if (!cachedData || cacheExpired) {
-          const response = await fetch('/api/tmdb/trending');
+          const response = await fetch('/api/home/banner');
           const result = await response.json();
 
           if (result.code === 200 && result.list.length > 0) {
-            const newDataSource = result.source || 'TMDB'; // 获取数据源标识
+            const newDataSource = 'Douban';
             const cacheKey = getLocalStorageKey(newDataSource);
 
             setItems(result.list);
@@ -545,23 +506,6 @@ export default function BannerCarousel({
                   preload='metadata'
                 />
               </div>
-            ) : item.video_key && isYouTubeAccessible && enableTrailers ? (
-              /* 显示YouTube视频 */
-              <div className='absolute inset-0 overflow-hidden'>
-                <iframe
-                  src={`https://www.youtube.com/embed/${item.video_key}?listType=playlist&autoplay=1&mute=1&controls=0&loop=1&playlist=${item.video_key}&modestbranding=1&rel=0&showinfo=0&vq=hd1080&hd=1&disablekb=1&fs=0&iv_load_policy=3`}
-                  className='absolute top-1/2 left-1/2 pointer-events-none'
-                  allow='autoplay; encrypted-media'
-                  style={{
-                    border: 'none',
-                    width: '100vw',
-                    height: '100vh',
-                    minWidth: '100%',
-                    minHeight: '100%',
-                    transform: 'translate(-50%, -50%)',
-                  }}
-                />
-              </div>
             ) : (
               /* 显示图片 */
               <ProxyImage
@@ -601,21 +545,10 @@ export default function BannerCarousel({
                 {currentItem.vote_average.toFixed(1)}
               </span>
             )}
-            {/* 显示标签：优先TX的tags，其次豆瓣的genres，最后TMDB的genre_ids */}
-            {currentItem.tags && currentItem.tags.length > 0
-              ? currentItem.tags.slice(0, 3).map((tag, index) => (
-                  <span
-                    key={index}
-                    className='px-2 py-1 bg-white/20 backdrop-blur-sm rounded text-sm'
-                  >
-                    {tag}
-                  </span>
-                ))
-              : currentItem.genres &&
-                Array.isArray(currentItem.genres) &&
-                currentItem.genres.length > 0
-              ? /* 显示豆瓣数据源的标签 */
-                currentItem.genres.slice(0, 3).map((genre, index) => (
+            {currentItem.genres &&
+            Array.isArray(currentItem.genres) &&
+            currentItem.genres.length > 0
+              ? currentItem.genres.slice(0, 3).map((genre, index) => (
                   <span
                     key={index}
                     className='px-2 py-1 bg-white/20 backdrop-blur-sm rounded text-sm'
@@ -623,15 +556,7 @@ export default function BannerCarousel({
                     {genre}
                   </span>
                 ))
-              : /* 显示TMDB数据源的类型标签 */
-                getGenreNames(currentItem.genre_ids, 3).map((genre) => (
-                  <span
-                    key={genre}
-                    className='px-2 py-1 bg-white/20 backdrop-blur-sm rounded text-sm'
-                  >
-                    {genre}
-                  </span>
-                ))}
+              : null}
             {currentItem.release_date && (
               <span>{currentItem.release_date}</span>
             )}

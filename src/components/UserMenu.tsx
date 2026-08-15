@@ -2490,14 +2490,16 @@ export const UserMenu: React.FC = () => {
             <span className='font-medium'>我的收藏</span>
           </button>
 
-          {/* 设置按钮 */}
-          <button
-            onClick={handleSettings}
-            className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
-          >
-            <Settings className='w-4 h-4 text-gray-500 dark:text-gray-400' />
-            <span className='font-medium'>设置</span>
-          </button>
+          {/* 本地高级设置只供站长/管理员排障；用户使用服务端下发配置。 */}
+          {!isRegisteredUser && (
+            <button
+              onClick={handleSettings}
+              className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
+            >
+              <Settings className='w-4 h-4 text-gray-500 dark:text-gray-400' />
+              <span className='font-medium'>本地排障设置</span>
+            </button>
+          )}
 
           {/* 管理面板按钮 */}
           {showAdminPanel && (
@@ -5509,7 +5511,10 @@ export const UserMenu: React.FC = () => {
       />
 
       {/* 使用 Portal 将设置面板渲染到 document.body */}
-      {isSettingsOpen && mounted && createPortal(settingsPanel, document.body)}
+      {!isRegisteredUser &&
+        isSettingsOpen &&
+        mounted &&
+        createPortal(settingsPanel, document.body)}
 
       {/* 使用 Portal 将修改密码面板渲染到 document.body */}
       {isChangePasswordOpen &&

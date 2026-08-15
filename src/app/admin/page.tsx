@@ -79,7 +79,6 @@ import {
 
 import AccountAccessManager from '@/components/AccountAccessManager';
 import AnimeSubscriptionComponent from '@/components/AnimeSubscriptionComponent';
-import CorrectDialog from '@/components/CorrectDialog';
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
 
@@ -3593,8 +3592,6 @@ const OpenListConfigComponent = ({
     total: number;
     currentFolder?: string;
   } | null>(null);
-  const [correctDialogOpen, setCorrectDialogOpen] = useState(false);
-  const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
   const [pathMetaDialogOpen, setPathMetaDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -3815,10 +3812,6 @@ const OpenListConfigComponent = ({
     }
   };
 
-  const handleCorrectSuccess = () => {
-    fetchVideos(true); // 强制从数据库重新读取，不使用缓存
-  };
-
   const handleCheckConnectivity = async () => {
     await withLoading('checkOpenList', async () => {
       try {
@@ -3919,11 +3912,11 @@ const OpenListConfigComponent = ({
             等）
           </p>
           <p>
-            • 配置后，系统会自动扫描指定目录下的视频文件夹，并通过 TMDB
-            匹配元数据信息
+            • 配置后，系统会扫描指定目录下的视频文件夹，并优先读取本地 NFO
+            元数据
           </p>
           <p>• 定时扫描间隔设置为 0 表示关闭自动扫描，最低间隔为 60 分钟</p>
-          <p>• 视频文件夹名称为影片名称，精准命名可以提高 TMDB 匹配准确率</p>
+          <p>• 视频文件夹建议使用“片名 (年份)”，便于本地索引稳定识别</p>
         </div>
       </div>
 
@@ -4582,24 +4575,6 @@ const OpenListConfigComponent = ({
                               </button>
                             )}
                             <button
-                              onClick={() => {
-                                console.log('Video object:', video);
-                                console.log(
-                                  'Video poster field:',
-                                  video.poster
-                                );
-                                setSelectedVideo(video);
-                                setCorrectDialogOpen(true);
-                              }}
-                              className={
-                                video.failed
-                                  ? buttonStyles.warningSmall
-                                  : buttonStyles.successSmall
-                              }
-                            >
-                              {video.failed ? '立即纠错' : '纠错'}
-                            </button>
-                            <button
                               onClick={() =>
                                 handleDeleteVideo(video.id, video.title)
                               }
@@ -4632,28 +4607,6 @@ const OpenListConfigComponent = ({
         showConfirm={alertModal.showConfirm}
         onConfirm={alertModal.onConfirm}
       />
-
-      {/* 纠错对话框 */}
-      {selectedVideo && (
-        <CorrectDialog
-          isOpen={correctDialogOpen}
-          onClose={() => setCorrectDialogOpen(false)}
-          videoKey={selectedVideo.id}
-          currentTitle={selectedVideo.title}
-          currentVideo={{
-            tmdbId: selectedVideo.tmdbId,
-            doubanId: selectedVideo.doubanId,
-            poster: selectedVideo.poster,
-            releaseDate: selectedVideo.releaseDate,
-            overview: selectedVideo.overview,
-            voteAverage: selectedVideo.voteAverage,
-            mediaType: selectedVideo.mediaType,
-            seasonNumber: selectedVideo.seasonNumber,
-            seasonName: selectedVideo.seasonName,
-          }}
-          onCorrect={handleCorrectSuccess}
-        />
-      )}
     </div>
   );
 };
@@ -10664,9 +10617,9 @@ const SiteConfigComponent = ({
     DisableYellowFilter: false,
     FluidSearch: true,
     DanmakuSourceType: 'builtin',
-    DanmakuApiBase: 'https://mtvpls-danmu.netlify.app/87654321',
-    DanmakuApiToken: '87654321',
-    DanmakuAutoLoadDefault: true,
+    DanmakuApiBase: 'https://danmuapi-plum-six.vercel.app/980728',
+    DanmakuApiToken: '980728',
+    DanmakuAutoLoadDefault: false,
     TMDBApiKey: '',
     TMDBProxy: '',
     TMDBReverseProxy: '',
@@ -10675,7 +10628,7 @@ const SiteConfigComponent = ({
     BangumiImageBaseUrl: '',
     BangumiProxy: '',
     BannerDataSource: 'Douban',
-    RecommendationDataSource: 'Mixed',
+    RecommendationDataSource: 'Douban',
     PansouApiUrl: '',
     PansouUsername: '',
     PansouPassword: '',
@@ -10790,7 +10743,7 @@ const SiteConfigComponent = ({
           config.SiteConfig.DanmakuApiBase || 'http://localhost:9321',
         DanmakuApiToken: config.SiteConfig.DanmakuApiToken || '87654321',
         DanmakuAutoLoadDefault:
-          config.SiteConfig.DanmakuAutoLoadDefault !== false,
+          config.SiteConfig.DanmakuAutoLoadDefault === true,
         TMDBApiKey: config.SiteConfig.TMDBApiKey || '',
         TMDBProxy: config.SiteConfig.TMDBProxy || '',
         TMDBReverseProxy: config.SiteConfig.TMDBReverseProxy || '',
@@ -10800,8 +10753,7 @@ const SiteConfigComponent = ({
         BangumiImageBaseUrl: config.SiteConfig.BangumiImageBaseUrl || '',
         BangumiProxy: config.SiteConfig.BangumiProxy || '',
         BannerDataSource: config.SiteConfig.BannerDataSource || 'Douban',
-        RecommendationDataSource:
-          config.SiteConfig.RecommendationDataSource || 'Mixed',
+        RecommendationDataSource: 'Douban',
         PansouApiUrl: config.SiteConfig.PansouApiUrl || '',
         PansouUsername: config.SiteConfig.PansouUsername || '',
         PansouPassword: config.SiteConfig.PansouPassword || '',
@@ -11347,60 +11299,9 @@ const SiteConfigComponent = ({
         </p>
       </div>
 
-      <details className='pt-4 border-t border-gray-200 dark:border-gray-700'>
-        <summary className='text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer'>
-          数据源配置
-        </summary>
-        <div className='mt-4 space-y-4'>
-          {/* 轮播图数据源 */}
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              轮播图数据源
-            </label>
-            <select
-              value={siteSettings.BannerDataSource || 'Douban'}
-              onChange={(e) =>
-                setSiteSettings((prev) => ({
-                  ...prev,
-                  BannerDataSource: e.target.value,
-                }))
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-            >
-              <option value='Douban'>豆瓣</option>
-              <option value='TMDB'>TMDB</option>
-              <option value='TX'>TX</option>
-            </select>
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-              选择首页轮播图的数据来源
-            </p>
-          </div>
-
-          {/* 更多推荐数据源 */}
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              更多推荐数据源
-            </label>
-            <select
-              value={siteSettings.RecommendationDataSource || 'Mixed'}
-              onChange={(e) =>
-                setSiteSettings((prev) => ({
-                  ...prev,
-                  RecommendationDataSource: e.target.value,
-                }))
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-            >
-              <option value='Mixed'>混合</option>
-              <option value='Douban'>豆瓣</option>
-              <option value='TMDB'>TMDB</option>
-            </select>
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-              选择详情页"更多推荐"的数据来源。混合模式会根据豆瓣ID和评论开关自动切换数据源
-            </p>
-          </div>
-        </div>
-      </details>
+      <div className='rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/25 dark:text-emerald-200'>
+        影视元数据和首页轮播已统一使用豆瓣数据源，无需额外配置。
+      </div>
 
       {/* 弹幕 API 配置 */}
       <details className='pt-4 border-t border-gray-200 dark:border-gray-700'>
@@ -11512,7 +11413,7 @@ const SiteConfigComponent = ({
                 默认自动加载弹幕
               </h4>
               <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                新用户或未设置本地偏好时，播放页是否默认自动匹配并加载弹幕。用户仍可在个人设置中自行覆盖。
+                默认关闭可确保弹幕服务不阻塞首帧；用户可在播放器中主动开启。
               </p>
             </div>
             <label className='flex items-center cursor-pointer'>
@@ -11520,7 +11421,7 @@ const SiteConfigComponent = ({
                 <input
                   type='checkbox'
                   className='sr-only peer'
-                  checked={siteSettings.DanmakuAutoLoadDefault !== false}
+                  checked={siteSettings.DanmakuAutoLoadDefault === true}
                   onChange={(e) =>
                     setSiteSettings((prev) => ({
                       ...prev,
@@ -11532,93 +11433,6 @@ const SiteConfigComponent = ({
                 <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
               </div>
             </label>
-          </div>
-        </div>
-      </details>
-
-      {/* TMDB 配置 */}
-      <details className='pt-4 border-t border-gray-200 dark:border-gray-700'>
-        <summary className='text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer'>
-          TMDB 配置
-        </summary>
-        <div className='mt-4 space-y-4'>
-          <p className='text-xs text-amber-600 dark:text-amber-400'>
-            由于国内网络环境限制，TMDB 服务通常需要配置代理后才能正常使用。
-          </p>
-          {/* TMDB API Key */}
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              TMDB API Key
-            </label>
-            <input
-              type='text'
-              placeholder='请输入 TMDB API Key（多个key用英文逗号分隔）'
-              value={siteSettings.TMDBApiKey}
-              onChange={(e) =>
-                setSiteSettings((prev) => ({
-                  ...prev,
-                  TMDBApiKey: e.target.value,
-                }))
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-            />
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-              配置后首页将显示 TMDB 即将上映电影。支持配置多个 API
-              Key（用英文逗号分隔）以实现轮询，避免单个 Key 请求限制。获取 API
-              Key 请访问{' '}
-              <a
-                href='https://www.themoviedb.org/settings/api'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300'
-              >
-                TMDB API 设置页面
-              </a>
-            </p>
-          </div>
-
-          {/* TMDB Proxy */}
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              TMDB 系统代理
-            </label>
-            <input
-              type='text'
-              placeholder='请输入代理地址（可选）'
-              value={siteSettings.TMDBProxy}
-              onChange={(e) =>
-                setSiteSettings((prev) => ({
-                  ...prev,
-                  TMDBProxy: e.target.value,
-                }))
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-            />
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-              配置代理服务器地址，用于访问 TMDB API（可选）
-            </p>
-          </div>
-
-          {/* TMDB Reverse Proxy */}
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              TMDB 反代代理
-            </label>
-            <input
-              type='text'
-              placeholder='请输入反代 Base URL（可选）'
-              value={siteSettings.TMDBReverseProxy}
-              onChange={(e) =>
-                setSiteSettings((prev) => ({
-                  ...prev,
-                  TMDBReverseProxy: e.target.value,
-                }))
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
-            />
-            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-              配置 TMDB 反向代理 Base URL（可选）
-            </p>
           </div>
         </div>
       </details>
@@ -14700,9 +14514,7 @@ const XiaoyaConfigComponent = ({
         </h3>
         <div className='text-sm text-blue-800 dark:text-blue-200 space-y-1'>
           <p>• 小雅是基于 Alist 的网盘资源聚合服务</p>
-          <p>
-            • 支持文件夹名自动识别 TMDb ID（格式：标题 (年份) {'{tmdb-id}'}）
-          </p>
+          <p>• 支持从本地 NFO 和规范文件夹名读取标题、年份与季数</p>
           <p>• 支持 NFO 文件元数据（poster.jpg、background.jpg）</p>
           <p>• 按需加载，无需全量扫描</p>
         </div>
@@ -15627,304 +15439,6 @@ const EmailConfigComponent = ({
   );
 };
 
-// 求片列表组件
-const MovieRequestsComponent = ({
-  config,
-  refreshConfig,
-}: {
-  config: AdminConfig | null;
-  refreshConfig: () => Promise<void>;
-}) => {
-  const { alertModal, showAlert, hideAlert } = useAlertModal();
-  const { isLoading, withLoading } = useLoadingState();
-  const [requests, setRequests] = useState<any[]>([]);
-  const [filter, setFilter] = useState<'pending' | 'fulfilled'>('pending');
-  const [pendingCount, setPendingCount] = useState(0);
-  const [fulfilledCount, setFulfilledCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  // 求片功能设置
-  const [enableMovieRequest, setEnableMovieRequest] = useState(
-    config?.SiteConfig?.EnableMovieRequest ?? true
-  );
-  const [movieRequestCooldown, setMovieRequestCooldown] = useState(
-    config?.SiteConfig?.MovieRequestCooldown ?? 3600
-  );
-  const [savingSettings, setSavingSettings] = useState(false);
-
-  useEffect(() => {
-    loadRequests();
-    loadCounts();
-  }, [filter]);
-
-  const loadCounts = async () => {
-    try {
-      const response = await fetch('/api/movie-requests');
-      const data = await response.json();
-      const allRequests = data.requests || [];
-      setPendingCount(
-        allRequests.filter((r: any) => r.status === 'pending').length
-      );
-      setFulfilledCount(
-        allRequests.filter((r: any) => r.status === 'fulfilled').length
-      );
-    } catch (error) {
-      console.error('加载求片数量失败:', error);
-    }
-  };
-
-  const loadRequests = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `/api/movie-requests?status=${filter}&detail=true`
-      );
-      const data = await response.json();
-      setRequests(data.requests || []);
-    } catch (error) {
-      console.error('加载求片列表失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFulfill = async (id: string) => {
-    await withLoading(`fulfill_${id}`, async () => {
-      try {
-        const response = await fetch(`/api/movie-requests/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'fulfilled' }),
-        });
-        if (!response.ok) throw new Error('操作失败');
-        showSuccess('已标记为已上架', showAlert);
-        await loadRequests();
-      } catch (err) {
-        showError(err instanceof Error ? err.message : '操作失败', showAlert);
-      }
-    });
-  };
-
-  const handleDelete = async (id: string) => {
-    await withLoading(`delete_${id}`, async () => {
-      try {
-        const response = await fetch(`/api/movie-requests/${id}`, {
-          method: 'DELETE',
-        });
-        if (!response.ok) throw new Error('删除失败');
-        showSuccess('删除成功', showAlert);
-        await loadRequests();
-      } catch (err) {
-        showError(err instanceof Error ? err.message : '删除失败', showAlert);
-      }
-    });
-  };
-
-  const handleSaveSettings = async () => {
-    setSavingSettings(true);
-    try {
-      if (!config) throw new Error('配置未加载');
-
-      const updatedConfig = {
-        ...config,
-        SiteConfig: {
-          ...config.SiteConfig,
-          EnableMovieRequest: enableMovieRequest,
-          MovieRequestCooldown: movieRequestCooldown,
-        },
-      };
-
-      const response = await fetch('/api/admin/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedConfig),
-      });
-
-      if (!response.ok) throw new Error('保存失败');
-
-      showSuccess('求片设置已保存', showAlert);
-      await refreshConfig();
-    } catch (err) {
-      showError(err instanceof Error ? err.message : '保存失败', showAlert);
-    } finally {
-      setSavingSettings(false);
-    }
-  };
-
-  return (
-    <div className='space-y-4'>
-      {/* 求片功能设置 */}
-      <div className='p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>
-        <h3 className='text-lg font-medium text-gray-900 dark:text-gray-100 mb-4'>
-          求片功能设置
-        </h3>
-        <div className='space-y-4'>
-          <div className='flex items-center justify-between'>
-            <div>
-              <label className='text-sm font-medium text-gray-700 dark:text-gray-300'>
-                启用求片功能
-              </label>
-              <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                关闭后用户将无法访问求片页面
-              </p>
-            </div>
-            <label className='relative inline-flex items-center cursor-pointer'>
-              <input
-                type='checkbox'
-                checked={enableMovieRequest}
-                onChange={(e) => setEnableMovieRequest(e.target.checked)}
-                className='sr-only peer'
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
-          <div>
-            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-              求片冷却时间（秒）
-            </label>
-            <p className='text-xs text-gray-500 dark:text-gray-400 mb-2'>
-              用户两次求片之间的最小间隔时间，默认3600秒（1小时）
-            </p>
-            <input
-              type='number'
-              min='0'
-              value={movieRequestCooldown}
-              onChange={(e) =>
-                setMovieRequestCooldown(parseInt(e.target.value) || 0)
-              }
-              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-            />
-            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-              {movieRequestCooldown >= 3600
-                ? `约 ${Math.floor(
-                    movieRequestCooldown / 3600
-                  )} 小时 ${Math.floor(
-                    (movieRequestCooldown % 3600) / 60
-                  )} 分钟`
-                : movieRequestCooldown >= 60
-                ? `约 ${Math.floor(movieRequestCooldown / 60)} 分钟`
-                : `${movieRequestCooldown} 秒`}
-            </p>
-          </div>
-
-          <button
-            onClick={handleSaveSettings}
-            disabled={savingSettings}
-            className={buttonStyles.primary}
-          >
-            {savingSettings ? '保存中...' : '保存设置'}
-          </button>
-        </div>
-      </div>
-
-      {/* 求片列表 */}
-      <div className='p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>
-        <h3 className='text-lg font-medium text-gray-900 dark:text-gray-100 mb-4'>
-          求片列表
-        </h3>
-        <div className='flex gap-2 mb-4'>
-          <button
-            onClick={() => setFilter('pending')}
-            className={`px-4 py-2 rounded-lg ${
-              filter === 'pending'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-            }`}
-          >
-            待处理 ({pendingCount})
-          </button>
-          <button
-            onClick={() => setFilter('fulfilled')}
-            className={`px-4 py-2 rounded-lg ${
-              filter === 'fulfilled'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-            }`}
-          >
-            已上架 ({fulfilledCount})
-          </button>
-        </div>
-
-        {loading ? (
-          <div className='flex justify-center py-8'>
-            <div className='w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin' />
-          </div>
-        ) : requests.length === 0 ? (
-          <div className='text-center py-8 text-gray-500 dark:text-gray-400'>
-            暂无求片
-          </div>
-        ) : (
-          <div className='space-y-3'>
-            {requests.map((req) => (
-              <div
-                key={req.id}
-                className='p-4 bg-gray-50 dark:bg-gray-800 rounded-lg'
-              >
-                <div className='flex gap-4'>
-                  {req.poster && (
-                    <img
-                      src={req.poster}
-                      alt={req.title}
-                      className='w-16 h-24 object-cover rounded'
-                    />
-                  )}
-                  <div className='flex-1'>
-                    <h3 className='font-medium text-gray-900 dark:text-gray-100'>
-                      {req.title} {req.year && `(${req.year})`}
-                    </h3>
-                    <p className='text-sm text-gray-600 dark:text-gray-400 mt-1'>
-                      求片人数: {req.requestCount} 人
-                    </p>
-                    <p className='text-xs text-gray-500 dark:text-gray-500 mt-1'>
-                      {new Date(req.createdAt).toLocaleString('zh-CN')}
-                    </p>
-                    {req.requestedBy && (
-                      <p className='text-xs text-gray-500 dark:text-gray-500 mt-1'>
-                        求片用户: {req.requestedBy.join(', ')}
-                      </p>
-                    )}
-                  </div>
-                  <div className='flex flex-col gap-2'>
-                    {filter === 'pending' && (
-                      <button
-                        onClick={() => handleFulfill(req.id)}
-                        disabled={isLoading(`fulfill_${req.id}`)}
-                        className={buttonStyles.successSmall}
-                      >
-                        {isLoading(`fulfill_${req.id}`)
-                          ? '处理中...'
-                          : '标记已上架'}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDelete(req.id)}
-                      disabled={isLoading(`delete_${req.id}`)}
-                      className={buttonStyles.dangerSmall}
-                    >
-                      {isLoading(`delete_${req.id}`) ? '删除中...' : '删除'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <AlertModal
-        isOpen={alertModal.isOpen}
-        onClose={hideAlert}
-        type={alertModal.type}
-        title={alertModal.title}
-        message={alertModal.message}
-        timer={alertModal.timer}
-        showConfirm={alertModal.showConfirm}
-      />
-    </div>
-  );
-};
-
 // AI配置组件
 const AIConfigComponent = ({
   config,
@@ -16073,7 +15587,7 @@ const AIConfigComponent = ({
         <div className='text-sm text-blue-700 dark:text-blue-400 space-y-1'>
           <p>• AI问片功能可以让用户通过AI对话获取影视推荐和信息查询</p>
           <p>• 支持 OpenAI、Claude 和自定义兼容 OpenAI 格式的 API</p>
-          <p>• 启用决策模型后,AI会智能判断是否需要联网搜索/豆瓣/TMDB数据</p>
+          <p>• 启用决策模型后，AI 会智能判断是否需要联网搜索或豆瓣数据</p>
           <p>• 开启联网搜索后,AI可以获取最新的影视资讯和信息</p>
           <p>• 配置后可在首页、视频卡片和播放页启用AI问片入口</p>
         </div>
@@ -16158,7 +15672,9 @@ const AIConfigComponent = ({
             AI决策模型配置
           </h4>
           <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-            使用AI智能判断是否需要联网搜索、豆瓣或TMDB数据,并优化搜索关键词(复用主模型的API配置)
+            使用 AI
+            智能判断是否需要联网搜索或豆瓣数据，并优化搜索关键词（复用主模型 API
+            配置）
           </p>
         </div>
 
@@ -18380,7 +17896,7 @@ function AdminPageClient() {
           {/* 标题 + 重置配置按钮 */}
           <div className='flex items-center gap-2 mb-8'>
             <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100'>
-              管理员设置
+              {role === 'owner' ? '站长控制台' : '运营管理台'}
             </h1>
             {config && role === 'owner' && (
               <>
@@ -18400,29 +17916,22 @@ function AdminPageClient() {
             )}
           </div>
 
-          {/* TMDB 未配置提示 */}
-          {config && !config.SiteConfig.TMDBApiKey && (
-            <div className='bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4'>
-              <div className='flex items-start gap-3'>
-                <div className='flex-shrink-0 mt-0.5'>
-                  <svg
-                    className='w-5 h-5 text-blue-600 dark:text-blue-400'
-                    fill='currentColor'
-                    viewBox='0 0 20 20'
-                  >
-                    <path
-                      fillRule='evenodd'
-                      d='M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z'
-                      clipRule='evenodd'
-                    />
-                  </svg>
-                </div>
-                <div className='flex-1'>
-                  <p className='text-sm font-medium text-blue-800 dark:text-blue-300'>
-                    未配置 TMDB API Key，配置后可获得更丰富的影视信息和推荐内容
-                  </p>
-                </div>
+          {config && (
+            <div
+              className={`mb-5 rounded-xl border px-4 py-3 ${
+                role === 'owner'
+                  ? 'border-purple-200 bg-purple-50 text-purple-900 dark:border-purple-800/70 dark:bg-purple-950/30 dark:text-purple-100'
+                  : 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-blue-100'
+              }`}
+            >
+              <div className='text-sm font-semibold'>
+                {role === 'owner' ? '当前身份：站长' : '当前身份：管理员'}
               </div>
+              <p className='mt-1 text-xs leading-5 opacity-80'>
+                {role === 'owner'
+                  ? '拥有系统配置、注册与兑换码、密钥、扩展功能和数据迁移权限。'
+                  : '仅负责普通用户、用户组、视频源和直播源的日常运营；不可修改系统密钥、注册策略或扩展服务。'}
+              </p>
             </div>
           )}
 
@@ -18472,50 +17981,60 @@ function AdminPageClient() {
             </CollapsibleTab>
           )}
 
-          {/* 站点配置标签 */}
-          <CollapsibleTab
-            title='站点配置'
-            icon={
-              <Settings
-                size={20}
-                className='text-gray-600 dark:text-gray-400'
-              />
-            }
-            isExpanded={expandedTabs.siteConfig}
-            onToggle={() => toggleTab('siteConfig')}
-          >
-            <SiteConfigComponent config={config} refreshConfig={fetchConfig} />
-          </CollapsibleTab>
+          {role === 'owner' && (
+            <>
+              <CollapsibleTab
+                title='站点配置'
+                icon={
+                  <Settings
+                    size={20}
+                    className='text-gray-600 dark:text-gray-400'
+                  />
+                }
+                isExpanded={expandedTabs.siteConfig}
+                onToggle={() => toggleTab('siteConfig')}
+              >
+                <SiteConfigComponent
+                  config={config}
+                  refreshConfig={fetchConfig}
+                />
+              </CollapsibleTab>
 
-          {/* 注册配置标签 */}
-          <CollapsibleTab
-            title='注册配置'
-            icon={
-              <UserPlus
-                size={20}
-                className='text-gray-600 dark:text-gray-400'
-              />
-            }
-            isExpanded={expandedTabs.registrationConfig}
-            onToggle={() => toggleTab('registrationConfig')}
-          >
-            <RegistrationConfigComponent
-              config={config}
-              refreshConfig={fetchConfig}
-            />
-          </CollapsibleTab>
+              <CollapsibleTab
+                title='注册与登录策略'
+                icon={
+                  <UserPlus
+                    size={20}
+                    className='text-gray-600 dark:text-gray-400'
+                  />
+                }
+                isExpanded={expandedTabs.registrationConfig}
+                onToggle={() => toggleTab('registrationConfig')}
+              >
+                <RegistrationConfigComponent
+                  config={config}
+                  refreshConfig={fetchConfig}
+                />
+              </CollapsibleTab>
 
-          {/* 个性化配置标签 */}
-          <CollapsibleTab
-            title='个性化配置'
-            icon={
-              <Palette size={20} className='text-gray-600 dark:text-gray-400' />
-            }
-            isExpanded={expandedTabs.themeConfig}
-            onToggle={() => toggleTab('themeConfig')}
-          >
-            <ThemeConfigComponent config={config} refreshConfig={fetchConfig} />
-          </CollapsibleTab>
+              <CollapsibleTab
+                title='个性化配置'
+                icon={
+                  <Palette
+                    size={20}
+                    className='text-gray-600 dark:text-gray-400'
+                  />
+                }
+                isExpanded={expandedTabs.themeConfig}
+                onToggle={() => toggleTab('themeConfig')}
+              >
+                <ThemeConfigComponent
+                  config={config}
+                  refreshConfig={fetchConfig}
+                />
+              </CollapsibleTab>
+            </>
+          )}
 
           <div className='space-y-4'>
             {/* 用户管理标签 */}
@@ -18554,78 +18073,85 @@ function AdminPageClient() {
               <VideoSourceConfig config={config} refreshConfig={fetchConfig} />
             </CollapsibleTab>
 
-            <CollapsibleTab
-              title='视频源脚本'
-              icon={
-                <Bot size={20} className='text-gray-600 dark:text-gray-400' />
-              }
-              isExpanded={expandedTabs.sourceScriptLab}
-              onToggle={() => toggleTab('sourceScriptLab')}
-            >
-              <VideoSourceScriptLab />
-            </CollapsibleTab>
-
-            <CollapsibleTab
-              title='音乐配置'
-              icon={
-                <svg
-                  width='20'
-                  height='20'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2'
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  className='text-gray-600 dark:text-gray-400'
+            {role === 'owner' && (
+              <>
+                <CollapsibleTab
+                  title='视频源脚本'
+                  icon={
+                    <Bot
+                      size={20}
+                      className='text-gray-600 dark:text-gray-400'
+                    />
+                  }
+                  isExpanded={expandedTabs.sourceScriptLab}
+                  onToggle={() => toggleTab('sourceScriptLab')}
                 >
-                  <path d='M9 18V5l12-2v13' />
-                  <circle cx='6' cy='18' r='3' />
-                  <circle cx='18' cy='16' r='3' />
-                </svg>
-              }
-              isExpanded={expandedTabs.musicConfig}
-              onToggle={() => toggleTab('musicConfig')}
-            >
-              <MusicConfigComponent
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
+                  <VideoSourceScriptLab />
+                </CollapsibleTab>
 
-            <CollapsibleTab
-              title='漫画配置'
-              icon={
-                <BookOpen
-                  size={20}
-                  className='text-gray-600 dark:text-gray-400'
-                />
-              }
-              isExpanded={expandedTabs.suwayomiConfig}
-              onToggle={() => toggleTab('suwayomiConfig')}
-            >
-              <SuwayomiConfigComponent
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
+                <CollapsibleTab
+                  title='音乐配置'
+                  icon={
+                    <svg
+                      width='20'
+                      height='20'
+                      viewBox='0 0 24 24'
+                      fill='none'
+                      stroke='currentColor'
+                      strokeWidth='2'
+                      strokeLinecap='round'
+                      strokeLinejoin='round'
+                      className='text-gray-600 dark:text-gray-400'
+                    >
+                      <path d='M9 18V5l12-2v13' />
+                      <circle cx='6' cy='18' r='3' />
+                      <circle cx='18' cy='16' r='3' />
+                    </svg>
+                  }
+                  isExpanded={expandedTabs.musicConfig}
+                  onToggle={() => toggleTab('musicConfig')}
+                >
+                  <MusicConfigComponent
+                    config={config}
+                    refreshConfig={fetchConfig}
+                  />
+                </CollapsibleTab>
 
-            <CollapsibleTab
-              title='电子书配置'
-              icon={
-                <BookMarked
-                  size={20}
-                  className='text-gray-600 dark:text-gray-400'
-                />
-              }
-              isExpanded={expandedTabs.opdsConfig}
-              onToggle={() => toggleTab('opdsConfig')}
-            >
-              <OPDSConfigComponent
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
+                <CollapsibleTab
+                  title='漫画配置'
+                  icon={
+                    <BookOpen
+                      size={20}
+                      className='text-gray-600 dark:text-gray-400'
+                    />
+                  }
+                  isExpanded={expandedTabs.suwayomiConfig}
+                  onToggle={() => toggleTab('suwayomiConfig')}
+                >
+                  <SuwayomiConfigComponent
+                    config={config}
+                    refreshConfig={fetchConfig}
+                  />
+                </CollapsibleTab>
+
+                <CollapsibleTab
+                  title='电子书配置'
+                  icon={
+                    <BookMarked
+                      size={20}
+                      className='text-gray-600 dark:text-gray-400'
+                    />
+                  }
+                  isExpanded={expandedTabs.opdsConfig}
+                  onToggle={() => toggleTab('opdsConfig')}
+                >
+                  <OPDSConfigComponent
+                    config={config}
+                    refreshConfig={fetchConfig}
+                  />
+                </CollapsibleTab>
+              </>
+            )}
 
             {/* 电视直播源配置标签 */}
             <CollapsibleTab
@@ -18651,169 +18177,167 @@ function AdminPageClient() {
               <WebLiveConfig config={config} refreshConfig={fetchConfig} />
             </CollapsibleTab>
 
-            {/* 私人影库大类 */}
-            <CollapsibleTab
-              title='私人影库'
-              icon={
-                <Database
-                  size={20}
-                  className='text-yellow-700 dark:text-yellow-400'
-                />
-              }
-              isExpanded={expandedTabs.mediaLibrary}
-              onToggle={() => toggleTab('mediaLibrary')}
-              isParent={true}
-            >
-              <div className='space-y-4'>
-                {/* Openlist配置子标签 */}
+            {role === 'owner' && (
+              <>
+                {/* 私人影库大类 */}
                 <CollapsibleTab
-                  title='Openlist配置'
+                  title='私人影库'
                   icon={
-                    <FolderOpen
+                    <Database
+                      size={20}
+                      className='text-yellow-700 dark:text-yellow-400'
+                    />
+                  }
+                  isExpanded={expandedTabs.mediaLibrary}
+                  onToggle={() => toggleTab('mediaLibrary')}
+                  isParent={true}
+                >
+                  <div className='space-y-4'>
+                    {/* Openlist配置子标签 */}
+                    <CollapsibleTab
+                      title='Openlist配置'
+                      icon={
+                        <FolderOpen
+                          size={20}
+                          className='text-gray-600 dark:text-gray-400'
+                        />
+                      }
+                      isExpanded={expandedTabs.openListConfig}
+                      onToggle={() => toggleTab('openListConfig')}
+                    >
+                      <OpenListConfigComponent
+                        config={config}
+                        refreshConfig={fetchConfig}
+                      />
+                    </CollapsibleTab>
+
+                    {/* Emby 媒体库子标签 */}
+                    <CollapsibleTab
+                      title='Emby 媒体库'
+                      icon={
+                        <FolderOpen
+                          size={20}
+                          className='text-gray-600 dark:text-gray-400'
+                        />
+                      }
+                      isExpanded={expandedTabs.embyConfig}
+                      onToggle={() => toggleTab('embyConfig')}
+                    >
+                      <EmbyConfigComponent
+                        config={config}
+                        refreshConfig={fetchConfig}
+                      />
+                    </CollapsibleTab>
+
+                    {/* 小雅配置子标签 */}
+                    <CollapsibleTab
+                      title='小雅配置'
+                      icon={
+                        <FolderOpen
+                          size={20}
+                          className='text-gray-600 dark:text-gray-400'
+                        />
+                      }
+                      isExpanded={expandedTabs.xiaoyaConfig}
+                      onToggle={() => toggleTab('xiaoyaConfig')}
+                    >
+                      <XiaoyaConfigComponent
+                        config={config}
+                        refreshConfig={fetchConfig}
+                      />
+                    </CollapsibleTab>
+                    {/* 追番订阅子标签 */}
+                    <CollapsibleTab
+                      title='追番订阅'
+                      icon={
+                        <Cat
+                          size={20}
+                          className='text-gray-600 dark:text-gray-400'
+                        />
+                      }
+                      isExpanded={expandedTabs.animeSubscription}
+                      onToggle={() => toggleTab('animeSubscription')}
+                    >
+                      <AnimeSubscriptionComponent
+                        config={config}
+                        refreshConfig={fetchConfig}
+                      />
+                    </CollapsibleTab>
+
+                    <CollapsibleTab
+                      title='网盘配置'
+                      icon={
+                        <Cloud
+                          size={20}
+                          className='text-gray-600 dark:text-gray-400'
+                        />
+                      }
+                      isExpanded={expandedTabs.netDiskConfig}
+                      onToggle={() => toggleTab('netDiskConfig')}
+                    >
+                      <NetDiskConfigComponent
+                        config={config}
+                        refreshConfig={fetchConfig}
+                      />
+                    </CollapsibleTab>
+                  </div>
+                </CollapsibleTab>
+
+                {/* AI配置标签 */}
+                <CollapsibleTab
+                  title='AI设定'
+                  icon={
+                    <Bot
                       size={20}
                       className='text-gray-600 dark:text-gray-400'
                     />
                   }
-                  isExpanded={expandedTabs.openListConfig}
-                  onToggle={() => toggleTab('openListConfig')}
+                  isExpanded={expandedTabs.aiConfig}
+                  onToggle={() => toggleTab('aiConfig')}
                 >
-                  <OpenListConfigComponent
+                  <AIConfigComponent
                     config={config}
                     refreshConfig={fetchConfig}
                   />
                 </CollapsibleTab>
 
-                {/* Emby 媒体库子标签 */}
+                {/* 邮件配置标签 */}
                 <CollapsibleTab
-                  title='Emby 媒体库'
+                  title='邮件配置'
                   icon={
-                    <FolderOpen
+                    <Mail
                       size={20}
                       className='text-gray-600 dark:text-gray-400'
                     />
                   }
-                  isExpanded={expandedTabs.embyConfig}
-                  onToggle={() => toggleTab('embyConfig')}
+                  isExpanded={expandedTabs.emailConfig}
+                  onToggle={() => toggleTab('emailConfig')}
                 >
-                  <EmbyConfigComponent
+                  <EmailConfigComponent
                     config={config}
                     refreshConfig={fetchConfig}
                   />
                 </CollapsibleTab>
 
-                {/* 小雅配置子标签 */}
+                {/* Telegram Bot 配置标签 */}
                 <CollapsibleTab
-                  title='小雅配置'
+                  title='Telegram Bot'
                   icon={
-                    <FolderOpen
+                    <Send
                       size={20}
                       className='text-gray-600 dark:text-gray-400'
                     />
                   }
-                  isExpanded={expandedTabs.xiaoyaConfig}
-                  onToggle={() => toggleTab('xiaoyaConfig')}
+                  isExpanded={expandedTabs.telegramConfig}
+                  onToggle={() => toggleTab('telegramConfig')}
                 >
-                  <XiaoyaConfigComponent
+                  <TelegramConfigComponent
                     config={config}
                     refreshConfig={fetchConfig}
                   />
                 </CollapsibleTab>
-                {/* 求片管理子标签 */}
-                <CollapsibleTab
-                  title='求片管理'
-                  icon={
-                    <Video
-                      size={20}
-                      className='text-gray-600 dark:text-gray-400'
-                    />
-                  }
-                  isExpanded={expandedTabs.movieRequests}
-                  onToggle={() => toggleTab('movieRequests')}
-                >
-                  <MovieRequestsComponent
-                    config={config}
-                    refreshConfig={fetchConfig}
-                  />
-                </CollapsibleTab>
-
-                {/* 追番订阅子标签 */}
-                <CollapsibleTab
-                  title='追番订阅'
-                  icon={
-                    <Cat
-                      size={20}
-                      className='text-gray-600 dark:text-gray-400'
-                    />
-                  }
-                  isExpanded={expandedTabs.animeSubscription}
-                  onToggle={() => toggleTab('animeSubscription')}
-                >
-                  <AnimeSubscriptionComponent
-                    config={config}
-                    refreshConfig={fetchConfig}
-                  />
-                </CollapsibleTab>
-
-                <CollapsibleTab
-                  title='网盘配置'
-                  icon={
-                    <Cloud
-                      size={20}
-                      className='text-gray-600 dark:text-gray-400'
-                    />
-                  }
-                  isExpanded={expandedTabs.netDiskConfig}
-                  onToggle={() => toggleTab('netDiskConfig')}
-                >
-                  <NetDiskConfigComponent
-                    config={config}
-                    refreshConfig={fetchConfig}
-                  />
-                </CollapsibleTab>
-              </div>
-            </CollapsibleTab>
-
-            {/* AI配置标签 */}
-            <CollapsibleTab
-              title='AI设定'
-              icon={
-                <Bot size={20} className='text-gray-600 dark:text-gray-400' />
-              }
-              isExpanded={expandedTabs.aiConfig}
-              onToggle={() => toggleTab('aiConfig')}
-            >
-              <AIConfigComponent config={config} refreshConfig={fetchConfig} />
-            </CollapsibleTab>
-
-            {/* 邮件配置标签 */}
-            <CollapsibleTab
-              title='邮件配置'
-              icon={
-                <Mail size={20} className='text-gray-600 dark:text-gray-400' />
-              }
-              isExpanded={expandedTabs.emailConfig}
-              onToggle={() => toggleTab('emailConfig')}
-            >
-              <EmailConfigComponent
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
-
-            {/* Telegram Bot 配置标签 */}
-            <CollapsibleTab
-              title='Telegram Bot'
-              icon={
-                <Send size={20} className='text-gray-600 dark:text-gray-400' />
-              }
-              isExpanded={expandedTabs.telegramConfig}
-              onToggle={() => toggleTab('telegramConfig')}
-            >
-              <TelegramConfigComponent
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
+              </>
+            )}
 
             {/* 分类配置标签 */}
             <CollapsibleTab
@@ -18830,33 +18354,35 @@ function AdminPageClient() {
               <CategoryConfig config={config} refreshConfig={fetchConfig} />
             </CollapsibleTab>
 
-            {/* 自定义去广告标签 */}
-            <CollapsibleTab
-              title='自定义去广告'
-              icon={
-                <svg
-                  width='20'
-                  height='20'
-                  viewBox='0 0 24 24'
-                  fill='none'
-                  stroke='currentColor'
-                  strokeWidth='2'
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  className='text-gray-600 dark:text-gray-400'
-                >
-                  <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z' />
-                  <path d='M8 12h8' />
-                </svg>
-              }
-              isExpanded={expandedTabs.customAdFilter}
-              onToggle={() => toggleTab('customAdFilter')}
-            >
-              <CustomAdFilterConfig
-                config={config}
-                refreshConfig={fetchConfig}
-              />
-            </CollapsibleTab>
+            {/* 自定义去广告涉及全局播放链路，仅站长可改。 */}
+            {role === 'owner' && (
+              <CollapsibleTab
+                title='自定义去广告'
+                icon={
+                  <svg
+                    width='20'
+                    height='20'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    strokeWidth='2'
+                    strokeLinecap='round'
+                    strokeLinejoin='round'
+                    className='text-gray-600 dark:text-gray-400'
+                  >
+                    <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z' />
+                    <path d='M8 12h8' />
+                  </svg>
+                }
+                isExpanded={expandedTabs.customAdFilter}
+                onToggle={() => toggleTab('customAdFilter')}
+              >
+                <CustomAdFilterConfig
+                  config={config}
+                  refreshConfig={fetchConfig}
+                />
+              </CollapsibleTab>
+            )}
 
             {/* 数据迁移标签 - 仅站长可见 */}
             {role === 'owner' && (

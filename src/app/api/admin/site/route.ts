@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { normalizeApiBaseUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 
@@ -239,31 +240,37 @@ export async function POST(request: NextRequest) {
       (OIDCClientSecret !== undefined &&
         typeof OIDCClientSecret !== 'string') ||
       (OIDCButtonText !== undefined && typeof OIDCButtonText !== 'string') ||
-      (OIDCMinTrustLevel !== undefined && typeof OIDCMinTrustLevel !== 'number') ||
-      (AnalyticsEnabled !== undefined && typeof AnalyticsEnabled !== 'boolean') ||
+      (OIDCMinTrustLevel !== undefined &&
+        typeof OIDCMinTrustLevel !== 'number') ||
+      (AnalyticsEnabled !== undefined &&
+        typeof AnalyticsEnabled !== 'boolean') ||
       (AnalyticsProvider !== undefined &&
         AnalyticsProvider !== 'umami' &&
         AnalyticsProvider !== 'google' &&
         AnalyticsProvider !== 'clarity' &&
         AnalyticsProvider !== 'custom') ||
-      (AnalyticsScriptUrl !== undefined && typeof AnalyticsScriptUrl !== 'string') ||
-      (AnalyticsWebsiteId !== undefined && typeof AnalyticsWebsiteId !== 'string') ||
-      (AnalyticsCustomScript !== undefined && typeof AnalyticsCustomScript !== 'string')
+      (AnalyticsScriptUrl !== undefined &&
+        typeof AnalyticsScriptUrl !== 'string') ||
+      (AnalyticsWebsiteId !== undefined &&
+        typeof AnalyticsWebsiteId !== 'string') ||
+      (AnalyticsCustomScript !== undefined &&
+        typeof AnalyticsCustomScript !== 'string')
     ) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
 
     const adminConfig = await getConfig();
 
-    // 权限校验 - 使用v2用户系统
+    // 站点、注册与外部服务密钥属于站长级配置。
     if (username !== process.env.USERNAME) {
-      const userInfo = await db.getUserInfoV2(username);
-      if (!userInfo || userInfo.role !== 'admin' || userInfo.banned) {
-        return NextResponse.json({ error: '权限不足' }, { status: 401 });
-      }
+      return NextResponse.json(
+        { error: '仅站长可修改站点配置' },
+        { status: 403 }
+      );
     }
 
     // 更新缓存中的站点设置
+    // API Base URL 统一去尾斜杠，避免运行时拼接路径出现 //
     adminConfig.SiteConfig = {
       SiteName,
       Announcement,
@@ -271,33 +278,34 @@ export async function POST(request: NextRequest) {
       SearchDownstreamMaxPage,
       SiteInterfaceCacheTime,
       DoubanProxyType,
-      DoubanProxy,
+      DoubanProxy: normalizeApiBaseUrl(DoubanProxy),
       DoubanImageProxyType,
-      DoubanImageProxy,
+      DoubanImageProxy: normalizeApiBaseUrl(DoubanImageProxy),
       DisableYellowFilter,
       FluidSearch,
       DanmakuSourceType,
-      DanmakuApiBase,
+      DanmakuApiBase: normalizeApiBaseUrl(DanmakuApiBase),
       DanmakuApiToken,
       DanmakuAutoLoadDefault,
-      TMDBApiKey,
-      TMDBProxy,
-      TMDBReverseProxy,
+      // TMDB has been removed from the deployed product surface.
+      TMDBApiKey: '',
+      TMDBProxy: '',
+      TMDBReverseProxy: '',
       BangumiDataSource,
-      BangumiApiBaseUrl,
-      BangumiImageBaseUrl,
-      BangumiProxy,
-      BannerDataSource,
-      RecommendationDataSource,
-      PansouApiUrl,
+      BangumiApiBaseUrl: normalizeApiBaseUrl(BangumiApiBaseUrl),
+      BangumiImageBaseUrl: normalizeApiBaseUrl(BangumiImageBaseUrl),
+      BangumiProxy: normalizeApiBaseUrl(BangumiProxy),
+      BannerDataSource: 'Douban',
+      RecommendationDataSource: 'Douban',
+      PansouApiUrl: normalizeApiBaseUrl(PansouApiUrl),
       PansouUsername,
       PansouPassword,
       PansouKeywordBlocklist,
-      MagnetProxy,
-      MagnetMikanReverseProxy,
-      MagnetDmhyReverseProxy,
-      MagnetAcgripReverseProxy,
-      MagnetNyaaReverseProxy,
+      MagnetProxy: normalizeApiBaseUrl(MagnetProxy),
+      MagnetMikanReverseProxy: normalizeApiBaseUrl(MagnetMikanReverseProxy),
+      MagnetDmhyReverseProxy: normalizeApiBaseUrl(MagnetDmhyReverseProxy),
+      MagnetAcgripReverseProxy: normalizeApiBaseUrl(MagnetAcgripReverseProxy),
+      MagnetNyaaReverseProxy: normalizeApiBaseUrl(MagnetNyaaReverseProxy),
       EnableComments,
       CustomAdFilterCode,
       CustomAdFilterVersion,
@@ -311,7 +319,7 @@ export async function POST(request: NextRequest) {
       DefaultUserTags,
       EnableOIDCLogin,
       EnableOIDCRegistration,
-      OIDCIssuer,
+      OIDCIssuer: normalizeApiBaseUrl(OIDCIssuer),
       OIDCAuthorizationEndpoint,
       OIDCTokenEndpoint,
       OIDCUserInfoEndpoint,

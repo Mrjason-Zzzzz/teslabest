@@ -4,7 +4,8 @@ import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
 
-const BUILTIN_DANMAKU_API_BASE = 'https://mtvpls-danmu.netlify.app/87654321';
+const BUILTIN_DANMAKU_API_BASE = 'https://danmuapi-plum-six.vercel.app/980728';
+const BUILTIN_DANMAKU_API_TOKEN = '980728';
 const DEFAULT_LIVE_REFRESH_INTERVAL_HOURS = 12;
 
 function normalizeLiveRefreshIntervalHours(
@@ -289,12 +290,16 @@ async function getInitConfig(
         (hasCustomDanmakuEnv
           ? 'http://localhost:9321'
           : BUILTIN_DANMAKU_API_BASE),
-      DanmakuApiToken: process.env.DANMAKU_API_TOKEN || '87654321',
-      DanmakuAutoLoadDefault: true,
-      // TMDB配置
-      TMDBApiKey: process.env.TMDB_API_KEY || '',
-      TMDBProxy: process.env.TMDB_PROXY || '',
-      TMDBReverseProxy: process.env.TMDB_REVERSE_PROXY || '',
+      DanmakuApiToken:
+        process.env.DANMAKU_API_TOKEN || BUILTIN_DANMAKU_API_TOKEN,
+      // Fetching a full comment document is deliberately opt-in. This keeps
+      // the first frame independent from the external danmaku service.
+      DanmakuAutoLoadDefault: false,
+      // TMDB is retired in P002. Empty compatibility fields allow older
+      // persisted configs to load without deploying or exposing the feature.
+      TMDBApiKey: '',
+      TMDBProxy: '',
+      TMDBReverseProxy: '',
       // 动漫/Bangumi配置
       BangumiDataSource:
         (process.env.NEXT_PUBLIC_BANGUMI_DATA_SOURCE as any) || 'direct',
@@ -548,8 +553,8 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       FluidSearch: true,
       DanmakuSourceType: 'builtin',
       DanmakuApiBase: BUILTIN_DANMAKU_API_BASE,
-      DanmakuApiToken: '87654321',
-      DanmakuAutoLoadDefault: true,
+      DanmakuApiToken: BUILTIN_DANMAKU_API_TOKEN,
+      DanmakuAutoLoadDefault: false,
       PansouApiUrl: '',
       PansouUsername: '',
       PansouPassword: '',
@@ -573,6 +578,12 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       DefaultUserTags: [],
     };
   }
+  adminConfig.SiteConfig.TMDBApiKey = '';
+  adminConfig.SiteConfig.TMDBProxy = '';
+  adminConfig.SiteConfig.TMDBReverseProxy = '';
+  adminConfig.SiteConfig.BannerDataSource = 'Douban';
+  adminConfig.SiteConfig.RecommendationDataSource = 'Douban';
+  adminConfig.SiteConfig.EnableMovieRequest = false;
   // 确保弹幕配置存在
   if (adminConfig.SiteConfig.DanmakuSourceType === undefined) {
     adminConfig.SiteConfig.DanmakuSourceType = 'custom';
@@ -584,10 +595,10 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
         : 'http://localhost:9321';
   }
   if (!adminConfig.SiteConfig.DanmakuApiToken) {
-    adminConfig.SiteConfig.DanmakuApiToken = '87654321';
+    adminConfig.SiteConfig.DanmakuApiToken = BUILTIN_DANMAKU_API_TOKEN;
   }
   if (adminConfig.SiteConfig.DanmakuAutoLoadDefault === undefined) {
-    adminConfig.SiteConfig.DanmakuAutoLoadDefault = true;
+    adminConfig.SiteConfig.DanmakuAutoLoadDefault = false;
   }
   // 确保评论开关存在
   if (adminConfig.SiteConfig.EnableComments === undefined) {

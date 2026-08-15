@@ -79,9 +79,8 @@ export default async function RootLayout({
     process.env.NEXT_PUBLIC_DISABLE_YELLOW_FILTER === 'true';
   let fluidSearch = process.env.NEXT_PUBLIC_FLUID_SEARCH !== 'false';
   let enableComments = false;
-  let danmakuAutoLoadDefault = true;
-  let recommendationDataSource = 'Mixed';
-  let tmdbApiKey = '';
+  let danmakuAutoLoadDefault = false;
+  let recommendationDataSource = 'Douban';
   let bangumiDataSource =
     (process.env.NEXT_PUBLIC_BANGUMI_DATA_SOURCE as any) || 'direct';
   let bangumiApiBaseUrl =
@@ -169,10 +168,8 @@ export default async function RootLayout({
     }));
     fluidSearch = config.SiteConfig.FluidSearch;
     enableComments = config.SiteConfig.EnableComments;
-    danmakuAutoLoadDefault = config.SiteConfig.DanmakuAutoLoadDefault !== false;
-    recommendationDataSource =
-      config.SiteConfig.RecommendationDataSource || 'Mixed';
-    tmdbApiKey = config.SiteConfig.TMDBApiKey || '';
+    danmakuAutoLoadDefault = config.SiteConfig.DanmakuAutoLoadDefault === true;
+    recommendationDataSource = 'Douban';
     bangumiDataSource = config.SiteConfig.BangumiDataSource || 'direct';
     bangumiApiBaseUrl =
       config.SiteConfig.BangumiApiBaseUrl || 'https://api.bgm.tv';
@@ -216,7 +213,7 @@ export default async function RootLayout({
     aiDefaultMessageNoVideo = config.AIConfig?.DefaultMessageNoVideo || '';
     aiDefaultMessageWithVideo = config.AIConfig?.DefaultMessageWithVideo || '';
     // 求片功能配置
-    enableMovieRequest = config.SiteConfig.EnableMovieRequest ?? true;
+    enableMovieRequest = false;
     // 网络直播功能配置
     liveEnabled = (config.LiveConfig || []).some((source) => !source.disabled);
     webLiveEnabled = config.WebLiveEnabled ?? false;
@@ -426,7 +423,6 @@ export default async function RootLayout({
             siteName={siteName}
             announcement={announcement}
             announcementDisplayMode={announcementDisplayMode}
-            tmdbApiKey={tmdbApiKey}
           >
             <WatchRoomProvider>
               <DownloadProvider>

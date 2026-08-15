@@ -7,7 +7,9 @@ import { getDanmakuApiBaseUrl } from '@/lib/danmaku/config';
 export const runtime = 'nodejs';
 
 // 解析弹幕 XML 为 JSON
-function parseXmlDanmaku(xmlText: string): Array<{ p: string; m: string; cid: number }> {
+function parseXmlDanmaku(
+  xmlText: string
+): Array<{ p: string; m: string; cid: number }> {
   const comments: Array<{ p: string; m: string; cid: number }> = [];
 
   // 使用正则表达式提取所有 <d> 标签
@@ -30,6 +32,19 @@ function parseXmlDanmaku(xmlText: string): Array<{ p: string; m: string; cid: nu
   }
 
   return comments;
+}
+
+function sampleComments(
+  comments: Array<{ p: string; m: string; cid: number }>,
+  limit = 1500
+) {
+  if (comments.length <= limit) return comments;
+  const step = comments.length / limit;
+  return Array.from(
+    { length: limit },
+    (_, index) =>
+      comments[Math.min(comments.length - 1, Math.floor(index * step))]
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -60,21 +75,24 @@ export async function GET(request: NextRequest) {
       apiUrl = `${baseUrl}/api/v2/comment/${episodeId}?format=xml`;
     } else {
       // 通过视频 URL 获取弹幕 - 使用 XML 格式
-      apiUrl = `${baseUrl}/api/v2/comment?url=${encodeURIComponent(url!)}&format=xml`;
+      apiUrl = `${baseUrl}/api/v2/comment?url=${encodeURIComponent(
+        url!
+      )}&format=xml`;
     }
 
     // 添加超时控制
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2分钟超时
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
       const response = await fetch(apiUrl, {
         method: 'GET',
         headers: {
-          'Accept': 'application/xml, text/xml',
+          Accept: 'application/xml, text/xml',
         },
         signal: controller.signal,
         keepalive: true,
+        next: { revalidate: 24 * 60 * 60 },
       });
 
       clearTimeout(timeoutId);
@@ -87,12 +105,25 @@ export async function GET(request: NextRequest) {
       const xmlText = await response.text();
 
       // 解析 XML 为 JSON
-      const comments = parseXmlDanmaku(xmlText);
+      // The upstream document can exceed a megabyte. Sampling evenly keeps
+      // comments across the full timeline while avoiding a huge JSON payload
+      // and DOM pressure on the vehicle browser.
+      const allComments = parseXmlDanmaku(xmlText);
+      const comments = sampleComments(allComments);
 
-      return NextResponse.json({
-        count: comments.length,
-        comments,
-      });
+      return NextResponse.json(
+        {
+          count: allComments.length,
+          comments,
+          sampled: comments.length < allComments.length,
+        },
+        {
+          headers: {
+            'Cache-Control':
+              'public, s-maxage=86400, stale-while-revalidate=604800',
+          },
+        }
+      );
     } catch (fetchError) {
       clearTimeout(timeoutId);
 

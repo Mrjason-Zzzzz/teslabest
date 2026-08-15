@@ -39,7 +39,9 @@ export async function middleware(request: NextRequest) {
   if (!process.env.PASSWORD) {
     // 如果未配置密码，重定向到警告页面
     const warningUrl = new URL('/warning', request.url);
-    return warningUrl.pathname === pathname ? NextResponse.next() : NextResponse.redirect(warningUrl);
+    return warningUrl.pathname === pathname
+      ? NextResponse.next()
+      : NextResponse.redirect(warningUrl);
   }
 
   // 从cookie获取认证信息
@@ -59,13 +61,20 @@ export async function middleware(request: NextRequest) {
 
   // 其他模式：验证签名和时间戳，支持自动续期
   // 检查是否有用户名（非localStorage模式下密码不存储在cookie中）
-  if (!authInfo.username || !authInfo.role || !authInfo.signature || !authInfo.timestamp) {
+  if (
+    !authInfo.username ||
+    !authInfo.role ||
+    !authInfo.signature ||
+    !authInfo.timestamp
+  ) {
     return handleAuthFailure(request, pathname);
   }
 
   // 强制要求新版 Cookie（必须包含 tokenId 和 refreshToken）
   if (!authInfo.tokenId || !authInfo.refreshToken || !authInfo.refreshExpires) {
-    console.log(`Old cookie format detected for ${authInfo.username}, forcing re-login`);
+    console.log(
+      `Old cookie format detected for ${authInfo.username}, forcing re-login`
+    );
     return handleAuthFailure(request, pathname);
   }
 
@@ -93,7 +102,9 @@ export async function middleware(request: NextRequest) {
 
   // 先检查 Refresh Token 是否过期
   if (now >= authInfo.refreshExpires) {
-    console.log(`Refresh token expired for ${authInfo.username}, redirecting to login`);
+    console.log(
+      `Refresh token expired for ${authInfo.username}, redirecting to login`
+    );
     return handleAuthFailure(request, pathname);
   }
 
@@ -129,9 +140,49 @@ export async function middleware(request: NextRequest) {
     return handleAuthFailure(request, pathname);
   }
 
+  // Owner and admin are intentionally different roles. Admins operate users
+  // and media sources; system credentials, extensions, migrations and global
+  // playback policy remain owner-only. This edge guard complements each API's
+  // own authorization check and prevents hidden UI from becoming a backdoor.
+  if (authInfo.role !== 'owner' && isOwnerOnlyAdminRequest(request)) {
+    return NextResponse.json({ error: '仅站长可执行此操作' }, { status: 403 });
+  }
+
   // 签名验证通过
   // 注意：Token 续期由前端负责，Middleware 不再自动刷新
   return NextResponse.next();
+}
+
+function isOwnerOnlyAdminRequest(request: NextRequest): boolean {
+  const { pathname } = request.nextUrl;
+  if (pathname === '/api/admin/config') return request.method !== 'GET';
+
+  const ownerOnlyPrefixes = [
+    '/api/admin/site',
+    '/api/admin/theme',
+    '/api/admin/config_file',
+    '/api/admin/config_subscription',
+    '/api/admin/reset',
+    '/api/admin/reload',
+    '/api/admin/data_migration',
+    '/api/admin/migrate-users',
+    '/api/admin/source-script',
+    '/api/admin/openlist',
+    '/api/admin/emby',
+    '/api/admin/xiaoya',
+    '/api/admin/netdisk',
+    '/api/admin/suwayomi',
+    '/api/admin/opds',
+    '/api/admin/music',
+    '/api/admin/ai',
+    '/api/admin/email',
+    '/api/admin/telegram',
+    '/api/admin/legado-subscriptions',
+    '/api/admin/anime-subscription',
+  ];
+  return ownerOnlyPrefixes.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
 }
 
 // 验证签名
@@ -153,7 +204,7 @@ async function verifySignature(
     role,
     timestamp,
     accountStatus,
-    accountExpiresAt
+    accountExpiresAt,
   });
   const messageData = encoder.encode(dataToSign);
 
@@ -221,7 +272,11 @@ function shouldSkipAuth(pathname: string): boolean {
 }
 
 function isTVModePath(pathname: string): boolean {
-  return pathname === '/tv' || pathname.startsWith('/tv/') || pathname.startsWith('/api/tv-remote/');
+  return (
+    pathname === '/tv' ||
+    pathname.startsWith('/tv/') ||
+    pathname.startsWith('/api/tv-remote/')
+  );
 }
 
 // 配置middleware匹配规则
