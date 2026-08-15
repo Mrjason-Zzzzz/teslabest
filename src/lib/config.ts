@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
 
-const BUILTIN_DANMAKU_API_BASE = 'https://danmuapi-plum-six.vercel.app/980728';
+const BUILTIN_DANMAKU_API_BASE = 'https://danmu.dorezst.cn/980728';
 const BUILTIN_DANMAKU_API_TOKEN = '980728';
 const DEFAULT_LIVE_REFRESH_INTERVAL_HOURS = 12;
 

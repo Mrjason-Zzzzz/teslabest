@@ -10617,7 +10617,7 @@ const SiteConfigComponent = ({
     DisableYellowFilter: false,
     FluidSearch: true,
     DanmakuSourceType: 'builtin',
-    DanmakuApiBase: 'https://danmuapi-plum-six.vercel.app/980728',
+    DanmakuApiBase: 'https://danmu.dorezst.cn/980728',
     DanmakuApiToken: '980728',
     DanmakuAutoLoadDefault: false,
     TMDBApiKey: '',

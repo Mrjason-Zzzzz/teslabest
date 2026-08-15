@@ -4,7 +4,7 @@ import type { AdminConfig } from '@/lib/admin.types';
 // token is part of this service's public route contract rather than a client
 // credential; browsers still access it through our same-origin API proxy.
 export const BUILTIN_DANMAKU_API_BASE =
-  'https://danmuapi-plum-six.vercel.app/980728';
+  'https://danmu.dorezst.cn/980728';
 export const BUILTIN_DANMAKU_API_TOKEN = '980728';
 
 function trimTrailingSlash(value: string) {
