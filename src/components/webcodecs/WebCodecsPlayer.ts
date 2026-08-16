@@ -12,7 +12,9 @@ import {
 } from '@/lib/tesla/audio-session';
 import {
   chooseCommonAvStart,
+  getAvDriftAction,
   getTeslaAvSyncPolicy,
+  shouldContinueAudioPts,
   shouldResetAudioSchedule,
 } from '@/lib/tesla/av-sync';
 
@@ -110,6 +112,8 @@ export class WebCodecsPlayer {
   private firstVideoFrameReported = false;
   private decodedFrames = 0;
   private droppedFrames = 0;
+  private lastAvDriftSec = 0;
+  private avSyncCorrections = 0;
   private statsMark = { t: 0, rendered: 0, decoded: 0 };
 
   private audioCtx: AudioContext | null = null;
@@ -206,6 +210,8 @@ export class WebCodecsPlayer {
     this.firstVideoFrameReported = false;
     this.decodedFrames = 0;
     this.droppedFrames = 0;
+    this.lastAvDriftSec = 0;
+    this.avSyncCorrections = 0;
     this.statsMark = { t: performance.now(), rendered: 0, decoded: 0 };
     this.setState('buffering');
     console.log('[WebCodecsPlayer] load url=' + url + ' startAt=' + startAt);
@@ -862,8 +868,11 @@ export class WebCodecsPlayer {
     this.audioRemainder = extracted.remainder;
 
     let framePts =
-      this.nextAudioPtsSec !== null &&
-      Math.abs(pesPts - this.nextAudioPtsSec) < 0.5
+      shouldContinueAudioPts(
+        pesPts,
+        this.nextAudioPtsSec,
+        this.isLivePlaylist
+      )
         ? this.nextAudioPtsSec
         : pesPts;
 
@@ -1066,9 +1075,14 @@ export class WebCodecsPlayer {
         this.maybePrime();
         this.drawFirstFrame();
       } else {
-        this.scheduleAudio();
         const clock = this.getMediaTime();
         this.presentVideo(clock);
+        const driftAction = this.getCurrentAvDriftAction(clock);
+        if (driftAction === 'reset-clock') {
+          this.resetClockForAvDrift();
+          return;
+        }
+        if (driftAction === 'none') this.scheduleAudio();
         this.reportTime(clock);
         this.maybeReportEnded(clock);
         this.maybeEnterBuffering();
@@ -1581,6 +1595,33 @@ export class WebCodecsPlayer {
     }
   }
 
+  private getCurrentAvDriftAction(clock: number) {
+    if (!this.isLivePlaylist || this.lastRenderedMediaTime <= 0) return 'none';
+    this.lastAvDriftSec = this.lastRenderedMediaTime - clock;
+    return getAvDriftAction(
+      this.lastRenderedMediaTime,
+      clock,
+      this.isLivePlaylist
+    );
+  }
+
+  private resetClockForAvDrift() {
+    const now = performance.now();
+    this.avSyncCorrections++;
+
+    for (const source of this.activeSources) {
+      try {
+        source.stop();
+      } catch {}
+    }
+    this.activeSources.clear();
+    this.nextAudioStartTime = 0;
+    this.baseMediaTime = Math.max(0, this.lastRenderedMediaTime);
+    this.ctxStartTime = null;
+    this.bufferingStartedAtMs = now;
+    this.setState('buffering');
+  }
+
   private reportTime(clock: number) {
     const now = performance.now();
     if (now - this.lastTimeReportMs < 250) return;
@@ -1864,6 +1905,8 @@ export class WebCodecsPlayer {
       demuxAudioQueue: this.encodedAudio.length - this.aIdx,
       audioCtx: this.audioCtx?.state ?? 'none',
       videoDecoderRecoveries: this.videoDecoderRecoveryCount,
+      avDriftMs: Math.round(this.lastAvDriftSec * 1000),
+      avSyncCorrections: this.avSyncCorrections,
     };
   }
 
