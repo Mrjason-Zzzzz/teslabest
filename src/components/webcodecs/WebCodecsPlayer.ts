@@ -104,9 +104,14 @@ export class WebCodecsPlayer {
   private fragmentTimelineStartSec: number | null = null;
   private fragmentTimelineOffsetSec: number | null = null;
   private fragmentContinuityCounter: number | null = null;
+  private fragmentTimelineEpoch = 0;
+  private activeVideoTimelineEpoch: number | null = null;
+  private activeAudioTimelineEpoch: number | null = null;
 
   private spsNalu: Uint8Array | null = null;
   private ppsNalu: Uint8Array | null = null;
+  private parsedVideoConfig: any = null;
+  private parsedAudioConfig: any = null;
 
   private renderedFrames = 0;
   private firstVideoFrameReported = false;
@@ -198,6 +203,11 @@ export class WebCodecsPlayer {
     this.fragmentTimelineStartSec = null;
     this.fragmentTimelineOffsetSec = null;
     this.fragmentContinuityCounter = null;
+    this.fragmentTimelineEpoch = 0;
+    this.activeVideoTimelineEpoch = null;
+    this.activeAudioTimelineEpoch = null;
+    this.parsedVideoConfig = null;
+    this.parsedAudioConfig = null;
     this.checkedTsContainer = false;
     this.lastHlsClockSyncMs = 0;
     this.lastRenderedAtMs = performance.now();
@@ -328,7 +338,7 @@ export class WebCodecsPlayer {
         }
       }
       this.debugStats.bytesLoaded += bytes.byteLength;
-      this.prepareFragmentTimeline(frag);
+      this.prepareFragmentTimeline(frag, generation);
       this.feedTsData(bytes, generation);
     };
 
@@ -737,7 +747,7 @@ export class WebCodecsPlayer {
     });
   }
 
-  private prepareFragmentTimeline(frag: any) {
+  private prepareFragmentTimeline(frag: any, generation = this.loadGeneration) {
     const start = Number(frag?.start);
     const cc = Number(frag?.cc);
     const hasStart = Number.isFinite(start);
@@ -752,6 +762,15 @@ export class WebCodecsPlayer {
       this.fragmentTimelineOffsetSec = null;
       this.audioRemainder = new Uint8Array(0);
       this.nextAudioPtsSec = null;
+    }
+    if (continuityChanged) {
+      // A discontinuity may switch PAT/PMT PIDs or restart the PES parser. The
+      // fragment is fetched ahead of playback, so only reset the demuxer here;
+      // decoded queues are switched later when their epoch reaches the pump.
+      this.fragmentTimelineEpoch++;
+      this.spsNalu = null;
+      this.ppsNalu = null;
+      this.initDemuxPipeline(generation);
     }
     if (hasCC) this.fragmentContinuityCounter = cc;
   }
@@ -818,25 +837,10 @@ export class WebCodecsPlayer {
       }
     }
 
-    if (!this.videoConfig && this.spsNalu && this.ppsNalu) {
+    if (this.spsNalu && this.ppsNalu) {
       const config = this.buildVideoConfig(this.spsNalu, this.ppsNalu);
-      this.videoConfig = config;
-      try {
-        const cfg: any = {
-          codec: config.codec,
-          codedWidth: config.codedWidth,
-          codedHeight: config.codedHeight,
-          description: config.description,
-          optimizeForLatency: false,
-        };
-        this.videoDecoder?.configure(cfg);
-        console.log(
-          '[WebCodecsPlayer] video decoder configured:',
-          config.codec,
-          config.codedWidth + 'x' + config.codedHeight
-        );
-      } catch (e) {
-        console.warn('[WebCodecsPlayer] video configure failed:', e);
+      if (!this.areDecoderConfigsEqual(config, this.parsedVideoConfig)) {
+        this.parsedVideoConfig = config;
       }
     }
 
@@ -848,6 +852,8 @@ export class WebCodecsPlayer {
       timestamp: Math.round(pts * 1e6),
       duration: 33000,
       data: frameData,
+      timelineEpoch: this.fragmentTimelineEpoch,
+      decoderConfig: this.parsedVideoConfig,
     });
     this.debugStats.videoSamples++;
   }
@@ -867,46 +873,32 @@ export class WebCodecsPlayer {
     const extracted = this.extractAdtsFrames(combined);
     this.audioRemainder = extracted.remainder;
 
-    let framePts =
-      shouldContinueAudioPts(
-        pesPts,
-        this.nextAudioPtsSec,
-        this.isLivePlaylist
-      )
-        ? this.nextAudioPtsSec
-        : pesPts;
+    let framePts = shouldContinueAudioPts(
+      pesPts,
+      this.nextAudioPtsSec,
+      this.isLivePlaylist
+    )
+      ? this.nextAudioPtsSec
+      : pesPts;
 
     for (const frame of extracted.frames) {
       const adts = this.parseAdts(frame);
       if (!adts) continue;
 
-      if (!this.audioConfig) {
-        const desc = this.buildAacConfig(
+      const nextAudioConfig = {
+        codec: 'mp4a.40.2',
+        sampleRate: adts.sampleRate,
+        numberOfChannels: adts.channels,
+        description: this.buildAacConfig(
           adts.sampleRate,
           adts.channels,
           adts.profile
-        );
-        this.audioConfig = {
-          codec: 'mp4a.40.2',
-          sampleRate: adts.sampleRate,
-          numberOfChannels: adts.channels,
-          description: desc,
-        };
-        try {
-          this.audioDecoder?.configure({
-            codec: 'mp4a.40.2',
-            sampleRate: adts.sampleRate,
-            numberOfChannels: adts.channels,
-            description: desc,
-          });
-          console.log(
-            '[WebCodecsPlayer] audio decoder configured:',
-            adts.sampleRate + 'Hz',
-            adts.channels + 'ch'
-          );
-        } catch (e) {
-          console.warn('[WebCodecsPlayer] audio configure failed:', e);
-        }
+        ),
+      };
+      if (
+        !this.areDecoderConfigsEqual(nextAudioConfig, this.parsedAudioConfig)
+      ) {
+        this.parsedAudioConfig = nextAudioConfig;
       }
 
       const headerLength = (frame[1] & 0x01) === 1 ? 7 : 9;
@@ -917,6 +909,8 @@ export class WebCodecsPlayer {
         timestamp: Math.round(framePts * 1e6),
         duration: Math.round(frameDurationSec * 1e6),
         data: frame.subarray(headerLength),
+        timelineEpoch: this.fragmentTimelineEpoch,
+        decoderConfig: this.parsedAudioConfig,
       });
       framePts += frameDurationSec;
       this.nextAudioPtsSec = framePts;
@@ -951,6 +945,104 @@ export class WebCodecsPlayer {
       });
     }
     return decoder;
+  }
+
+  private createAudioDecoder(generation = this.loadGeneration) {
+    const decoder = new AudioDecoder({
+      output: (data) => {
+        if (this.destroyed || generation !== this.loadGeneration) {
+          data.close();
+          return;
+        }
+        this.decodedAudio.push(data);
+      },
+      error: (e) => {
+        if (generation === this.loadGeneration)
+          this.fail('audio decoder: ' + e.message);
+      },
+    });
+    this.audioDecoder = decoder;
+    if (this.audioConfig) decoder.configure(this.audioConfig);
+    return decoder;
+  }
+
+  private configureVideoDecoder(config: any) {
+    if (!config || !this.videoDecoder) return;
+    this.videoConfig = config;
+    this.videoDecoder.configure({
+      codec: config.codec,
+      codedWidth: config.codedWidth,
+      codedHeight: config.codedHeight,
+      description: config.description,
+      optimizeForLatency: false,
+    });
+    this.needVideoKey = true;
+    console.log(
+      '[WebCodecsPlayer] video decoder configured:',
+      config.codec,
+      config.codedWidth + 'x' + config.codedHeight
+    );
+  }
+
+  private rebuildVideoDecoderForBoundary(config: any) {
+    const previous = this.videoDecoder;
+    this.videoDecoder = null;
+    try {
+      if (previous && previous.state !== 'closed') previous.close();
+    } catch {}
+    for (const frame of this.frameQueue) frame.close();
+    this.frameQueue = [];
+    if (config) this.videoConfig = config;
+    this.createVideoDecoder(this.loadGeneration);
+    this.needVideoKey = true;
+  }
+
+  private configureAudioDecoder(config: any) {
+    if (!config || !this.audioDecoder) return;
+    this.audioConfig = config;
+    this.audioDecoder.configure(config);
+    console.log(
+      '[WebCodecsPlayer] audio decoder configured:',
+      config.sampleRate + 'Hz',
+      config.numberOfChannels + 'ch'
+    );
+  }
+
+  private rebuildAudioDecoderForBoundary(config: any) {
+    const previous = this.audioDecoder;
+    this.audioDecoder = null;
+    try {
+      if (previous && previous.state !== 'closed') previous.close();
+    } catch {}
+    if (config) this.audioConfig = config;
+    this.createAudioDecoder(this.loadGeneration);
+  }
+
+  private areDecoderConfigsEqual(left: any, right: any): boolean {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    if (
+      left.codec !== right.codec ||
+      left.codedWidth !== right.codedWidth ||
+      left.codedHeight !== right.codedHeight ||
+      left.sampleRate !== right.sampleRate ||
+      left.numberOfChannels !== right.numberOfChannels
+    )
+      return false;
+
+    const leftDescription = left.description as Uint8Array | undefined;
+    const rightDescription = right.description as Uint8Array | undefined;
+    if (leftDescription === rightDescription) return true;
+    if (
+      !leftDescription ||
+      !rightDescription ||
+      leftDescription.byteLength !== rightDescription.byteLength
+    )
+      return false;
+    for (let index = 0; index < leftDescription.byteLength; index++) {
+      if (leftDescription[index] !== rightDescription[index]) return false;
+    }
+    return true;
   }
 
   private recoverVideoDecoder(error: Error, generation = this.loadGeneration) {
@@ -1016,19 +1108,7 @@ export class WebCodecsPlayer {
 
   private setupDecoders(generation = this.loadGeneration) {
     this.createVideoDecoder(generation);
-    this.audioDecoder = new AudioDecoder({
-      output: (data) => {
-        if (this.destroyed || generation !== this.loadGeneration) {
-          data.close();
-          return;
-        }
-        this.decodedAudio.push(data);
-      },
-      error: (e) => {
-        if (generation === this.loadGeneration)
-          this.fail('audio decoder: ' + e.message);
-      },
-    });
+    this.createAudioDecoder(generation);
   }
 
   private setupAudioGraph() {
@@ -1245,14 +1325,49 @@ export class WebCodecsPlayer {
   }
 
   private pumpVideo() {
-    const dec = this.videoDecoder;
-    if (!dec || dec.state !== 'configured') return;
+    let dec = this.videoDecoder;
+    if (!dec) return;
     const MAX_OUTSTANDING = this.isLivePlaylist ? 12 : 50;
     while (
       this.vIdx < this.encodedVideo.length &&
       this.frameQueue.length + dec.decodeQueueSize < MAX_OUTSTANDING
     ) {
-      const s = this.encodedVideo[this.vIdx++];
+      const s = this.encodedVideo[this.vIdx];
+      const epochChanged =
+        this.activeVideoTimelineEpoch !== null &&
+        s.timelineEpoch !== this.activeVideoTimelineEpoch;
+      const configChanged =
+        s.decoderConfig &&
+        !this.areDecoderConfigsEqual(s.decoderConfig, this.videoConfig);
+
+      if (epochChanged || configChanged) {
+        // Do not close a decoder while old-epoch frames are still visible.
+        // Once drained, rebuild before the new keyframe so old references can
+        // never corrupt the first pictures after a live splice.
+        if (this.frameQueue.length > 0 || dec.decodeQueueSize > 0) break;
+        if (!s.key) {
+          this.vIdx++;
+          continue;
+        }
+        this.rebuildVideoDecoderForBoundary(s.decoderConfig);
+        this.activeVideoTimelineEpoch = s.timelineEpoch;
+        dec = this.videoDecoder;
+        if (!dec || dec.state !== 'configured') return;
+      } else if (this.activeVideoTimelineEpoch === null) {
+        this.activeVideoTimelineEpoch = s.timelineEpoch;
+      }
+
+      if (dec.state !== 'configured') {
+        if (!s.decoderConfig || !s.key) {
+          this.vIdx++;
+          continue;
+        }
+        this.configureVideoDecoder(s.decoderConfig);
+        dec = this.videoDecoder;
+        if (!dec || dec.state !== 'configured') return;
+      }
+
+      this.vIdx++;
       if (this.needVideoKey) {
         if (!s.key) continue;
         this.needVideoKey = false;
@@ -1277,15 +1392,42 @@ export class WebCodecsPlayer {
   }
 
   private pumpAudio() {
-    const dec = this.audioDecoder;
-    if (!dec || dec.state !== 'configured') return;
+    let dec = this.audioDecoder;
+    if (!dec) return;
     while (
       this.aIdx < this.encodedAudio.length &&
       dec.decodeQueueSize < (this.isLivePlaylist ? 24 : 32) &&
       this.decodedAudio.length + dec.decodeQueueSize <
         (this.isLivePlaylist ? 96 : 160)
     ) {
-      const s = this.encodedAudio[this.aIdx++];
+      const s = this.encodedAudio[this.aIdx];
+      const epochChanged =
+        this.activeAudioTimelineEpoch !== null &&
+        s.timelineEpoch !== this.activeAudioTimelineEpoch;
+      const configChanged =
+        s.decoderConfig &&
+        !this.areDecoderConfigsEqual(s.decoderConfig, this.audioConfig);
+      if (epochChanged || configChanged) {
+        if (this.decodedAudio.length > 0 || dec.decodeQueueSize > 0) break;
+        this.rebuildAudioDecoderForBoundary(s.decoderConfig);
+        this.activeAudioTimelineEpoch = s.timelineEpoch;
+        dec = this.audioDecoder;
+        if (!dec) return;
+      } else if (this.activeAudioTimelineEpoch === null) {
+        this.activeAudioTimelineEpoch = s.timelineEpoch;
+      }
+
+      if (dec.state !== 'configured') {
+        if (!s.decoderConfig) {
+          this.aIdx++;
+          continue;
+        }
+        this.configureAudioDecoder(s.decoderConfig);
+        dec = this.audioDecoder;
+        if (!dec || dec.state !== 'configured') return;
+      }
+
+      this.aIdx++;
       try {
         dec.decode(
           new EncodedAudioChunk({
@@ -1511,7 +1653,8 @@ export class WebCodecsPlayer {
         this.ctxStartTime +
         (audibleTs - this.baseMediaTime) / this.playbackRate;
 
-      let when = Math.max(idealWhen, now + 0.03);
+      const scheduleFloor = now + syncPolicy.audioStartSafetySec;
+      let when = Math.max(idealWhen, scheduleFloor);
       if (this.nextAudioStartTime !== 0) {
         const driftSec = idealWhen - this.nextAudioStartTime;
         if (shouldResetAudioSchedule(driftSec, this.isLivePlaylist)) {
@@ -1525,9 +1668,9 @@ export class WebCodecsPlayer {
           }
           this.activeSources.clear();
           this.nextAudioStartTime = 0;
-          when = Math.max(idealWhen, now + 0.03);
+          when = Math.max(idealWhen, scheduleFloor);
         } else {
-          when = Math.max(this.nextAudioStartTime, now + 0.03);
+          when = Math.max(this.nextAudioStartTime, scheduleFloor);
         }
       }
       if (when > now + maxLeadSec + 0.12) break;
@@ -1596,8 +1739,9 @@ export class WebCodecsPlayer {
   }
 
   private getCurrentAvDriftAction(clock: number) {
-    if (!this.isLivePlaylist || this.lastRenderedMediaTime <= 0) return 'none';
-    this.lastAvDriftSec = this.lastRenderedMediaTime - clock;
+    if (this.useNativePitchPreservingAudio || this.lastRenderedMediaTime <= 0)
+      return 'none';
+    this.lastAvDriftSec = clock - this.lastRenderedMediaTime;
     return getAvDriftAction(
       this.lastRenderedMediaTime,
       clock,
@@ -1794,6 +1938,10 @@ export class WebCodecsPlayer {
     this.nextAudioPtsSec = null;
     this.spsNalu = null;
     this.ppsNalu = null;
+    this.parsedVideoConfig = null;
+    this.parsedAudioConfig = null;
+    this.activeVideoTimelineEpoch = null;
+    this.activeAudioTimelineEpoch = null;
 
     try {
       if (this.videoDecoder && this.videoDecoder.state !== 'closed')
