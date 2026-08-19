@@ -1,5 +1,6 @@
 import {
   getAvDriftAction,
+  getTeslaAvSyncPolicy,
   shouldContinueAudioPts,
 } from './av-sync';
 
@@ -19,5 +20,17 @@ describe('Tesla live A/V sync guard', () => {
 
   test('does not correct normal render cadence', () => {
     expect(getAvDriftAction(10, 10.06, true)).toBe('none');
+  });
+
+  test('corrects a visible VOD drift without reacting to normal frame cadence', () => {
+    expect(getAvDriftAction(10, 10.06, false)).toBe('none');
+    expect(getAvDriftAction(10, 10.13, false)).toBe('hold-audio');
+    expect(getAvDriftAction(10, 10.33, false)).toBe('reset-clock');
+  });
+
+  test('keeps the VOD audio queue short enough to cancel a sync correction', () => {
+    const policy = getTeslaAvSyncPolicy(false, 1, true);
+    expect(policy.maxAudioLeadSec).toBeLessThanOrEqual(0.6);
+    expect(policy.audioStartSafetySec).toBeLessThan(0.03);
   });
 });
