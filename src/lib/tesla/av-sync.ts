@@ -2,6 +2,7 @@ export interface TeslaAvSyncPolicy {
   minVideoFrames: number;
   minAudioFrames: number;
   maxAudioLeadSec: number;
+  audioStartSafetySec: number;
   audioScheduleResetSec: number;
   audioPtsContinuitySec: number;
   avDriftHoldSec: number;
@@ -21,6 +22,7 @@ export function getTeslaAvSyncPolicy(
       minVideoFrames: 5,
       minAudioFrames: 10,
       maxAudioLeadSec: 0.25,
+      audioStartSafetySec: 0.02,
       audioScheduleResetSec: 0.16,
       audioPtsContinuitySec: 0.08,
       avDriftHoldSec: 0.12,
@@ -34,11 +36,15 @@ export function getTeslaAvSyncPolicy(
   return {
     minVideoFrames: canvasSized ? 10 : 6,
     minAudioFrames: canvasSized ? 20 : 12,
-    maxAudioLeadSec: playbackRate === 1 ? 1.5 : 0.65,
+    // Keep only a short cancellable WebAudio window. A 1.5s queue hid network
+    // jitter, but it also made a small VOD timestamp correction audible long
+    // after the video clock had already recovered.
+    maxAudioLeadSec: playbackRate === 1 ? 0.6 : 0.45,
+    audioStartSafetySec: 0.012,
     audioScheduleResetSec: 0.12,
     audioPtsContinuitySec: 0.12,
-    avDriftHoldSec: 0.18,
-    avDriftResetSec: 0.4,
+    avDriftHoldSec: 0.12,
+    avDriftResetSec: 0.32,
     videoStarvationMs: 700,
     audioStarvationMs: 950,
     stallRecoveryMs: 12000,
