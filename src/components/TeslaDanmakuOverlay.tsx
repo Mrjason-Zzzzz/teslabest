@@ -1,1 +1,272 @@
-m«ëˆ§½©buªàºg§¶ÊÜýÊ&¦‰ÞžÛ?Më%h6§™©.:÷«•¬­³,j›jÇºà7an{¦Š)ßŠW¨¢ë_ŠW›n·š‘ºÞjG§r‡^v‹­¦ën¦)í¢X§zÊ•éà¶î˜7]yÊy×œ¡×¢ž›­†¥¥Ø¬¦V²¶¬™ë,j¢Šzn¶)éº×â•ç^}«¥µú+²×bžŠ.¶›­¢ëiº×â•ç^}«¥µú+²×hº
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+import {
+  convertDanmakuFormat,
+  getDanmakuById,
+  getEpisodes,
+  searchAnime,
+} from '@/lib/danmaku/api';
+import {
+  cleanTeslaDanmakuTitle,
+  selectTeslaDanmakuCandidate,
+  selectTeslaDanmakuEpisode,
+} from '@/lib/tesla/danmaku-match';
+
+type OverlayComment = {
+  id: string;
+  text: string;
+  color: string;
+  lane: number;
+  startedAt: number;
+};
+
+interface TeslaDanmakuOverlayProps {
+  enabled: boolean;
+  title?: string;
+  year?: string;
+  episodeNumber?: number;
+  episodeLabel?: string;
+  mediaType?: 'movie' | 'tv';
+  totalEpisodes?: number;
+  currentTime: number;
+  playing: boolean;
+  laneCount?: number;
+  speed?: number;
+  onStatusChange?: (status: string) => void;
+}
+
+function lowerBoundComment(
+  comments: Array<{ time: number }>,
+  targetTime: number
+) {
+  let low = 0;
+  let high = comments.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (comments[middle].time <= targetTime) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+export default function TeslaDanmakuOverlay({
+  enabled,
+  title = '',
+  year = '',
+  episodeNumber = 1,
+  episodeLabel = '',
+  mediaType = 'tv',
+  totalEpisodes = 0,
+  currentTime,
+  playing,
+  laneCount = 7,
+  speed = 3,
+  onStatusChange,
+}: TeslaDanmakuOverlayProps) {
+  const [comments, setComments] = useState<
+    Array<{ text: string; time: number; color: string }>
+  >([]);
+  const [activeComments, setActiveComments] = useState<OverlayComment[]>([]);
+  const loadIdentityRef = useRef('');
+  const lastTimeRef = useRef(0);
+  const sequenceRef = useRef(0);
+  const commentCursorRef = useRef(0);
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+
+  const safeLaneCount = Math.max(3, Math.min(8, Math.floor(laneCount || 7)));
+  const safeSpeed = Math.max(1, Math.min(5, Math.floor(speed || 3)));
+  const animationDurationSec = 14 - (safeSpeed - 1) * 2;
+  const baseTitle = cleanTeslaDanmakuTitle(title);
+  const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}`;
+
+  useEffect(() => {
+    if (!enabled || !title || loadIdentityRef.current === contentIdentity)
+      return;
+
+    let cancelled = false;
+    const loadingIdentity = contentIdentity;
+    setComments([]);
+    setActiveComments([]);
+    commentCursorRef.current = 0;
+    loadIdentityRef.current = contentIdentity;
+    onStatusChange?.('æ­£åœ¨åŒ¹é…å¼¹å¹•â€¦');
+
+    const load = async () => {
+      const searchResult = await searchAnime(baseTitle);
+      if (cancelled) return;
+
+      const anime = searchResult.success
+        ? selectTeslaDanmakuCandidate(searchResult.animes || [], {
+            title: baseTitle,
+            year,
+            mediaType,
+            totalEpisodes,
+          })
+        : null;
+      if (!anime) {
+        loadIdentityRef.current = '';
+        onStatusChange?.('æœªæ‰¾åˆ°å¯é å¼¹å¹•åŒ¹é…');
+        return;
+      }
+
+      const episodeResult = await getEpisodes(anime.animeId);
+      if (cancelled) return;
+
+      const episodes = episodeResult.bangumi?.episodes || [];
+      const episode = selectTeslaDanmakuEpisode(
+        episodes,
+        episodeNumber,
+        episodeLabel
+      );
+      if (!episode) {
+        loadIdentityRef.current = '';
+        onStatusChange?.('æœªæ‰¾åˆ°å¯¹åº”é›†æ•°å¼¹å¹•');
+        return;
+      }
+
+      const rawComments = await getDanmakuById(
+        episode.episodeId,
+        baseTitle,
+        episodeNumber - 1,
+        undefined,
+        {
+          animeId: anime.animeId,
+          animeTitle: anime.animeTitle,
+          episodeTitle: episode.episodeTitle,
+          searchKeyword: baseTitle,
+        }
+      );
+      if (cancelled) return;
+
+      const converted = convertDanmakuFormat(rawComments)
+        .filter((item) => item.text.trim() && Number.isFinite(item.time))
+        .map((item) => ({
+          text: item.text.slice(0, 80),
+          time: item.time,
+          color: item.color,
+        }))
+        .sort((a, b) => a.time - b.time);
+
+      setComments(converted);
+      const resumeFrom = Math.max(0, currentTimeRef.current - 0.2);
+      commentCursorRef.current = lowerBoundComment(converted, resumeFrom);
+      lastTimeRef.current = resumeFrom;
+      onStatusChange?.(
+        converted.length > 0
+          ? `å·²åŠ è½½ ${converted.length} æ¡å¼¹å¹•`
+          : 'å½“å‰å†…å®¹æš‚æ— å¼¹å¹•'
+      );
+    };
+
+    load().catch((error) => {
+      if (cancelled) return;
+      loadIdentityRef.current = '';
+      console.warn('[TeslaDanmaku] load failed:', error);
+      onStatusChange?.('å¼¹å¹•åŠ è½½è¶…æ—¶ï¼Œæ’­æ”¾ä¸å—å½±å“');
+    });
+
+    return () => {
+      cancelled = true;
+      if (loadIdentityRef.current === loadingIdentity) {
+        loadIdentityRef.current = '';
+      }
+    };
+  }, [
+    baseTitle,
+    contentIdentity,
+    enabled,
+    episodeLabel,
+    episodeNumber,
+    mediaType,
+    onStatusChange,
+    title,
+    totalEpisodes,
+    year,
+  ]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setActiveComments([]);
+      lastTimeRef.current = currentTime;
+      commentCursorRef.current = lowerBoundComment(comments, currentTime);
+      return;
+    }
+
+    const previousTime = lastTimeRef.current;
+    if (currentTime < previousTime || currentTime - previousTime > 2) {
+      setActiveComments([]);
+      const resumeFrom = Math.max(0, currentTime - 0.2);
+      lastTimeRef.current = resumeFrom;
+      commentCursorRef.current = lowerBoundComment(comments, resumeFrom);
+      return;
+    }
+
+    let cursor = commentCursorRef.current;
+    while (cursor < comments.length && comments[cursor].time <= previousTime)
+      cursor++;
+    const due: typeof comments = [];
+    while (
+      cursor < comments.length &&
+      comments[cursor].time <= currentTime + 0.25 &&
+      due.length < 6
+    ) {
+      due.push(comments[cursor]);
+      cursor++;
+    }
+    commentCursorRef.current = cursor;
+
+    setActiveComments((current) => {
+      const stillVisible = current.filter(
+        (comment) =>
+          currentTime - comment.startedAt < animationDurationSec + 0.5
+      );
+      if (due.length === 0) return stillVisible;
+
+      const spawned = due.map((comment) => {
+        const sequence = sequenceRef.current++;
+        return {
+          id: `${comment.time}-${sequence}`,
+          text: comment.text,
+          color: comment.color,
+          lane: sequence % safeLaneCount,
+          startedAt: currentTime,
+        };
+      });
+      return [...stillVisible, ...spawned].slice(-(safeLaneCount * 2));
+    });
+
+    lastTimeRef.current = currentTime;
+  }, [animationDurationSec, comments, currentTime, enabled, safeLaneCount]);
+
+  const visibleComments = useMemo(
+    () => (enabled ? activeComments : []),
+    [activeComments, enabled]
+  );
+
+  if (!enabled) return null;
+
+  return (
+    <div
+      className='pointer-events-none absolute inset-0 z-[7] overflow-hidden'
+      aria-hidden='true'
+    >
+      {visibleComments.map((comment) => (
+        <span
+          key={comment.id}
+          className='tesla-danmaku-comment absolute whitespace-nowrap font-semibold'
+          style={{
+            top: `${6 + comment.lane * (62 / safeLaneCount)}%`,
+            color: comment.color,
+            animationDuration: `${animationDurationSec}s`,
+            animationPlayState: playing ? 'running' : 'paused',
+          }}
+        >
+          {comment.text}
+        </span>
+      ))}
+    </div>
+  );
+}

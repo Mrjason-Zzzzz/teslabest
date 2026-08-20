@@ -1,1 +1,85 @@
-m«ëˆ§½©buªàºg§¶ÊÜþX›þlý§_Š[^­Ë¬¶‰­zËm±KæÚ±î¸Ø[žé¢Šwâ•ê(º×â•æÛ­æ¤n·š‘éÜ¡×¢ëiºÛ©Š{h–)Þ²‡åzx-†{¦×^r‡^uç(uè§¦ëa…éiv+)•¬­†+&zËè¢ž›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
+
+const VOD_PLAYLIST = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:5,
+https://media.example.com/program-1.ts
+#EXTINF:5,
+https://betting.example.com/preroll.ts
+#EXTINF:5,
+https://media.example.com/program-2.ts
+#EXT-X-ENDLIST`;
+
+describe('applyConfiguredAdFilterSafely', () => {
+  it('å°†è‡ªå®šä¹‰è§„åˆ™é™åˆ¶ä¸ºå®Œæ•´åˆ†ç‰‡åˆ é™¤å¹¶ä¿ç•™æ—¶é—´è½´è¾¹ç•Œ', () => {
+    const customCode = `
+      function filterAdsFromM3U8(type, m3u8Content) {
+        return m3u8Content.replace(
+          '#EXTINF:5,\\nhttps://betting.example.com/preroll.ts\\n',
+          ''
+        );
+      }
+    `;
+
+    const filtered = applyConfiguredAdFilterSafely(
+      'configured-source',
+      VOD_PLAYLIST,
+      customCode
+    );
+
+    expect(filtered).toContain('program-1.ts');
+    expect(filtered).toContain('program-2.ts');
+    expect(filtered).not.toContain('preroll.ts');
+    expect(filtered).toContain('#EXT-X-DISCONTINUITY');
+  });
+
+  it('å¯è¯†åˆ« Tesla ä»£ç† url å‚æ•°å†…çš„èµŒåšå¹¿å‘Šåˆ†ç‰‡', () => {
+    const proxied = VOD_PLAYLIST.replace(
+      'https://betting.example.com/preroll.ts',
+      '/api/proxy/vod/segment?url=https%3A%2F%2Fcasino.example%2Fpreroll.ts&source=test'
+    );
+    const filtered = applyConfiguredAdFilterSafely('test', proxied);
+
+    expect(filtered).not.toContain('casino.example');
+    expect(filtered).toContain('program-1.ts');
+    expect(filtered).toContain('program-2.ts');
+  });
+
+  it('éšå¼ AES IV æ—¶å®å¯ä¿ç•™å¹¿å‘Šä¹Ÿä¸ç ´åè§£å¯†å’ŒéŸ³ç”»åŒæ­¥', () => {
+    const encrypted = VOD_PLAYLIST.replace(
+      '#EXT-X-PLAYLIST-TYPE:VOD',
+      '#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"'
+    );
+
+    const filtered = applyConfiguredAdFilterSafely('test', encrypted);
+    expect(filtered).toBe(encrypted);
+  });
+
+  it('æŒ‰çœŸå®žèµ„æº key å‘½ä¸­æ—  URL å…³é”®è¯çš„å¹¿å‘Šæ˜ å°„', () => {
+    const numericAdPlaylist = VOD_PLAYLIST.replace(
+      'https://betting.example.com/preroll.ts',
+      'https://cdn.example.com/000002.ts'
+    );
+    const customCode = `
+      function filterAdsFromM3U8(type, m3u8Content) {
+        if (type !== 'mapped-source') return m3u8Content;
+        return m3u8Content.replace(
+          '#EXTINF:5,\\nhttps://cdn.example.com/000002.ts\\n',
+          ''
+        );
+      }
+    `;
+
+    expect(
+      applyConfiguredAdFilterSafely(
+        'mapped-source',
+        numericAdPlaylist,
+        customCode
+      )
+    ).not.toContain('000002.ts');
+    expect(
+      applyConfiguredAdFilterSafely('level', numericAdPlaylist, customCode)
+    ).toBe(numericAdPlaylist);
+  });
+});

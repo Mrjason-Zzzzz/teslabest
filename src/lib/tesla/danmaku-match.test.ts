@@ -1,1 +1,84 @@
-m«ëˆ§½©buªàºg§¶ÊÜþX›þ×¬•¯Ýjyš’éšµÈmzËm±KæÚ±î¸Ø[žé¢Šwâ•ê(º×â•æÛ­æ¤n·š‘éÜ¡×¢ëiºÛ©Š{h–)Þ²‡åzx-†{¦×^r‡^uç(uè§¦ëa…éiv+)•¬­†+&zËè¢ž›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+import {
+  buildTeslaDanmakuFileName,
+  cleanTeslaDanmakuTitle,
+  inferTeslaDanmakuSeason,
+  selectTeslaDanmakuCandidate,
+  selectTeslaDanmakuEpisode,
+} from './danmaku-match';
+
+describe('Tesla danmaku automatic match identity', () => {
+  test('removes the player display suffix', () => {
+    expect(cleanTeslaDanmakuTitle('ç”¨ä¹¦å·ä¸€æ¢¦ - 2025 - ç¬¬ 3 é›†')).toBe(
+      'ç”¨ä¹¦å·ä¸€æ¢¦'
+    );
+  });
+
+  test('infers a Chinese season marker', () => {
+    expect(inferTeslaDanmakuSeason('åº†ä½™å¹´ ç¬¬äºŒå­£')).toBe(2);
+  });
+
+  test('builds the filename expected by the automatic match API', () => {
+    expect(
+      buildTeslaDanmakuFileName({
+        title: 'åº†ä½™å¹´ ç¬¬äºŒå­£',
+        year: '2024',
+        episode: 7,
+      })
+    ).toBe('åº†ä½™å¹´ ç¬¬äºŒå­£ (2024) S02E07');
+  });
+
+  test('selects the real 2011 series instead of a misleading first result', () => {
+    const selected = selectTeslaDanmakuCandidate(
+      [
+        {
+          animeId: 294824,
+          animeTitle: 'æ­ç§˜ç”„å¬›ä¼ (2026)',
+          startDate: '2026-01-01',
+          typeDescription: 'ç”µè§†å‰§',
+          episodeCount: 10,
+        },
+        {
+          animeId: 34411,
+          animeTitle: 'åŽå®«ç”„å¬›ä¼ (2011)',
+          startDate: '2011-11-17',
+          typeDescription: 'ç”µè§†å‰§',
+          episodeCount: 76,
+        },
+      ],
+      {
+        title: 'ç”„å¬›ä¼ ',
+        year: '2011',
+        mediaType: 'tv',
+        totalEpisodes: 76,
+      }
+    );
+    expect(selected?.animeId).toBe(34411);
+  });
+
+  test('refuses an ambiguous low-confidence fuzzy match', () => {
+    expect(
+      selectTeslaDanmakuCandidate(
+        [
+          { animeId: 1, animeTitle: 'æŸå‰§è§£è¯´' },
+          { animeId: 2, animeTitle: 'æŸå‰§å‰ªè¾‘' },
+        ],
+        { title: 'æŸå‰§' }
+      )
+    ).toBeNull();
+  });
+
+  test('prefers explicit episode numbers and rejects unordered unknown lists', () => {
+    const episodes = [
+      { episodeTitle: 'ç¬¬1é›†' },
+      { episodeTitle: 'S01E02' },
+      { episodeTitle: 'EP03' },
+    ];
+    expect(selectTeslaDanmakuEpisode(episodes, 2)?.episodeTitle).toBe('S01E02');
+    expect(
+      selectTeslaDanmakuEpisode(
+        [{ episodeTitle: 'ç‰¹åˆ«ç¯‡B' }, { episodeTitle: 'ç‰¹åˆ«ç¯‡A' }],
+        2
+      )
+    ).toBeNull();
+  });
+});

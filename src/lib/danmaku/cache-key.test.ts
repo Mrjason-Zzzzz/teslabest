@@ -1,1 +1,13 @@
-m«ëˆ§½©buªàºg§¶ÊÜþX›ýÖ§™©.ýÆœ…éÊ×¬¶Û±¨m«ë€Ý…¹îš(§~)^¢‹­~)^mºÞjFëy©ÊyÚ.¶›­º˜§¶‰bë(~W§‚Øgº`Ýuç(uç^r‡^Šzn¶^–—b²™ZÊØb²g¬±¨Š)éºØ§¦ë_ŠWyö®–×è®Ë]Šz(ºÚn¶‹­¦ë_ŠWyö®–×è®Ë]¢ë
+import { generateCacheKey } from './cache';
+
+describe('danmaku cache identity', () => {
+  test('keeps the legacy key for callers without a matched anime id', () => {
+    expect(generateCacheKey('ç”„å¬›ä¼ ', 0)).toBe('ç”„å¬›ä¼ |0');
+  });
+
+  test('separates same-title candidates by matched anime id', () => {
+    expect(generateCacheKey('ç”„å¬›ä¼ ', 0, 34411)).not.toBe(
+      generateCacheKey('ç”„å¬›ä¼ ', 0, 294824)
+    );
+  });
+});

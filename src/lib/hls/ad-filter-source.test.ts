@@ -1,1 +1,13 @@
-m«ëˆ§½©buªàºg§¶ÊÜþX›þlý§_Š[^®Ê.­Ç­zËm±KæÚ±î¸Ø[žé¢Šwâ•ê(º×â•æÛ­æ¤n·š‘éÜ¡×¢ëiºÛ©Š{h–)Þ²‡åzx-†{¦×^r‡^uç(uè§¦ëa…éiv+)•¬­†+&zËè¢ž›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+import { resolveAdFilterSourceKey } from './ad-filter';
+
+describe('configured ad filter source routing', () => {
+  test('uses the actual video source instead of hls.js manifest type', () => {
+    expect(resolveAdFilterSourceKey('mapped-source', 'level')).toBe(
+      'mapped-source'
+    );
+  });
+
+  test('retains the playlist context as a fallback', () => {
+    expect(resolveAdFilterSourceKey('', 'manifest')).toBe('manifest');
+  });
+});

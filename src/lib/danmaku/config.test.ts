@@ -1,1 +1,15 @@
-m«ëˆ§½©buªàºg§¶ÊÜþX›ýÖ§™©.ýÊ'~(-zËm±KæÚ±î¸Ø[žé¢Šwâ•ê(º×â•æÛ­æ¤n·š‘éÜ¡×¢ëiºÛ©Š{h–)Þ²‡åzx-†{¦×^r‡^uç(uè§¦ëa…éiv+)•¬­†+&zËè¢ž›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+import { appendDanmakuToken } from './config';
+
+describe('danmaku custom endpoint token path', () => {
+  test('appends the configured token even when it equals the built-in token', () => {
+    expect(appendDanmakuToken('https://danmu.dorezst.cn', '980728')).toBe(
+      'https://danmu.dorezst.cn/980728'
+    );
+  });
+
+  test('does not append the token twice', () => {
+    expect(
+      appendDanmakuToken('https://danmu.dorezst.cn/980728/', '980728')
+    ).toBe('https://danmu.dorezst.cn/980728');
+  });
+});

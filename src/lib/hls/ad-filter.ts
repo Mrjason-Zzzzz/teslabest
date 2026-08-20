@@ -1,1 +1,172 @@
-m«ëˆ§½©buªàºg§¶ÊÜşX›şlı§_Š[^®Û±¨m«ë€İ…¹îš(§~)^¢‹­~)^mºŞjFëy©ÊyÚ.¶›­º˜§¶‰bë(~W§‚Øgº`İuç(uç^r‡^Šzn¶^–—b²™ZÊØb²g¬±¨Š)éºØ§¦ë_ŠWyö®–×è®Ë]Šz(ºÚn¶‹­¦ë_ŠWyö®–×è®Ë]¢ë
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+import Hls from 'hls.js';
+
+import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
+
+interface ConfiguredAdFilterResponse {
+  code?: string;
+  version?: number;
+}
+
+let configuredAdFilterPromise: Promise<string> | null = null;
+const AD_FILTER_SOFT_WAIT_MS = 800;
+const AD_FILTER_FETCH_TIMEOUT_MS = 3000;
+
+function readRuntimeFilterVersion(): number {
+  if (typeof window === 'undefined') return 0;
+  const rawVersion = (window as any).RUNTIME_CONFIG?.CUSTOM_AD_FILTER_VERSION;
+  const version = Number(rawVersion || 0);
+  return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
+async function loadConfiguredAdFilterCode(): Promise<string> {
+  if (typeof window === 'undefined') return '';
+  if (configuredAdFilterPromise) return configuredAdFilterPromise;
+
+  configuredAdFilterPromise = (async () => {
+    const version = readRuntimeFilterVersion();
+    const cachedCode =
+      localStorage.getItem('custom_ad_filter_code_cache') || '';
+    const cachedVersion = Number(
+      localStorage.getItem('custom_ad_filter_version_cache') || 0
+    );
+
+    if (version <= 0) {
+      localStorage.removeItem('custom_ad_filter_code_cache');
+      localStorage.removeItem('custom_ad_filter_version_cache');
+      return '';
+    }
+    if (cachedCode && cachedVersion === version) return cachedCode;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      AD_FILTER_FETCH_TIMEOUT_MS
+    );
+    try {
+      const response = await fetch('/api/ad-filter?full=true', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+      if (!response.ok) return cachedCode;
+      const data = (await response.json()) as ConfiguredAdFilterResponse;
+      const code = typeof data.code === 'string' ? data.code : '';
+      const responseVersion = Number(data.version || version);
+      if (code) {
+        localStorage.setItem('custom_ad_filter_code_cache', code);
+        localStorage.setItem(
+          'custom_ad_filter_version_cache',
+          String(responseVersion)
+        );
+      }
+      return code || cachedCode;
+    } catch {
+      return cachedCode;
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+
+  return configuredAdFilterPromise;
+}
+
+/**
+ * Safely remove only explicit ad media segments from a media playlist.
+ *
+ * Timeline, encryption and initialization tags are deliberately preserved.
+ * If a segment uses an advanced HLS structure, it is kept instead of risking
+ * a bad A/V timestamp mapping.
+ */
+export function filterAdsFromM3U8(type: string, m3u8Content: string): string {
+  return applyConfiguredAdFilterSafely(type, m3u8Content);
+}
+
+/**
+ * hls.js uses pLoader only for text playlists (master/level/audio/subtitle).
+ * Segment bytes, keys and init sections continue through the unchanged loader.
+ */
+export function resolveAdFilterSourceKey(
+  sourceKey: string | undefined,
+  playlistContextType: string | undefined
+) {
+  return sourceKey?.trim() || playlistContextType || 'hls';
+}
+
+export function createAdFilteringPlaylistLoader(sourceKey?: string) {
+  const BaseLoader = (Hls as any).DefaultConfig?.loader;
+  if (!BaseLoader) return undefined;
+
+  // å»ºç«‹ loader æ—¶å°±å¹¶è¡Œé¢„å–é…ç½®ã€‚é€šå¸¸åœ¨é¦–ä¸ªåª’ä½“åˆ—è¡¨è¿”å›å‰å·²å®Œæˆï¼Œ
+  // ä¸é¢å¤–ä¸²è¡Œé˜»å¡ç½‘ç»œè¯·æ±‚ã€‚
+  const configuredCodePromise = loadConfiguredAdFilterCode();
+  const cachedCode = (() => {
+    if (typeof window === 'undefined') return '';
+    const version = readRuntimeFilterVersion();
+    const cachedVersion = Number(
+      localStorage.getItem('custom_ad_filter_version_cache') || 0
+    );
+    if (version <= 0 || cachedVersion !== version) return '';
+    return localStorage.getItem('custom_ad_filter_code_cache') || '';
+  })();
+
+  return class AdFilteringPlaylistLoader extends BaseLoader {
+    load(context: any, config: any, callbacks: any) {
+      const onSuccess = callbacks.onSuccess;
+      const wrappedCallbacks = {
+        ...callbacks,
+        onSuccess: (
+          response: any,
+          stats: any,
+          currentContext: any,
+          networkDetails: any
+        ) => {
+          let finished = false;
+          const finish = (customCode = '') => {
+            if (finished) return;
+            finished = true;
+            if (typeof response?.data === 'string') {
+              response.data = applyConfiguredAdFilterSafely(
+                resolveAdFilterSourceKey(
+                  sourceKey,
+                  currentContext?.type || context?.type
+                ),
+                response.data,
+                customCode
+              );
+            }
+            onSuccess(response, stats, currentContext, networkDetails);
+          };
+
+          // ä¸»åˆ—è¡¨ä¸å« EXTINFï¼Œç«‹å³äº¤ç»™ hls.jsï¼›åªæœ‰çœŸæ­£çš„åª’ä½“åˆ—è¡¨æ‰éœ€è¦
+          // ç­‰å¾…å»å¹¿å‘Šé…ç½®ï¼Œé¿å…å»¶é•¿æ¸…æ™°åº¦åˆ—è¡¨çš„é¦–æ¬¡è§£æã€‚
+          if (
+            typeof response?.data !== 'string' ||
+            !response.data.includes('#EXTINF:')
+          ) {
+            finish();
+            return;
+          }
+
+          const softTimeout = window.setTimeout(
+            () => finish(cachedCode),
+            AD_FILTER_SOFT_WAIT_MS
+          );
+          void configuredCodePromise.then(
+            (code) => {
+              clearTimeout(softTimeout);
+              finish(code || cachedCode);
+            },
+            () => {
+              clearTimeout(softTimeout);
+              finish(cachedCode);
+            }
+          );
+        },
+      };
+
+      return super.load(context, config, wrappedCallbacks);
+    }
+  };
+}
