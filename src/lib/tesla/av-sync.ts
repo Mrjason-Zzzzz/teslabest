@@ -41,7 +41,7 @@ export function getTeslaAvSyncPolicy(
     // Keep a cancellable queue, but leave enough coverage for Tesla main-thread
     // stalls. 0.6s was shorter than the Canvas video queue and caused audible
     // dropouts while the last valid picture remained on screen.
-    maxAudioLeadSec: playbackRate === 1 ? 0.9 : 0.55,
+    maxAudioLeadSec: playbackRate === 1 ? 1.1 : 0.55,
     audioStartSafetySec: 0.02,
     audioScheduleResetSec: 0.12,
     audioPtsContinuitySec: 0.12,
