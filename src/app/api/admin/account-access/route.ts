@@ -19,9 +19,12 @@ import { revokeAllRefreshTokens } from '@/lib/refresh-token';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function requireOwner(request: NextRequest) {
+async function requireAccountManager(request: NextRequest) {
   const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo?.username || authInfo.username !== process.env.USERNAME) {
+  if (
+    !authInfo?.username ||
+    (authInfo.role !== 'owner' && authInfo.role !== 'admin')
+  ) {
     return null;
   }
   return authInfo;
@@ -43,9 +46,9 @@ function safeCodes(codes: RedemptionCodeRecord[]) {
 }
 
 export async function GET(request: NextRequest) {
-  if (!(await requireOwner(request))) {
+  if (!(await requireAccountManager(request))) {
     return NextResponse.json(
-      { error: '仅站长可管理兑换码和有效期' },
+      { error: '仅站长或管理员可管理兑换码' },
       { status: 403 }
     );
   }
@@ -66,15 +69,27 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireOwner(request))) {
+  const manager = await requireAccountManager(request);
+  if (!manager) {
     return NextResponse.json(
-      { error: '仅站长可管理兑换码和有效期' },
+      { error: '仅站长或管理员可管理兑换码' },
       { status: 403 }
     );
   }
 
   try {
     const body = await request.json();
+    const ownerOnlyActions = new Set([
+      'setRegistrationMode',
+      'setMembershipRenewalMessage',
+      'updateUserAccess',
+    ]);
+    if (manager.role !== 'owner' && ownerOnlyActions.has(body.action)) {
+      return NextResponse.json(
+        { error: '该项全局设置仅站长可修改' },
+        { status: 403 }
+      );
+    }
     const config = await getFreshConfig();
     config.UserConfig.AccessPolicies ||= {};
     config.UserConfig.RedemptionCodes ||= [];
