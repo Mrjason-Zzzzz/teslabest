@@ -46,14 +46,17 @@ describe('applyConfiguredAdFilterSafely', () => {
     expect(filtered).toContain('program-2.ts');
   });
 
-  it('隐式 AES IV 时宁可保留广告也不破坏解密和音画同步', () => {
+  it('隐式 AES IV 转为原序号显式 IV 后安全删除广告', () => {
     const encrypted = VOD_PLAYLIST.replace(
       '#EXT-X-PLAYLIST-TYPE:VOD',
       '#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"'
     );
 
     const filtered = applyConfiguredAdFilterSafely('test', encrypted);
-    expect(filtered).toBe(encrypted);
+    expect(filtered).not.toContain('preroll.ts');
+    expect(filtered).toContain('IV=0x00000000000000000000000000000000');
+    expect(filtered).toContain('IV=0x00000000000000000000000000000002');
+    expect(filtered).toContain('#EXT-X-DISCONTINUITY');
   });
 
   it('按真实资源 key 命中无 URL 关键词的广告映射', () => {
