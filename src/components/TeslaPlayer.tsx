@@ -61,6 +61,7 @@ interface TeslaPlayerProps {
   onProgress?: (currentTime: number, duration: number) => void;
   onPlaybackReady?: () => void;
   onPlaybackError?: (message: string) => void;
+  resolveLiveSource?: () => Promise<string | undefined>;
   qualityOptions?: Array<{ id: string; label: string }>;
   quality?: string;
   onQualityChange?: (qualityId: string) => void;
@@ -141,6 +142,7 @@ export default function TeslaPlayer({
   onProgress,
   onPlaybackReady,
   onPlaybackError,
+  resolveLiveSource,
   qualityOptions = [],
   quality,
   onQualityChange,
@@ -215,6 +217,7 @@ export default function TeslaPlayer({
   const [showDanmakuSettings, setShowDanmakuSettings] = useState(false);
   const [danmakuRows, setDanmakuRows] = useState(7);
   const [danmakuSpeed, setDanmakuSpeed] = useState(3);
+  const [danmakuFontSize, setDanmakuFontSize] = useState(30);
 
   const [mode, setMode] = useState<PlayMode>(() =>
     getInitialMode(live ? 'webcodecs' : defaultModeProp)
@@ -241,6 +244,9 @@ export default function TeslaPlayer({
       const storedSpeed = Number(
         localStorage.getItem('tesla_danmaku_speed') || '3'
       );
+      const storedFontSize = Number(
+        localStorage.getItem('tesla_danmaku_font_size') || '30'
+      );
       setDanmakuRows(
         Number.isFinite(storedRows)
           ? Math.max(3, Math.min(8, Math.round(storedRows)))
@@ -250,6 +256,11 @@ export default function TeslaPlayer({
         Number.isFinite(storedSpeed)
           ? Math.max(1, Math.min(5, Math.round(storedSpeed)))
           : 3
+      );
+      setDanmakuFontSize(
+        Number.isFinite(storedFontSize)
+          ? Math.max(18, Math.min(44, Math.round(storedFontSize)))
+          : 30
       );
     } catch {
       setDanmakuEnabled(false);
@@ -261,8 +272,9 @@ export default function TeslaPlayer({
     try {
       localStorage.setItem('tesla_danmaku_rows', String(danmakuRows));
       localStorage.setItem('tesla_danmaku_speed', String(danmakuSpeed));
+      localStorage.setItem('tesla_danmaku_font_size', String(danmakuFontSize));
     } catch {}
-  }, [danmakuRows, danmakuSpeed, live]);
+  }, [danmakuFontSize, danmakuRows, danmakuSpeed, live]);
 
   const toggleDanmaku = useCallback(() => {
     setDanmakuEnabled((current) => {
@@ -1150,6 +1162,7 @@ export default function TeslaPlayer({
       const player = new WebCodecsPlayer(canvasRef.current, {
         liveHint: live,
         adFilterSource: sourceKey,
+        resolveLiveSource,
         onTime: (t) => {
           if (!destroyed) {
             currentTimeRef.current = t;
@@ -1302,7 +1315,7 @@ export default function TeslaPlayer({
     // Player instances are rebuilt only when their source identity changes.
     // Callback/state dependencies here would tear down the decoder mid-play.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, mode, live, playbackSession, sourceKey]);
+  }, [url, mode, live, playbackSession, sourceKey, resolveLiveSource]);
 
   useEffect(() => {
     wcPlayerRef.current?.setShowDebug(showDebug);
@@ -1372,6 +1385,7 @@ export default function TeslaPlayer({
           playing={playing}
           laneCount={danmakuRows}
           speed={danmakuSpeed}
+          fontSize={danmakuFontSize}
           onStatusChange={setDanmakuStatus}
         />
       )}
@@ -1403,7 +1417,7 @@ export default function TeslaPlayer({
             {networkOffline ? (
               <WifiOff className='h-4 w-4 text-amber-400' />
             ) : (
-              <RefreshCw className='h-4 w-4 animate-spin text-green-400' />
+              <RefreshCw className='h-4 w-4 animate-spin text-violet-400' />
             )}
             <span>
               {networkOffline ? '网络已断开，恢复后自动续播' : reconnectMessage}
@@ -1438,7 +1452,7 @@ export default function TeslaPlayer({
       {/* 加载状态 */}
       {loading && !error && (
         <div className='absolute inset-0 flex items-center justify-center bg-black/80 z-10'>
-          <Loader2 className='h-10 w-10 animate-spin text-green-500' />
+          <Loader2 className='h-10 w-10 animate-spin text-violet-500' />
         </div>
       )}
 
@@ -1461,7 +1475,7 @@ export default function TeslaPlayer({
                   e.stopPropagation();
                   requestReconnect(false);
                 }}
-                className='flex items-center gap-1 rounded bg-green-500 px-4 py-1.5 text-sm text-white'
+                className='flex items-center gap-1 rounded bg-violet-500 px-4 py-1.5 text-sm text-white'
               >
                 <RefreshCw className='h-4 w-4' />
                 重新连接
@@ -1532,101 +1546,7 @@ export default function TeslaPlayer({
         </div>
         <div className='pointer-events-auto flex items-center gap-1'>
           {!live && (
-            <div className='relative flex items-center gap-1'>
-              <button
-                type='button'
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleDanmaku();
-                }}
-                className={`flex min-h-9 items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
-                  danmakuEnabled
-                    ? 'bg-green-500 text-white'
-                    : 'bg-black/35 text-white/80 hover:bg-black/55'
-                }`}
-                title={
-                  danmakuStatus || (danmakuEnabled ? '关闭弹幕' : '开启弹幕')
-                }
-                aria-pressed={danmakuEnabled}
-              >
-                <MessageSquareText className='h-3.5 w-3.5 shrink-0' />
-                <span className='max-w-40 truncate'>
-                  {danmakuEnabled ? danmakuStatus || '弹幕开' : '弹幕关'}
-                </span>
-              </button>
-              {danmakuEnabled && (
-                <button
-                  type='button'
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setShowDanmakuSettings((current) => !current);
-                  }}
-                  className='flex min-h-9 min-w-9 items-center justify-center rounded bg-black/45 text-white/90 hover:bg-black/65'
-                  title='弹幕设置'
-                  aria-label='弹幕设置'
-                  aria-expanded={showDanmakuSettings}
-                >
-                  <Settings2 className='h-4 w-4' />
-                </button>
-              )}
-              {danmakuEnabled && showDanmakuSettings && (
-                <div
-                  className='absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border border-white/15 bg-black/95 p-4 text-white shadow-2xl backdrop-blur'
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <label className='block text-xs text-white/80'>
-                    <span className='mb-2 flex justify-between'>
-                      <span>显示行数</span>
-                      <strong>{danmakuRows} 行</strong>
-                    </span>
-                    <input
-                      type='range'
-                      min={3}
-                      max={8}
-                      step={1}
-                      value={danmakuRows}
-                      onChange={(event) =>
-                        setDanmakuRows(
-                          Math.max(
-                            3,
-                            Math.min(8, Number(event.currentTarget.value))
-                          )
-                        )
-                      }
-                      className='h-8 w-full accent-green-500'
-                    />
-                  </label>
-                  <label className='mt-3 block text-xs text-white/80'>
-                    <span className='mb-2 flex justify-between'>
-                      <span>滚动速度</span>
-                      <strong>
-                        {['', '慢', '较慢', '标准', '较快', '快'][danmakuSpeed]}
-                      </strong>
-                    </span>
-                    <input
-                      type='range'
-                      min={1}
-                      max={5}
-                      step={1}
-                      value={danmakuSpeed}
-                      onChange={(event) =>
-                        setDanmakuSpeed(
-                          Math.max(
-                            1,
-                            Math.min(5, Number(event.currentTarget.value))
-                          )
-                        )
-                      }
-                      className='h-8 w-full accent-green-500'
-                    />
-                  </label>
-                </div>
-              )}
-            </div>
-          )}
-          {!live && (
-            <div className='rounded bg-green-500/20 px-2 py-1 text-xs text-green-300'>
+            <div className='rounded bg-violet-500/20 px-2 py-1 text-xs text-violet-300'>
               {engineLabel}
             </div>
           )}
@@ -1679,7 +1599,7 @@ export default function TeslaPlayer({
                 scrubTimeRef.current = null;
                 setScrubTime(null);
               }}
-              className='h-10 w-full cursor-pointer accent-green-500 touch-none'
+              className='h-10 w-full cursor-pointer accent-violet-500 touch-none'
               aria-label='播放进度'
             />
             {scrubTime !== null && (
@@ -1789,7 +1709,7 @@ export default function TeslaPlayer({
                         }}
                         className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${
                           rate === r
-                            ? 'bg-green-500 text-white'
+                            ? 'bg-violet-500 text-white'
                             : 'text-gray-200 hover:bg-white/10'
                         }`}
                       >
@@ -1800,10 +1720,44 @@ export default function TeslaPlayer({
                 )}
               </div>
             )}
+            {!live && (
+              <div className='ml-1 flex items-center gap-1'>
+                <button
+                  type='button'
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleDanmaku();
+                  }}
+                  className={`flex min-h-11 items-center gap-1 rounded-lg px-3 text-xs ${
+                    danmakuEnabled
+                      ? 'bg-violet-500 text-white'
+                      : 'bg-white/10 text-white/80'
+                  }`}
+                  aria-pressed={danmakuEnabled}
+                >
+                  <MessageSquareText className='h-4 w-4' />
+                  {danmakuEnabled ? '弹幕开' : '弹幕关'}
+                </button>
+                {danmakuEnabled && (
+                  <button
+                    type='button'
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setShowDanmakuSettings((current) => !current);
+                    }}
+                    className='flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white/10 text-white'
+                    aria-label='弹幕设置'
+                    aria-expanded={showDanmakuSettings}
+                  >
+                    <Settings2 className='h-4 w-4' />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className='flex items-center gap-0.5 md:gap-1'>
-            {live && qualityOptions.length > 1 && onQualityChange && (
+            {live && qualityOptions.length > 0 && onQualityChange && (
               <div className='relative'>
                 <button
                   type='button'
@@ -1891,6 +1845,31 @@ export default function TeslaPlayer({
           </div>
         </div>
       </div>
+
+      {!live && danmakuEnabled && showDanmakuSettings && (
+        <aside
+          className='pointer-events-auto absolute bottom-20 left-3 top-16 z-30 w-[min(340px,42vw)] overflow-y-auto rounded-2xl border border-violet-300/20 bg-[#110d20]/95 p-5 text-white shadow-2xl backdrop-blur'
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className='mb-5'>
+            <h2 className='text-base font-semibold'>弹幕设置</h2>
+            <p className='mt-1 text-xs text-white/50'>{danmakuStatus || '自动匹配影片与当前集数'}</p>
+          </div>
+          {[
+            { label: '显示行数', value: danmakuRows, min: 3, max: 8, suffix: '行', set: setDanmakuRows },
+            { label: '字体大小', value: danmakuFontSize, min: 18, max: 44, suffix: 'px', set: setDanmakuFontSize },
+            { label: '滚动速度', value: danmakuSpeed, min: 1, max: 5, suffix: '档', set: setDanmakuSpeed },
+          ].map((item) => (
+            <label key={item.label} className='mb-5 block text-sm text-white/80'>
+              <span className='mb-2 flex justify-between'><span>{item.label}</span><strong>{item.value} {item.suffix}</strong></span>
+              <input type='range' min={item.min} max={item.max} step={1} value={item.value}
+                onChange={(event) => item.set(Number(event.currentTarget.value))}
+                className='h-10 w-full accent-violet-500' />
+            </label>
+          ))}
+        </aside>
+      )}
     </div>
   );
 }
