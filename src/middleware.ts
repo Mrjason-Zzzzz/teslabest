@@ -148,9 +148,37 @@ export async function middleware(request: NextRequest) {
     return NextResponse.json({ error: '仅站长可执行此操作' }, { status: 403 });
   }
 
+  if (
+    authInfo.role !== 'owner' &&
+    authInfo.role !== 'admin' &&
+    isTeslaPlaybackPath(pathname) &&
+    isClearlyNonVehicleUserAgent(request.headers.get('user-agent') || '')
+  ) {
+    const response = NextResponse.redirect('https://www.baidu.com/');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
+  }
+
   // 签名验证通过
   // 注意：Token 续期由前端负责，Middleware 不再自动刷新
   return NextResponse.next();
+}
+
+export function isClearlyNonVehicleUserAgent(userAgent: string): boolean {
+  if (/Tesla|TeslaBrowser|QtCarBrowser/i.test(userAgent)) return false;
+  // Tesla Chromium commonly identifies as Linux/X11. Unknown and Linux agents
+  // are allowed to avoid locking out a real vehicle after an OTA UA change.
+  return /Windows NT|Macintosh|iPhone|iPad|Android/i.test(userAgent);
+}
+
+function isTeslaPlaybackPath(pathname: string): boolean {
+  return (
+    pathname === '/play/tesla' ||
+    pathname === '/live/tesla' ||
+    pathname === '/web-live/tesla' ||
+    pathname === '/short-video'
+  );
 }
 
 function isOwnerOnlyAdminRequest(request: NextRequest): boolean {
