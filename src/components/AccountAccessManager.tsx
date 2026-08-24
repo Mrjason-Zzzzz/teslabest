@@ -70,7 +70,7 @@ export default function AccountAccessManager({
   const [message, setMessage] = useState('');
 
   const load = useCallback(async () => {
-    if (role !== 'owner') return;
+    if (role !== 'owner' && role !== 'admin') return;
     const response = await fetch('/api/admin/account-access', {
       cache: 'no-store',
     });
@@ -181,10 +181,10 @@ export default function AccountAccessManager({
     }
   }
 
-  if (role !== 'owner') {
+  if (role !== 'owner' && role !== 'admin') {
     return (
       <div className='rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200'>
-        兑换码与账户有效期仅站长可管理；管理员仍可使用下方用户组和功能权限。
+        当前账号无兑换码管理权限。
       </div>
     );
   }
@@ -200,7 +200,7 @@ export default function AccountAccessManager({
             旧账号默认永久有效；新兑换码一码一用，天卡与月卡均从注册成功时开始计算。
           </p>
         </div>
-        <button
+        {role === 'owner' && <button
           type='button'
           disabled={loading}
           onClick={toggleRegistration}
@@ -211,7 +211,7 @@ export default function AccountAccessManager({
           } disabled:opacity-50`}
         >
           {requireCode ? '兑换码注册：已开启' : '启用兑换码注册'}
-        </button>
+        </button>}
       </div>
 
       {message && (
@@ -220,7 +220,7 @@ export default function AccountAccessManager({
         </div>
       )}
 
-      <div className='rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
+      {role === 'owner' && <div className='rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
         <label className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
           会员续费提示语
         </label>
@@ -244,25 +244,30 @@ export default function AccountAccessManager({
         <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
           保存后用户个人中心立即读取新文案；永久会员不会显示该提示。
         </p>
-      </div>
+      </div>}
 
       <div className='grid gap-4 lg:grid-cols-2'>
         <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
           <h5 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
             生成兑换码
           </h5>
-          <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
-            <select
-              value={plan}
-              onChange={(event) => setPlan(event.target.value as AccessPlan)}
-              className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
-            >
-              {Object.entries(PLAN_LABELS).map(([value, text]) => (
-                <option key={value} value={value}>
-                  {text}
-                </option>
-              ))}
-            </select>
+          <div className='mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3'>
+            {Object.entries(PLAN_LABELS).map(([value, text]) => (
+              <button
+                key={value}
+                type='button'
+                onClick={() => setPlan(value as AccessPlan)}
+                className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-medium transition active:scale-95 ${
+                  plan === value
+                    ? 'border-violet-500 bg-violet-600 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+                }`}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+          <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
             <input
               type='number'
               min={1}
@@ -315,7 +320,7 @@ export default function AccountAccessManager({
           )}
         </div>
 
-        <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
+        {role === 'owner' && <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
           <h5 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
             修改账户有效期
           </h5>
@@ -361,7 +366,7 @@ export default function AccountAccessManager({
           <p className='text-xs text-gray-500 dark:text-gray-400'>
             重新选择天卡或 1/3/6/12 个月会从现在重新计时；选择永久则不设到期日。
           </p>
-        </div>
+        </div>}
       </div>
 
       <div className='overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'>
