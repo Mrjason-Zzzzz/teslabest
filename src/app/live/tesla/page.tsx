@@ -199,8 +199,33 @@ function TeslaLivePageInner() {
     const allowCORS = proxyMode === 'm3u8-only' ? '&allowCORS=true' : '';
     return `/api/proxy/m3u8?url=${encodeURIComponent(
       currentChannel.url
-    )}&moontv-source=${encodeURIComponent(currentSource.key)}${allowCORS}`;
+    )}&moontv-source=${encodeURIComponent(currentSource.key)}&moontv-channel=${encodeURIComponent(currentChannel.id)}${allowCORS}`;
   }, [currentChannel, currentSource]);
+
+  const resolveCurrentLiveSource = useCallback(async () => {
+    if (!currentSource || !currentChannel) return playUrl;
+    const controller = new AbortController();
+    const data = await fetchJson(
+      `/api/live/channels?source=${encodeURIComponent(currentSource.key)}&refresh=true`,
+      controller.signal,
+      10000
+    );
+    const refreshed: LiveChannel[] = data?.data || data?.channels || [];
+    const same =
+      refreshed.find((item) => item.id === currentChannel.id) ||
+      refreshed.find(
+        (item) => currentChannel.tvgId && item.tvgId === currentChannel.tvgId
+      ) ||
+      refreshed.find((item) => item.name === currentChannel.name);
+    // Never fall back to refreshed[0]. If the selected identity disappeared,
+    // retaining the current URL is safer than silently changing programmes.
+    if (!same) return playUrl;
+    channelCacheRef.current.set(currentSource.key, refreshed);
+    const mode = currentSource.proxyMode || 'full';
+    if (mode === 'direct') return same.url;
+    const allowCORS = mode === 'm3u8-only' ? '&allowCORS=true' : '';
+    return `/api/proxy/m3u8?url=${encodeURIComponent(same.url)}&moontv-source=${encodeURIComponent(currentSource.key)}&moontv-channel=${encodeURIComponent(same.id)}${allowCORS}`;
+  }, [currentChannel, currentSource, playUrl]);
 
   const groups = useMemo(() => {
     const values = Array.from(
@@ -298,8 +323,8 @@ function TeslaLivePageInner() {
           >
             <ArrowLeft className='h-5 w-5' />
           </button>
-          <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-500/15'>
-            <Tv className='h-5 w-5 text-rose-400' />
+          <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-500/15'>
+            <Tv className='h-5 w-5 text-violet-400' />
           </div>
           <div className='min-w-0'>
             <h1 className='truncate text-base font-semibold lg:text-lg'>
@@ -331,7 +356,7 @@ function TeslaLivePageInner() {
           <div className='relative h-full min-h-[300px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10'>
             {loadingSources && (
               <div className='absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65'>
-                <Loader2 className='h-9 w-9 animate-spin text-rose-400' />
+                <Loader2 className='h-9 w-9 animate-spin text-violet-400' />
                 <span className='text-sm'>正在加载电视直播…</span>
               </div>
             )}
@@ -342,6 +367,7 @@ function TeslaLivePageInner() {
                 title={currentChannel.name}
                 poster={currentChannel.logo}
                 live
+                resolveLiveSource={resolveCurrentLiveSource}
                 onPlaybackReady={() => {
                   setPlaybackIssue(false);
                   setPlaybackNotice('');
@@ -366,7 +392,7 @@ function TeslaLivePageInner() {
                       <button
                         type='button'
                         onClick={retryCurrentPlayback}
-                        className='min-h-12 rounded-xl bg-rose-500 px-5 font-medium text-white active:scale-95'
+                        className='min-h-12 rounded-xl bg-violet-500 px-5 font-medium text-white active:scale-95'
                       >
                         重试当前频道
                       </button>
@@ -392,7 +418,7 @@ function TeslaLivePageInner() {
               onClick={() => setPanel('channels')}
               className={`min-h-12 rounded-xl px-3 text-sm font-medium transition ${
                 panel === 'channels'
-                  ? 'bg-rose-500 text-white shadow-lg shadow-rose-950/40'
+                  ? 'bg-violet-500 text-white shadow-lg shadow-violet-950/40'
                   : 'bg-white/5 text-white/55'
               }`}
             >
@@ -404,7 +430,7 @@ function TeslaLivePageInner() {
               onClick={() => setPanel('sources')}
               className={`min-h-12 rounded-xl px-3 text-sm font-medium transition ${
                 panel === 'sources'
-                  ? 'bg-rose-500 text-white shadow-lg shadow-rose-950/40'
+                  ? 'bg-violet-500 text-white shadow-lg shadow-violet-950/40'
                   : 'bg-white/5 text-white/55'
               }`}
             >
@@ -441,7 +467,7 @@ function TeslaLivePageInner() {
                     onClick={() => selectSource(source)}
                     className={`min-h-16 rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${
                       currentSource?.key === source.key
-                        ? 'border-rose-400 bg-rose-500/20 text-white'
+                        ? 'border-violet-400 bg-violet-500/20 text-white'
                         : 'border-white/10 bg-white/5 text-white/65'
                     }`}
                   >
@@ -467,7 +493,7 @@ function TeslaLivePageInner() {
                     value={searchKeyword}
                     onChange={(event) => setSearchKeyword(event.target.value)}
                     placeholder='搜索频道或分组'
-                    className='min-h-12 w-full rounded-xl bg-white/10 pl-11 pr-3 text-sm outline-none placeholder:text-white/30 focus:ring-1 focus:ring-rose-400'
+                    className='min-h-12 w-full rounded-xl bg-white/10 pl-11 pr-3 text-sm outline-none placeholder:text-white/30 focus:ring-1 focus:ring-violet-400'
                   />
                 </div>
                 <div className='flex gap-2 overflow-x-auto pb-1'>
@@ -505,7 +531,7 @@ function TeslaLivePageInner() {
                         onClick={() => selectChannel(channel)}
                         className={`min-h-16 rounded-xl border px-3 py-3 text-left text-sm leading-5 transition active:scale-[0.98] ${
                           currentChannel?.id === channel.id
-                            ? 'border-rose-400 bg-rose-500/20 text-white'
+                            ? 'border-violet-400 bg-violet-500/20 text-white'
                             : 'border-white/10 bg-white/5 text-white/65'
                         }`}
                       >
