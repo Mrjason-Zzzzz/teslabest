@@ -41,6 +41,7 @@ export interface PlayerCallbacks {
   onError?: (message: string) => void;
   liveHint?: boolean;
   adFilterSource?: string;
+  resolveLiveSource?: () => Promise<string | undefined>;
 }
 
 interface Segment {
@@ -1214,7 +1215,7 @@ export class WebCodecsPlayer {
       } catch (error) {
         console.warn('[WebCodecsPlayer] audio scheduler error:', error);
       }
-    }, 50);
+    }, 35);
   }
 
   private loop = () => {
@@ -1363,13 +1364,26 @@ export class WebCodecsPlayer {
   }
 
   private async restartLiveAtEdge(reason: string) {
-    const url = this.sourceUrl;
+    const currentUrl = this.sourceUrl;
+    let url = currentUrl;
+    if (this.cb.resolveLiveSource) {
+      try {
+        const resolved = await Promise.race([
+          this.cb.resolveLiveSource(),
+          new Promise<undefined>((resolve) =>
+            window.setTimeout(() => resolve(undefined), 5000)
+          ),
+        ]);
+        if (resolved) url = resolved;
+      } catch {}
+    }
     if (!url) return;
     this.debugStats.lastRecoveryReason = reason;
     this.setState('buffering');
-    // A live playlist has a moving window, not a VOD duration. A clean same-URL
-    // generation reset lets hls.js choose the current edge and prevents stale
-    // fragments/decoder epochs from leaking into the new session.
+    // Refresh the exact selected channel URL before rebuilding. Signed IPTV
+    // URLs commonly expire and redirect to a provider's default channel; an
+    // identity-preserving refresh prevents that redirect from becoming an
+    // apparent automatic channel switch.
     await this.load(url, 0);
   }
 
@@ -1757,7 +1771,7 @@ export class WebCodecsPlayer {
     const maxChunks = this.isLivePlaylist
       ? 8
       : this.playbackRate === 1
-      ? 10
+      ? 16
       : 8;
     while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
