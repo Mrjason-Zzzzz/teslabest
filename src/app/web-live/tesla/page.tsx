@@ -483,6 +483,27 @@ function TeslaWebLivePageInner() {
           </div>
 
           <div className='space-y-2 border-b border-white/10 p-3'>
+            {qualityOptions.length > 0 && (
+              <div>
+                <div className='mb-2 text-xs font-medium text-white/45'>清晰度</div>
+                <div className='grid grid-cols-3 gap-2'>
+                  {qualityOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      type='button'
+                      onClick={() => handleSelectQuality(option.id)}
+                      className={`min-h-11 rounded-xl px-2 text-sm font-medium transition active:scale-95 ${
+                        option.id === activeQualityId
+                          ? 'bg-violet-500 text-white shadow-lg shadow-violet-950/40'
+                          : 'bg-white/5 text-white/60'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className='relative'>
               <Search className='absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35' />
               <input
