@@ -102,6 +102,40 @@ function hasImplicitAesIv(lines: string[]): boolean {
   });
 }
 
+function materializeImplicitAesIvs(lines: string[]): string[] {
+  const mediaSequenceLine = lines.find((line) =>
+    /^#EXT-X-MEDIA-SEQUENCE:/i.test(line.trim())
+  );
+  const mediaSequence = Number(mediaSequenceLine?.split(':')[1] || 0);
+  let segmentIndex = 0;
+  let implicitKeyLine = '';
+  const output: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#EXT-X-KEY:/i.test(trimmed)) {
+      const method = trimmed.match(/METHOD=([^,]+)/i)?.[1]?.toUpperCase();
+      if (method && method !== 'NONE' && !/(?:^|[:,])IV=0X/i.test(trimmed)) {
+        implicitKeyLine = line;
+        continue;
+      }
+      implicitKeyLine = '';
+      output.push(line);
+      continue;
+    }
+    if (trimmed.startsWith('#EXTINF:')) {
+      if (implicitKeyLine) {
+        const sequence = BigInt(Math.max(0, mediaSequence + segmentIndex));
+        const iv = sequence.toString(16).padStart(32, '0').toUpperCase();
+        output.push(`${implicitKeyLine},IV=0x${iv}`);
+      }
+      segmentIndex += 1;
+    }
+    output.push(line);
+  }
+  return output;
+}
+
 function persistentLines(lines: string[]): string[] {
   return lines.filter((line) => {
     const trimmed = line.trim();
@@ -147,7 +181,7 @@ export function filterAdsFromMediaPlaylist(
   if (!m3u8Content.includes('#EXTINF:')) return m3u8Content;
 
   const normalized = m3u8Content.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
+  let lines = normalized.split('\n');
 
   // Rewriting media-sequence numbers in a sliding live window can make an
   // already-played segment appear new on the next reload. Keep live/event
@@ -162,7 +196,10 @@ export function filterAdsFromMediaPlaylist(
   if (lines.some((line) => UNSAFE_PLAYLIST_TAG.test(line.trim()))) {
     return m3u8Content;
   }
-  if (hasImplicitAesIv(lines)) return m3u8Content;
+  // AES-128 without an explicit IV derives it from the original media sequence.
+  // Before removing a complete ad segment, materialize that IV on every segment
+  // so later programme segments keep decrypting with their original value.
+  if (hasImplicitAesIv(lines)) lines = materializeImplicitAesIvs(lines);
 
   const output: string[] = [];
   let cursor = 0;
