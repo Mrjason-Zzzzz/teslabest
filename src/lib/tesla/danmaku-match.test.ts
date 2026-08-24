@@ -27,6 +27,16 @@ describe('Tesla danmaku automatic match identity', () => {
     ).toBe('庆余年 第二季 (2024) S02E07');
   });
 
+  test('builds a generic movie filename without any title-specific rule', () => {
+    expect(
+      buildTeslaDanmakuFileName({
+        title: '流浪地球2 - 2023',
+        year: '2023',
+        episode: 1,
+      })
+    ).toContain('流浪地球2');
+  });
+
   test('selects the real 2011 series instead of a misleading first result', () => {
     const selected = selectTeslaDanmakuCandidate(
       [
