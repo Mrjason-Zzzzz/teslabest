@@ -161,15 +161,29 @@ async function getBilibiliStream(roomId: string) {
 }
 
 async function getDouyinStream(roomId: string) {
-  const cookies =
-    'ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE%7C1761045455%7Cab35197d5cfb21df6cbb2fa7ef1c9262206b062c315b9d04da746d0b37dfbc7d';
-
-  const headers = {
+  const baseHeaders = {
     'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36',
     Referer: 'https://live.douyin.com/',
-    Cookie: cookies,
   };
+  // Do not pin an expiring visitor cookie in source code. Obtain a fresh
+  // anonymous cookie for every resolver request; the API still works without
+  // it on endpoints that do not require ttwid.
+  const landing = await fetch(`https://live.douyin.com/${roomId}`, {
+    headers: baseHeaders,
+    redirect: 'follow',
+  });
+  const setCookies =
+    (landing.headers as Headers & { getSetCookie?: () => string[] })
+      .getSetCookie?.() ||
+    (landing.headers.get('set-cookie') || '')
+      .split(/,(?=\s*[^;,=]+=[^;,]*)/)
+      .filter(Boolean);
+  const cookie = setCookies
+    .map((item) => item.split(';')[0]?.trim())
+    .filter(Boolean)
+    .join('; ');
+  const headers = cookie ? { ...baseHeaders, Cookie: cookie } : baseHeaders;
 
   // 构建API参数
   const params = new URLSearchParams({
@@ -213,21 +227,17 @@ async function getDouyinStream(roomId: string) {
     throw new Error('未找到m3u8地址');
   }
 
-  // 尝试获取原画质，如果没有则获取第一个可用的
-  let m3u8Url =
-    hlsPullUrlMap.ORIGIN ||
-    hlsPullUrlMap.FULL_HD1 ||
-    hlsPullUrlMap.HD1 ||
-    hlsPullUrlMap.SD1 ||
-    hlsPullUrlMap.SD2;
-
-  if (!m3u8Url) {
-    // 如果上述都没有，获取第一个可用的
-    const urls = Object.values(hlsPullUrlMap);
-    if (urls.length > 0) {
-      m3u8Url = urls[0] as string;
-    }
-  }
+  const qualityOrder = [
+    ['ORIGIN', '原画'],
+    ['FULL_HD1', '超清'],
+    ['HD1', '高清'],
+    ['SD1', '标清'],
+    ['SD2', '流畅'],
+  ] as const;
+  const qualities = qualityOrder
+    .map(([id, label]) => ({ id, label, url: hlsPullUrlMap[id] }))
+    .filter((item) => typeof item.url === 'string' && item.url);
+  const m3u8Url = qualities[0]?.url;
 
   if (!m3u8Url) {
     throw new Error('未找到可用的m3u8地址');
@@ -238,6 +248,7 @@ async function getDouyinStream(roomId: string) {
     url: m3u8Url,
     name: jsonData.data.user?.nickname || '',
     title: roomData.title || '',
+    qualities,
   };
 }
 
@@ -328,15 +339,29 @@ export async function GET(request: NextRequest) {
 
     if (platform === 'douyin') {
       const streamData = await getDouyinStream(roomId);
-      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
-        streamData.url
-      )}`;
+      const toProxy = (url: string) =>
+        `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(url)}`;
+      const proxyUrl = toProxy(streamData.url);
 
       return NextResponse.json({
         url: proxyUrl,
         originalUrl: streamData.url,
         name: streamData.name,
         title: streamData.title,
+        streamType: 'hls',
+        qualities: streamData.qualities.map((item) => ({
+          id: item.id,
+          label: item.label,
+          transports: [
+            {
+              id: `${item.id}-proxy`,
+              label: '车机代理线路',
+              url: toProxy(item.url),
+              originalUrl: item.url,
+              streamType: 'hls',
+            },
+          ],
+        })),
       });
     }
 
