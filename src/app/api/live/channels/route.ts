@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getCachedLiveChannels } from '@/lib/live';
+import { deleteCachedLiveChannels, getCachedLiveChannels } from '@/lib/live';
 import { getConfig } from '@/lib/config';
 import {
   isSourceAllowedForUser,
@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const { searchParams } = new URL(request.url);
     const sourceKey = searchParams.get('source');
+    const refresh = searchParams.get('refresh') === 'true';
 
     if (!sourceKey) {
       return NextResponse.json({ error: '缺少直播源参数' }, { status: 400 });
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
     // Channel selection does not need the potentially large XMLTV document.
     // Return the parsed playlist immediately; the EPG endpoint loads programme
     // data on demand.
+    if (refresh) deleteCachedLiveChannels(sourceKey);
     const channelData = await getCachedLiveChannels(sourceKey, {
       includeEpg: false,
     });
