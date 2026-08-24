@@ -6,10 +6,14 @@ import {
   convertDanmakuFormat,
   getDanmakuById,
   getEpisodes,
+  matchAnime,
   searchAnime,
 } from '@/lib/danmaku/api';
 import {
+  buildTeslaDanmakuFileName,
   cleanTeslaDanmakuTitle,
+  parseTeslaDanmakuEpisodeNumber,
+  scoreTeslaDanmakuCandidate,
   selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
 } from '@/lib/tesla/danmaku-match';
@@ -34,6 +38,7 @@ interface TeslaDanmakuOverlayProps {
   playing: boolean;
   laneCount?: number;
   speed?: number;
+  fontSize?: number;
   onStatusChange?: (status: string) => void;
 }
 
@@ -63,6 +68,7 @@ export default function TeslaDanmakuOverlay({
   playing,
   laneCount = 7,
   speed = 3,
+  fontSize = 30,
   onStatusChange,
 }: TeslaDanmakuOverlayProps) {
   const [comments, setComments] = useState<
@@ -78,6 +84,7 @@ export default function TeslaDanmakuOverlay({
 
   const safeLaneCount = Math.max(3, Math.min(8, Math.floor(laneCount || 7)));
   const safeSpeed = Math.max(1, Math.min(5, Math.floor(speed || 3)));
+  const safeFontSize = Math.max(18, Math.min(44, Math.floor(fontSize || 30)));
   const animationDurationSec = 14 - (safeSpeed - 1) * 2;
   const baseTitle = cleanTeslaDanmakuTitle(title);
   const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}`;
@@ -95,17 +102,61 @@ export default function TeslaDanmakuOverlay({
     onStatusChange?.('正在匹配弹幕…');
 
     const load = async () => {
-      const searchResult = await searchAnime(baseTitle);
+      const searchKeywords = Array.from(
+        new Set([
+          baseTitle,
+          baseTitle.replace(/\s*第\s*[0-9一-十两]+\s*季.*$/u, '').trim(),
+        ].filter(Boolean))
+      );
+      let anime = null;
+      for (const keyword of searchKeywords) {
+        const searchResult = await searchAnime(keyword);
+        if (cancelled) return;
+        if (!searchResult.success) continue;
+        anime = selectTeslaDanmakuCandidate(searchResult.animes || [], {
+          title: baseTitle,
+          year,
+          mediaType,
+          totalEpisodes,
+        });
+        if (anime) break;
+      }
       if (cancelled) return;
 
-      const anime = searchResult.success
-        ? selectTeslaDanmakuCandidate(searchResult.animes || [], {
+      // Search results are not complete for every provider. Use the structured
+      // filename matcher as a generic fallback, but accept it only when title,
+      // media type and episode number still agree with the current programme.
+      if (!anime) {
+        const matched = await matchAnime(
+          buildTeslaDanmakuFileName({
+            title: baseTitle,
+            year,
+            episode: episodeNumber,
+          })
+        );
+        if (cancelled) return;
+        const reliableMatch = (matched.matches || []).find((item) => {
+          const score = scoreTeslaDanmakuCandidate(item, {
             title: baseTitle,
             year,
             mediaType,
             totalEpisodes,
-          })
-        : null;
+          });
+          const matchedEpisode = parseTeslaDanmakuEpisodeNumber(
+            item.episodeTitle || ''
+          );
+          return score >= 70 &&
+            (matchedEpisode === null || matchedEpisode === episodeNumber);
+        });
+        if (reliableMatch) {
+          anime = {
+            animeId: reliableMatch.animeId,
+            animeTitle: reliableMatch.animeTitle,
+            type: reliableMatch.type,
+            typeDescription: reliableMatch.typeDescription,
+          };
+        }
+      }
       if (!anime) {
         loadIdentityRef.current = '';
         onStatusChange?.('未找到可靠弹幕匹配');
@@ -262,6 +313,7 @@ export default function TeslaDanmakuOverlay({
             color: comment.color,
             animationDuration: `${animationDurationSec}s`,
             animationPlayState: playing ? 'running' : 'paused',
+            fontSize: `${safeFontSize}px`,
           }}
         >
           {comment.text}
