@@ -46,6 +46,20 @@ describe('applyConfiguredAdFilterSafely', () => {
     expect(filtered).toContain('program-2.ts');
   });
 
+  it('VOD 专用链路可处理缺失 ENDLIST 的不规范点播清单', () => {
+    const malformedVod = VOD_PLAYLIST.replace(
+      '#EXT-X-PLAYLIST-TYPE:VOD\n',
+      ''
+    ).replace('\n#EXT-X-ENDLIST', '');
+
+    expect(
+      applyConfiguredAdFilterSafely('test', malformedVod, '', true)
+    ).not.toContain('preroll.ts');
+    expect(applyConfiguredAdFilterSafely('test', malformedVod)).toBe(
+      malformedVod
+    );
+  });
+
   it('隐式 AES IV 转为原序号显式 IV 后安全删除广告', () => {
     const encrypted = VOD_PLAYLIST.replace(
       '#EXT-X-PLAYLIST-TYPE:VOD',
