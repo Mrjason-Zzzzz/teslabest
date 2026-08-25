@@ -44,6 +44,9 @@ export interface AdFilterOptions {
    * 执行 VOD、加密和 LL-HLS 安全校验，不允许自定义逻辑绕过音画同步保护。
    */
   additionalAdSegmentIndexes?: ReadonlySet<number>;
+  /** The caller is VOD-only even when a malformed provider omitted its
+   * PLAYLIST-TYPE:VOD and ENDLIST markers. */
+  assumeVod?: boolean;
 }
 
 function isCueIn(line: string): boolean {
@@ -189,7 +192,7 @@ export function filterAdsFromMediaPlaylist(
   const isCompletedVod = lines.some((line) =>
     /^#EXT-X-(?:PLAYLIST-TYPE:VOD|ENDLIST)$/i.test(line.trim())
   );
-  if (!isCompletedVod) return m3u8Content;
+  if (!isCompletedVod && options.assumeVod !== true) return m3u8Content;
 
   // These structures depend on original segment numbering or byte positions.
   // Preserving the source is safer than risking silent A/V corruption.
