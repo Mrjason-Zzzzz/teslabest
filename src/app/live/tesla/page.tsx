@@ -199,14 +199,20 @@ function TeslaLivePageInner() {
     const allowCORS = proxyMode === 'm3u8-only' ? '&allowCORS=true' : '';
     return `/api/proxy/m3u8?url=${encodeURIComponent(
       currentChannel.url
-    )}&moontv-source=${encodeURIComponent(currentSource.key)}&moontv-channel=${encodeURIComponent(currentChannel.id)}${allowCORS}`;
+    )}&moontv-source=${encodeURIComponent(
+      currentSource.key
+    )}&moontv-channel=${encodeURIComponent(
+      currentChannel.id
+    )}&moontv-root=1${allowCORS}`;
   }, [currentChannel, currentSource]);
 
   const resolveCurrentLiveSource = useCallback(async () => {
     if (!currentSource || !currentChannel) return playUrl;
     const controller = new AbortController();
     const data = await fetchJson(
-      `/api/live/channels?source=${encodeURIComponent(currentSource.key)}&refresh=true`,
+      `/api/live/channels?source=${encodeURIComponent(
+        currentSource.key
+      )}&refresh=true`,
       controller.signal,
       10000
     );
@@ -224,7 +230,11 @@ function TeslaLivePageInner() {
     const mode = currentSource.proxyMode || 'full';
     if (mode === 'direct') return same.url;
     const allowCORS = mode === 'm3u8-only' ? '&allowCORS=true' : '';
-    return `/api/proxy/m3u8?url=${encodeURIComponent(same.url)}&moontv-source=${encodeURIComponent(currentSource.key)}&moontv-channel=${encodeURIComponent(same.id)}${allowCORS}`;
+    return `/api/proxy/m3u8?url=${encodeURIComponent(
+      same.url
+    )}&moontv-source=${encodeURIComponent(
+      currentSource.key
+    )}&moontv-channel=${encodeURIComponent(same.id)}&moontv-root=1${allowCORS}`;
   }, [currentChannel, currentSource, playUrl]);
 
   const groups = useMemo(() => {
