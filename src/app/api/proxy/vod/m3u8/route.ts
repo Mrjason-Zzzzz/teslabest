@@ -91,8 +91,24 @@ export async function GET(request: Request) {
       const filteredContent = applyConfiguredAdFilterSafely(
         source,
         m3u8Content,
-        config.SiteConfig?.CustomAdFilterCode || ''
+        config.SiteConfig?.CustomAdFilterCode || '',
+        true
       );
+      const countMediaUris = (value: string) =>
+        value
+          .split(/\r?\n/)
+          .filter((line) => line.trim() && !line.trim().startsWith('#')).length;
+      const removedSegments = Math.max(
+        0,
+        countMediaUris(m3u8Content) - countMediaUris(filteredContent)
+      );
+      console.info('[VodAdFilter] playlist processed', {
+        source,
+        removedSegments,
+        playlistHadVodMarkers: /#EXT-X-(?:PLAYLIST-TYPE:VOD|ENDLIST)/i.test(
+          m3u8Content
+        ),
+      });
 
       // 使用最终的响应URL作为baseUrl，而不是原始的请求URL
       const baseUrl = getBaseUrl(finalUrl);
@@ -106,6 +122,11 @@ export async function GET(request: Request) {
       );
 
       const headers = buildProxyM3u8Headers(contentType || undefined);
+      headers.set('X-Tesla-Ad-Segments-Removed', String(removedSegments));
+      headers.set(
+        'Access-Control-Expose-Headers',
+        'Content-Length, Content-Range, X-Tesla-Ad-Segments-Removed'
+      );
       return new Response(modifiedContent, { headers });
     }
     // just proxy
