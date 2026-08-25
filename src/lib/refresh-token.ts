@@ -24,18 +24,31 @@ interface TokenData {
   lastUsed: number;
 }
 
+const ACTIVE_SESSION_FIELD = '__active_session__';
+
+async function requiresSingleSession(username: string) {
+  const [{ getFreshConfig }, { requiresSingleDeviceLogin }] = await Promise.all(
+    [import('./config'), import('./account-access')]
+  );
+  return requiresSingleDeviceLogin(await getFreshConfig(), username);
+}
+
 // 生成随机 Token ID
 export function generateTokenId(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
 }
 
 // 生成随机 Refresh Token
 export function generateRefreshToken(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
 }
 
 // 存储 Refresh Token（使用 Redis Hash）
@@ -58,6 +71,15 @@ export async function storeRefreshToken(
       tokenId,
       JSON.stringify(tokenData)
     );
+    if (await requiresSingleSession(username)) {
+      await (storage as any).adapter.hSet(
+        hashKey,
+        ACTIVE_SESSION_FIELD,
+        tokenId
+      );
+    } else {
+      await (storage as any).adapter.hDel(hashKey, ACTIVE_SESSION_FIELD);
+    }
     console.log(`Stored refresh token for ${username}:${tokenId}`);
   } catch (error) {
     console.error('Failed to store refresh token:', error);
@@ -80,6 +102,7 @@ export async function verifyRefreshToken(
   }
 
   try {
+    if (!(await verifyActiveSession(username, tokenId))) return false;
     const dataStr = await (storage as any).adapter.hGet(hashKey, tokenId);
 
     if (!dataStr) {
@@ -115,6 +138,31 @@ export async function verifyRefreshToken(
   }
 }
 
+export async function verifyActiveSession(
+  username: string,
+  tokenId: string
+): Promise<boolean> {
+  if (!(await requiresSingleSession(username))) return true;
+  const hashKey = `user_tokens:${username}`;
+  const storage = await loadStorage();
+  if (!storage || typeof (storage as any).adapter?.hGet !== 'function') {
+    return false;
+  }
+  const active = await (storage as any).adapter.hGet(
+    hashKey,
+    ACTIVE_SESSION_FIELD
+  );
+  if (!active) {
+    // Existing installations have no marker. The first still-valid browser
+    // claims it; every later login atomically replaces this marker.
+    const token = await (storage as any).adapter.hGet(hashKey, tokenId);
+    if (!token) return false;
+    await (storage as any).adapter.hSet(hashKey, ACTIVE_SESSION_FIELD, tokenId);
+    return true;
+  }
+  return active === tokenId;
+}
+
 // 撤销单个 Token
 export async function revokeRefreshToken(
   username: string,
@@ -130,6 +178,13 @@ export async function revokeRefreshToken(
 
   try {
     await (storage as any).adapter.hDel(hashKey, tokenId);
+    const active = await (storage as any).adapter.hGet(
+      hashKey,
+      ACTIVE_SESSION_FIELD
+    );
+    if (active === tokenId) {
+      await (storage as any).adapter.hDel(hashKey, ACTIVE_SESSION_FIELD);
+    }
     console.log(`Revoked refresh token for ${username}:${tokenId}`);
   } catch (error) {
     console.error('Failed to revoke refresh token:', error);
@@ -137,13 +192,15 @@ export async function revokeRefreshToken(
 }
 
 // 获取用户的所有设备
-export async function getUserDevices(username: string): Promise<Array<{
-  tokenId: string;
-  deviceInfo: string;
-  createdAt: number;
-  lastUsed: number;
-  expiresAt: number;
-}>> {
+export async function getUserDevices(username: string): Promise<
+  Array<{
+    tokenId: string;
+    deviceInfo: string;
+    createdAt: number;
+    lastUsed: number;
+    expiresAt: number;
+  }>
+> {
   const hashKey = `user_tokens:${username}`;
   const storage = await loadStorage();
 
@@ -163,6 +220,7 @@ export async function getUserDevices(username: string): Promise<Array<{
     const now = Date.now();
 
     for (const [tokenId, dataStr] of Object.entries(allTokens)) {
+      if (tokenId === ACTIVE_SESSION_FIELD) continue;
       try {
         const tokenData: TokenData = JSON.parse(dataStr as string);
 
