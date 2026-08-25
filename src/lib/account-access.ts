@@ -15,6 +15,7 @@ export interface AccountAccessPolicy {
   source: AccountAccessSource;
   createdAt: number;
   updatedAt: number;
+  allowMultiDevice?: boolean;
 }
 
 export interface RedemptionCodeRecord {
@@ -143,6 +144,7 @@ export function resolveAccountAccess(
           source: policy.source || 'admin',
           createdAt: policy.createdAt || now,
           updatedAt: policy.updatedAt || now,
+          allowMultiDevice: policy.allowMultiDevice === true,
         }
       : createAccountPolicy('permanent', 'legacy', now);
 
@@ -150,6 +152,18 @@ export function resolveAccountAccess(
     ...normalized,
     isExpired: normalized.expiresAt !== null && normalized.expiresAt <= now,
   };
+}
+
+export function requiresSingleDeviceLogin(
+  config: AccessConfig & {
+    SiteConfig?: { SingleDeviceLoginEnabled?: boolean };
+  },
+  username: string
+) {
+  if (config.SiteConfig?.SingleDeviceLoginEnabled === false) return false;
+  return (
+    config.UserConfig?.AccessPolicies?.[username]?.allowMultiDevice !== true
+  );
 }
 
 export function normalizeRedemptionCode(code: string): string {
