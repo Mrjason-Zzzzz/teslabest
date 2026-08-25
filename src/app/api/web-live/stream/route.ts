@@ -174,8 +174,9 @@ async function getDouyinStream(roomId: string) {
     redirect: 'follow',
   });
   const setCookies =
-    (landing.headers as Headers & { getSetCookie?: () => string[] })
-      .getSetCookie?.() ||
+    (
+      landing.headers as Headers & { getSetCookie?: () => string[] }
+    ).getSetCookie?.() ||
     (landing.headers.get('set-cookie') || '')
       .split(/,(?=\s*[^;,=]+=[^;,]*)/)
       .filter(Boolean);
@@ -265,16 +266,12 @@ export async function GET(request: NextRequest) {
     const platform = searchParams.get('platform');
     const roomId = searchParams.get('roomId');
 
-    if (!platform || !roomId) {
+    if (!sourceKey) {
       return NextResponse.json({ error: '缺少参数' }, { status: 400 });
     }
     const config = await getConfig();
     const configuredSource = config.WebLiveConfig?.find(
-      (source) =>
-        source.key === sourceKey &&
-        source.platform === platform &&
-        source.roomId === roomId &&
-        !source.disabled
+      (source) => source.key === sourceKey && !source.disabled
     );
     if (
       !configuredSource ||
@@ -285,14 +282,23 @@ export async function GET(request: NextRequest) {
         { status: 403 }
       );
     }
+    // The source key is the server-side authority. Client platform/room values
+    // may be stale after an admin edit and must not cause a false 403.
+    const resolvedPlatform = configuredSource.platform;
+    const resolvedRoomId = configuredSource.roomId;
 
-    if (platform === 'huya') {
-      const res = await fetch(`https://www.huya.com/${roomId}`, {
+    if (resolvedPlatform === 'huya') {
+      const res = await fetch(`https://www.huya.com/${resolvedRoomId}`, {
+        cache: 'no-store',
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
+        signal: AbortSignal.timeout(10000),
       });
+      if (!res.ok) {
+        throw new Error(`虎牙页面请求失败（${res.status}）`);
+      }
       const html = await res.text();
 
       const match = html.match(/stream:\s*(\{"data".*?),"iWebDefaultBitRate"/);
@@ -302,29 +308,56 @@ export async function GET(request: NextRequest) {
 
       const jsonData = JSON.parse(match[1] + '}');
       const gameLiveInfo = jsonData.data?.[0]?.gameLiveInfo;
-      const streamInfo = jsonData.data?.[0]?.gameStreamInfoList?.[0];
+      const streamInfoList =
+        jsonData.data?.[0]?.gameStreamInfoList?.filter(
+          (item: Record<string, unknown>) =>
+            item.sHlsUrl &&
+            item.sStreamName &&
+            item.sHlsUrlSuffix &&
+            item.sHlsAntiCode
+        ) || [];
 
-      if (!streamInfo) {
+      if (streamInfoList.length === 0) {
         return NextResponse.json({ error: '直播未开启' }, { status: 404 });
       }
-
-      const { sFlvUrl, sStreamName, sFlvUrlSuffix, sFlvAntiCode } = streamInfo;
-      const newAntiCode = getAntiCode(sFlvAntiCode, sStreamName);
-      const streamUrl = `${sFlvUrl}/${sStreamName}.${sFlvUrlSuffix}?${newAntiCode}`;
-      const proxyUrl = `/api/web-live/proxy/proxy.flv?url=${encodeURIComponent(
-        streamUrl
-      )}`;
+      const transports = streamInfoList.map(
+        (streamInfo: Record<string, string>, index: number) => {
+          const antiCode = getAntiCode(
+            streamInfo.sHlsAntiCode,
+            streamInfo.sStreamName
+          );
+          const originalUrl = `${streamInfo.sHlsUrl}/${streamInfo.sStreamName}.${streamInfo.sHlsUrlSuffix}?${antiCode}`;
+          return {
+            id: `huya-hls-${index + 1}`,
+            label: `车机线路 ${index + 1}`,
+            url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
+              originalUrl
+            )}`,
+            originalUrl,
+            streamType: 'hls',
+          };
+        }
+      );
+      const preferred = transports[0];
 
       return NextResponse.json({
-        url: proxyUrl,
-        originalUrl: streamUrl,
+        url: preferred.url,
+        originalUrl: preferred.originalUrl,
         name: gameLiveInfo?.nick || '',
         title: gameLiveInfo?.introduction || '',
+        streamType: 'hls',
+        qualities: [
+          {
+            id: 'AUTO',
+            label: '虎牙原画',
+            transports,
+          },
+        ],
       });
     }
 
-    if (platform === 'bilibili') {
-      const streamData = await getBilibiliStream(roomId);
+    if (resolvedPlatform === 'bilibili') {
+      const streamData = await getBilibiliStream(resolvedRoomId);
       const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
         streamData.url
       )}`;
@@ -337,8 +370,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (platform === 'douyin') {
-      const streamData = await getDouyinStream(roomId);
+    if (resolvedPlatform === 'douyin') {
+      const streamData = await getDouyinStream(resolvedRoomId);
       const toProxy = (url: string) =>
         `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(url)}`;
       const proxyUrl = toProxy(streamData.url);
