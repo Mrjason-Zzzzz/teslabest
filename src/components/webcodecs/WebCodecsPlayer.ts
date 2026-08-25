@@ -278,7 +278,10 @@ export class WebCodecsPlayer {
       enableWorker: true,
       // Filter only text playlists before hls.js and the Canvas demuxer see
       // them. Segment bytes and HLS timing metadata remain untouched.
-      pLoader: createAdFilteringPlaylistLoader(this.adFilterSource),
+      pLoader: createAdFilteringPlaylistLoader(
+        this.adFilterSource,
+        !this.liveHint
+      ),
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: this.liveHint ? -1 : startAt,
