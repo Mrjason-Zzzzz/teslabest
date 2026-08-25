@@ -11,10 +11,11 @@ import {
 } from '@/lib/danmaku/api';
 import {
   buildTeslaDanmakuFileName,
+  buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
   parseTeslaDanmakuEpisodeNumber,
+  rankTeslaDanmakuCandidates,
   scoreTeslaDanmakuCandidate,
-  selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
 } from '@/lib/tesla/danmaku-match';
 
@@ -102,95 +103,108 @@ export default function TeslaDanmakuOverlay({
     onStatusChange?.('正在匹配弹幕…');
 
     const load = async () => {
-      const searchKeywords = Array.from(
-        new Set([
-          baseTitle,
-          baseTitle.replace(/\s*第\s*[0-9一-十两]+\s*季.*$/u, '').trim(),
-        ].filter(Boolean))
+      const context = { title: baseTitle, year, mediaType, totalEpisodes };
+      const searchKeywords = buildTeslaDanmakuSearchKeywords(baseTitle);
+      const fileNames = searchKeywords.map((keyword) =>
+        buildTeslaDanmakuFileName({
+          title: keyword,
+          year,
+          episode: episodeNumber,
+        })
       );
-      let anime = null;
+      const directMatches = [];
+      for (const fileName of fileNames) {
+        const matched = await matchAnime(fileName);
+        if (cancelled) return;
+        directMatches.push(
+          ...(matched.matches || []).filter((item) => {
+            const matchedEpisode = parseTeslaDanmakuEpisodeNumber(
+              item.episodeTitle || ''
+            );
+            return (
+              scoreTeslaDanmakuCandidate(item, context) >= 45 &&
+              (matchedEpisode === null || matchedEpisode === episodeNumber)
+            );
+          })
+        );
+      }
+
+      const searchedCandidates = [];
       for (const keyword of searchKeywords) {
         const searchResult = await searchAnime(keyword);
         if (cancelled) return;
-        if (!searchResult.success) continue;
-        anime = selectTeslaDanmakuCandidate(searchResult.animes || [], {
-          title: baseTitle,
-          year,
-          mediaType,
-          totalEpisodes,
-        });
-        if (anime) break;
+        if (searchResult.success) {
+          searchedCandidates.push(...(searchResult.animes || []));
+        }
       }
-      if (cancelled) return;
 
-      // Search results are not complete for every provider. Use the structured
-      // filename matcher as a generic fallback, but accept it only when title,
-      // media type and episode number still agree with the current programme.
-      if (!anime) {
-        const matched = await matchAnime(
-          buildTeslaDanmakuFileName({
-            title: baseTitle,
-            year,
-            episode: episodeNumber,
-          })
+      const attempts: Array<{
+        animeId: number;
+        animeTitle: string;
+        episodeId?: number;
+        episodeTitle?: string;
+      }> = [];
+      const seenAttempts = new Set<string>();
+      for (const match of directMatches) {
+        const key = `${match.animeId}:${match.episodeId}`;
+        if (seenAttempts.has(key)) continue;
+        seenAttempts.add(key);
+        attempts.push(match);
+      }
+      for (const anime of rankTeslaDanmakuCandidates(
+        searchedCandidates,
+        context
+      )) {
+        const key = `${anime.animeId}:search`;
+        if (seenAttempts.has(key)) continue;
+        seenAttempts.add(key);
+        attempts.push(anime);
+      }
+
+      let rawComments: Awaited<ReturnType<typeof getDanmakuById>> = [];
+      let matchedTitle = '';
+      let matchedEpisodeTitle = '';
+      for (const attempt of attempts.slice(0, 8)) {
+        let episodeId = attempt.episodeId;
+        let resolvedEpisodeTitle = attempt.episodeTitle || '';
+        if (!episodeId) {
+          const episodeResult = await getEpisodes(attempt.animeId);
+          if (cancelled) return;
+          const episode = selectTeslaDanmakuEpisode(
+            episodeResult.bangumi?.episodes || [],
+            episodeNumber,
+            episodeLabel
+          );
+          if (!episode) continue;
+          episodeId = episode.episodeId;
+          resolvedEpisodeTitle = episode.episodeTitle;
+        }
+        const commentsForAttempt = await getDanmakuById(
+          episodeId,
+          baseTitle,
+          episodeNumber - 1,
+          undefined,
+          {
+            animeId: attempt.animeId,
+            animeTitle: attempt.animeTitle,
+            episodeTitle: resolvedEpisodeTitle,
+            searchKeyword: baseTitle,
+          }
         );
         if (cancelled) return;
-        const reliableMatch = (matched.matches || []).find((item) => {
-          const score = scoreTeslaDanmakuCandidate(item, {
-            title: baseTitle,
-            year,
-            mediaType,
-            totalEpisodes,
-          });
-          const matchedEpisode = parseTeslaDanmakuEpisodeNumber(
-            item.episodeTitle || ''
-          );
-          return score >= 70 &&
-            (matchedEpisode === null || matchedEpisode === episodeNumber);
-        });
-        if (reliableMatch) {
-          anime = {
-            animeId: reliableMatch.animeId,
-            animeTitle: reliableMatch.animeTitle,
-            type: reliableMatch.type,
-            typeDescription: reliableMatch.typeDescription,
-          };
-        }
+        if (commentsForAttempt.length === 0) continue;
+        rawComments = commentsForAttempt;
+        matchedTitle = attempt.animeTitle;
+        matchedEpisodeTitle = resolvedEpisodeTitle;
+        break;
       }
-      if (!anime) {
+      if (rawComments.length === 0) {
         loadIdentityRef.current = '';
-        onStatusChange?.('未找到可靠弹幕匹配');
+        onStatusChange?.(
+          attempts.length > 0 ? '匹配结果暂无弹幕' : '未找到可靠弹幕匹配'
+        );
         return;
       }
-
-      const episodeResult = await getEpisodes(anime.animeId);
-      if (cancelled) return;
-
-      const episodes = episodeResult.bangumi?.episodes || [];
-      const episode = selectTeslaDanmakuEpisode(
-        episodes,
-        episodeNumber,
-        episodeLabel
-      );
-      if (!episode) {
-        loadIdentityRef.current = '';
-        onStatusChange?.('未找到对应集数弹幕');
-        return;
-      }
-
-      const rawComments = await getDanmakuById(
-        episode.episodeId,
-        baseTitle,
-        episodeNumber - 1,
-        undefined,
-        {
-          animeId: anime.animeId,
-          animeTitle: anime.animeTitle,
-          episodeTitle: episode.episodeTitle,
-          searchKeyword: baseTitle,
-        }
-      );
-      if (cancelled) return;
 
       const converted = convertDanmakuFormat(rawComments)
         .filter((item) => item.text.trim() && Number.isFinite(item.time))
@@ -207,7 +221,9 @@ export default function TeslaDanmakuOverlay({
       lastTimeRef.current = resumeFrom;
       onStatusChange?.(
         converted.length > 0
-          ? `已加载 ${converted.length} 条弹幕`
+          ? `已自动匹配 ${matchedTitle}${
+              matchedEpisodeTitle ? ` · ${matchedEpisodeTitle}` : ''
+            }，加载 ${converted.length} 条`
           : '当前内容暂无弹幕'
       );
     };
