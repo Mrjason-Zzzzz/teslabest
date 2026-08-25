@@ -91,10 +91,11 @@ function inferRemovedSegmentIndexes(
 export function applyConfiguredAdFilterSafely(
   type: string,
   m3u8Content: string,
-  customCode = ''
+  customCode = '',
+  assumeVod = false
 ): string {
   if (!customCode.trim() || !m3u8Content.includes('#EXTINF:')) {
-    return filterAdsFromMediaPlaylist(m3u8Content);
+    return filterAdsFromMediaPlaylist(m3u8Content, { assumeVod });
   }
 
   try {
@@ -106,7 +107,7 @@ export function applyConfiguredAdFilterSafely(
     );
     const result = customFunction(type, m3u8Content);
     if (typeof result !== 'string') {
-      return filterAdsFromMediaPlaylist(m3u8Content);
+      return filterAdsFromMediaPlaylist(m3u8Content, { assumeVod });
     }
 
     const additionalAdSegmentIndexes = inferRemovedSegmentIndexes(
@@ -115,8 +116,9 @@ export function applyConfiguredAdFilterSafely(
     );
     return filterAdsFromMediaPlaylist(m3u8Content, {
       additionalAdSegmentIndexes: additionalAdSegmentIndexes || undefined,
+      assumeVod,
     });
   } catch {
-    return filterAdsFromMediaPlaylist(m3u8Content);
+    return filterAdsFromMediaPlaylist(m3u8Content, { assumeVod });
   }
 }

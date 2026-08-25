@@ -1,0 +1,30 @@
+{
+  email {$ACME_EMAIL}
+  servers {
+    protocols h1 h2 h3
+  }
+}
+
+{$APP_DOMAIN} {
+  encode zstd gzip
+
+  log {
+    output stdout
+    format json
+  }
+
+  @immutable path /_next/static/*
+  header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+  @mediaProxy path /api/proxy/* /api/proxy-m3u8* /api/cms-proxy*
+  header @mediaProxy Cache-Control "no-store"
+
+  reverse_proxy app:3000 {
+    flush_interval -1
+    transport http {
+      dial_timeout 10s
+      response_header_timeout 90s
+      keepalive 30s
+    }
+  }
+}

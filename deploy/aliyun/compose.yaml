@@ -1,0 +1,68 @@
+name: teslabest
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: teslabest-local:${APP_IMAGE_TAG:-p002}
+    container_name: teslabest-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - '3000'
+    volumes:
+      - app_data:/app/.data
+      - offline_downloads:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: '5'
+    networks:
+      - teslabest_internal
+
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: teslabest-caddy
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: '5'
+    networks:
+      - teslabest_internal
+
+networks:
+  teslabest_internal:
+    driver: bridge
+
+volumes:
+  app_data:
+  offline_downloads:
+  caddy_data:
+  caddy_config:
