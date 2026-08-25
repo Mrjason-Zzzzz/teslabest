@@ -1,7 +1,9 @@
 import {
   buildTeslaDanmakuFileName,
+  buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
   inferTeslaDanmakuSeason,
+  rankTeslaDanmakuCandidates,
   selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
 } from './danmaku-match';
@@ -15,6 +17,13 @@ describe('Tesla danmaku automatic match identity', () => {
 
   test('infers a Chinese season marker', () => {
     expect(inferTeslaDanmakuSeason('庆余年 第二季')).toBe(2);
+  });
+
+  test('searches both the displayed season title and the base programme title', () => {
+    expect(buildTeslaDanmakuSearchKeywords('庆余年 第二季')).toEqual([
+      '庆余年 第二季',
+      '庆余年',
+    ]);
   });
 
   test('builds the filename expected by the automatic match API', () => {
@@ -75,6 +84,23 @@ describe('Tesla danmaku automatic match identity', () => {
         { title: '某剧' }
       )
     ).toBeNull();
+  });
+
+  test('keeps several reliable candidates so an empty first result can fall through', () => {
+    expect(
+      rankTeslaDanmakuCandidates(
+        [
+          { animeId: 1, animeTitle: '庆余年 第二季', episodeCount: 36 },
+          { animeId: 2, animeTitle: '庆余年 第二季(2024)', episodeCount: 36 },
+        ],
+        {
+          title: '庆余年 第二季',
+          year: '2024',
+          mediaType: 'tv',
+          totalEpisodes: 36,
+        }
+      ).map((item) => item.animeId)
+    ).toHaveLength(2);
   });
 
   test('prefers explicit episode numbers and rejects unordered unknown lists', () => {
