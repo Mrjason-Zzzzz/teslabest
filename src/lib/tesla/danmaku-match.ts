@@ -128,6 +128,35 @@ export function selectTeslaDanmakuCandidate<T extends TeslaDanmakuCandidate>(
   return best.candidate;
 }
 
+export function rankTeslaDanmakuCandidates<T extends TeslaDanmakuCandidate>(
+  candidates: T[],
+  context: {
+    title: string;
+    year?: string;
+    mediaType?: 'movie' | 'tv';
+    totalEpisodes?: number;
+  }
+): T[] {
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      score: scoreTeslaDanmakuCandidate(candidate, context),
+    }))
+    .filter((item) => Number.isFinite(item.score) && item.score >= 45)
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.candidate);
+}
+
+export function buildTeslaDanmakuSearchKeywords(title: string) {
+  const clean = cleanTeslaDanmakuTitle(title);
+  const withoutSeason = clean
+    .replace(/\s*第\s*[0-9一二两三四五六七八九十]+\s*季.*$/u, '')
+    .replace(/(?:^|\s)S(?:eason)?\s*0*\d{1,2}(?:\s|$)/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return Array.from(new Set([clean, withoutSeason].filter(Boolean)));
+}
+
 export function parseTeslaDanmakuEpisodeNumber(value: string) {
   const patterns = [
     /S\d{1,2}E0*(\d{1,4})/i,
