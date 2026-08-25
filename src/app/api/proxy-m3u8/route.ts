@@ -167,7 +167,8 @@ export async function GET(request: NextRequest) {
     m3u8Content = applyConfiguredAdFilterSafely(
       source,
       originalM3u8Content,
-      customAdFilterCode
+      customAdFilterCode,
+      true
     );
 
     // 处理 m3u8 中的相对链接
