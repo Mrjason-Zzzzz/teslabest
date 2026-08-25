@@ -61,6 +61,8 @@ export async function GET(request: NextRequest) {
       ),
       membershipRenewalMessage:
         config.SiteConfig.MembershipRenewalMessage || '如需续费请联系站长',
+      singleDeviceLoginEnabled:
+        config.SiteConfig.SingleDeviceLoginEnabled !== false,
       codes: safeCodes(config.UserConfig.RedemptionCodes || []),
       policies: config.UserConfig.AccessPolicies || {},
     },
@@ -82,6 +84,7 @@ export async function POST(request: NextRequest) {
     const ownerOnlyActions = new Set([
       'setRegistrationMode',
       'setMembershipRenewalMessage',
+      'setSingleDeviceMode',
       'updateUserAccess',
     ]);
     if (manager.role !== 'owner' && ownerOnlyActions.has(body.action)) {
@@ -117,6 +120,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         message: config.SiteConfig.MembershipRenewalMessage,
+      });
+    }
+
+    if (body.action === 'setSingleDeviceMode') {
+      config.SiteConfig.SingleDeviceLoginEnabled = body.enabled !== false;
+      await saveConfig(config);
+      return NextResponse.json({
+        ok: true,
+        enabled: config.SiteConfig.SingleDeviceLoginEnabled,
       });
     }
 
@@ -194,12 +206,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: '用户不存在' }, { status: 404 });
       }
 
-      config.UserConfig.AccessPolicies[username] = createAccountPolicy(
-        plan,
-        'admin',
-        Date.now(),
-        status
-      );
+      config.UserConfig.AccessPolicies[username] = {
+        ...createAccountPolicy(plan, 'admin', Date.now(), status),
+        allowMultiDevice: body.allowMultiDevice === true,
+      };
       await saveConfig(config);
 
       invalidateUserAccessTokens(username);
