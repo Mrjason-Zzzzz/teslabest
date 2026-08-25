@@ -17,6 +17,25 @@ function sanitizeAcl(value: unknown): string[] {
     : [];
 }
 
+const WEB_LIVE_PLATFORMS = new Set(['huya', 'bilibili', 'douyin']);
+
+function normalizeRoomId(platformValue: unknown, roomValue: unknown) {
+  const platform = String(platformValue || '')
+    .trim()
+    .toLowerCase();
+  let roomId = String(roomValue || '').trim();
+  if (!WEB_LIVE_PLATFORMS.has(platform)) {
+    throw new Error('目前仅支持虎牙、哔哩哔哩和抖音直播');
+  }
+  if (/^https?:\/\//i.test(roomId)) {
+    const parsed = new URL(roomId);
+    roomId = parsed.pathname.split('/').filter(Boolean)[0] || '';
+  }
+  roomId = roomId.replace(/[?#/].*$/, '').trim();
+  if (!roomId || roomId.length > 128) throw new Error('直播间 ID 或链接无效');
+  return { platform, roomId };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const authInfo = getAuthInfoFromCookie(request);
@@ -53,6 +72,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
         }
 
+        const normalized = normalizeRoomId(platform, roomId);
         const key = `web_${Date.now()}`;
         if (config.WebLiveConfig.some((s) => s.key === key)) {
           return NextResponse.json({ error: 'Key已存在' }, { status: 400 });
@@ -60,9 +80,9 @@ export async function POST(request: NextRequest) {
 
         config.WebLiveConfig.push({
           key,
-          name,
-          platform,
-          roomId,
+          name: String(name).trim(),
+          platform: normalized.platform,
+          roomId: normalized.roomId,
           from: 'custom',
           disabled: false,
           allowedUsers: sanitizeAcl(allowedUsers),
@@ -121,9 +141,10 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        source.name = name;
-        source.platform = platform;
-        source.roomId = roomId;
+        const normalized = normalizeRoomId(platform, roomId);
+        source.name = String(name || '').trim();
+        source.platform = normalized.platform;
+        source.roomId = normalized.roomId;
         if (allowedUsers !== undefined) {
           source.allowedUsers = sanitizeAcl(allowedUsers);
         }

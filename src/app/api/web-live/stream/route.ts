@@ -166,26 +166,6 @@ async function getDouyinStream(roomId: string) {
       'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36',
     Referer: 'https://live.douyin.com/',
   };
-  // Do not pin an expiring visitor cookie in source code. Obtain a fresh
-  // anonymous cookie for every resolver request; the API still works without
-  // it on endpoints that do not require ttwid.
-  const landing = await fetch(`https://live.douyin.com/${roomId}`, {
-    headers: baseHeaders,
-    redirect: 'follow',
-  });
-  const setCookies =
-    (
-      landing.headers as Headers & { getSetCookie?: () => string[] }
-    ).getSetCookie?.() ||
-    (landing.headers.get('set-cookie') || '')
-      .split(/,(?=\s*[^;,=]+=[^;,]*)/)
-      .filter(Boolean);
-  const cookie = setCookies
-    .map((item) => item.split(';')[0]?.trim())
-    .filter(Boolean)
-    .join('; ');
-  const headers = cookie ? { ...baseHeaders, Cookie: cookie } : baseHeaders;
-
   // 构建API参数
   const params = new URLSearchParams({
     aid: '6383',
@@ -203,8 +183,52 @@ async function getDouyinStream(roomId: string) {
 
   const apiUrl = `https://live.douyin.com/webcast/room/web/enter/?${params.toString()}`;
 
-  const response = await fetch(apiUrl, { headers });
-  const jsonData = await response.json();
+  const requestRoom = async (
+    headers: Record<string, string>,
+    timeoutMs: number
+  ) => {
+    const response = await fetch(apiUrl, {
+      headers,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok)
+      throw new Error(`抖音解析接口响应异常（${response.status}）`);
+    return response.json();
+  };
+
+  // Most public rooms resolve without a visitor cookie. Try that fast path
+  // first so Tesla is not forced through two sequential Douyin requests.
+  const landingPromise = fetch(`https://live.douyin.com/${roomId}`, {
+    headers: baseHeaders,
+    redirect: 'follow',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(5500),
+  }).catch(() => null);
+  let jsonData: any = null;
+  try {
+    jsonData = await requestRoom(baseHeaders, 5500);
+  } catch {
+    // Some rooms require the anonymous ttwid cookie. The landing-page retry
+    // below is intentionally only paid when the fast request fails.
+  }
+  if (!jsonData?.data?.data?.length) {
+    const landing = await landingPromise;
+    if (!landing) throw new Error('抖音直播页响应超时');
+    const setCookies =
+      (
+        landing.headers as Headers & { getSetCookie?: () => string[] }
+      ).getSetCookie?.() ||
+      (landing.headers.get('set-cookie') || '')
+        .split(/,(?=\s*[^;,=]+=[^;,]*)/)
+        .filter(Boolean);
+    const cookie = setCookies
+      .map((item) => item.split(';')[0]?.trim())
+      .filter(Boolean)
+      .join('; ');
+    if (cookie)
+      jsonData = await requestRoom({ ...baseHeaders, Cookie: cookie }, 7500);
+  }
 
   if (!jsonData.data || !jsonData.data.data) {
     throw new Error('获取直播间信息失败');
@@ -228,15 +252,24 @@ async function getDouyinStream(roomId: string) {
     throw new Error('未找到m3u8地址');
   }
 
+  // Low-to-high order matches the page's fallback policy: start with the most
+  // reliable Tesla stream, while higher qualities remain manually selectable.
   const qualityOrder = [
-    ['ORIGIN', '原画'],
-    ['FULL_HD1', '超清'],
-    ['HD1', '高清'],
-    ['SD1', '标清'],
     ['SD2', '流畅'],
+    ['SD1', '标清'],
+    ['HD1', '高清'],
+    ['FULL_HD1', '超清'],
+    ['ORIGIN', '原画'],
   ] as const;
   const qualities = qualityOrder
-    .map(([id, label]) => ({ id, label, url: hlsPullUrlMap[id] }))
+    .map(([id, label]) => ({
+      id,
+      label,
+      url:
+        typeof hlsPullUrlMap[id] === 'string'
+          ? hlsPullUrlMap[id].replace(/^http:\/\//i, 'https://')
+          : '',
+    }))
     .filter((item) => typeof item.url === 'string' && item.url);
   const m3u8Url = qualities[0]?.url;
 
@@ -374,10 +407,8 @@ export async function GET(request: NextRequest) {
       const streamData = await getDouyinStream(resolvedRoomId);
       const toProxy = (url: string) =>
         `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(url)}`;
-      const proxyUrl = toProxy(streamData.url);
-
       return NextResponse.json({
-        url: proxyUrl,
+        url: streamData.url,
         originalUrl: streamData.url,
         name: streamData.name,
         title: streamData.title,
@@ -387,8 +418,15 @@ export async function GET(request: NextRequest) {
           label: item.label,
           transports: [
             {
+              id: `${item.id}-direct`,
+              label: '直连线路',
+              url: item.url,
+              originalUrl: item.url,
+              streamType: 'hls',
+            },
+            {
               id: `${item.id}-proxy`,
-              label: '车机代理线路',
+              label: '代理备用',
               url: toProxy(item.url),
               originalUrl: item.url,
               streamType: 'hls',

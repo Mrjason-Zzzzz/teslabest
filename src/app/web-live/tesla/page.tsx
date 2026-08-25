@@ -5,11 +5,14 @@
 import {
   ArrowLeft,
   Loader2,
+  Plus,
   Radio,
   RefreshCw,
   RotateCcw,
   Search,
   Server,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -31,6 +34,7 @@ interface WebLiveSource {
   avatar?: string;
   title?: string;
   status?: 'live' | 'offline';
+  from?: 'custom' | 'config';
 }
 
 interface StreamTransport {
@@ -80,6 +84,15 @@ function TeslaWebLivePageInner() {
   const [playbackNotice, setPlaybackNotice] = useState('');
   const [streamReloadToken, setStreamReloadToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [canManage, setCanManage] = useState(false);
+  const [showManage, setShowManage] = useState(false);
+  const [savingSource, setSavingSource] = useState(false);
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState('');
+  const [newSource, setNewSource] = useState({
+    name: '',
+    platform: 'douyin',
+    roomId: '',
+  });
   const triedTransportIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -101,6 +114,7 @@ function TeslaWebLivePageInner() {
         const list: WebLiveSource[] = Array.isArray(data)
           ? data
           : data?.sources || [];
+        setCanManage(!Array.isArray(data) && data?.canManage === true);
         setSources(list);
         const matched =
           list.find(
@@ -125,6 +139,43 @@ function TeslaWebLivePageInner() {
   }, [initialPlatform, initialRoomId]);
 
   useEffect(() => loadSources(), [loadSources]);
+
+  const manageSource = useCallback(
+    async (payload: Record<string, unknown>) => {
+      setSavingSource(true);
+      setError(null);
+      try {
+        const response = await fetch('/api/admin/web-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || '操作失败');
+        setPlaybackNotice(
+          payload.action === 'delete' ? '直播间已删除' : '直播间已添加'
+        );
+        setDeleteConfirmKey('');
+        setNewSource({ name: '', platform: 'douyin', roomId: '' });
+        loadSources();
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error ? requestError.message : '操作失败'
+        );
+      } finally {
+        setSavingSource(false);
+      }
+    },
+    [loadSources]
+  );
+
+  const addSource = useCallback(() => {
+    if (!newSource.name.trim() || !newSource.roomId.trim()) {
+      setError('请填写直播间名称和房间 ID / 链接');
+      return;
+    }
+    void manageSource({ action: 'add', ...newSource });
+  }, [manageSource, newSource]);
 
   useEffect(() => {
     if (!currentSource) return;
@@ -476,16 +527,99 @@ function TeslaWebLivePageInner() {
                   : '选择直播间开始播放'}
               </div>
             </div>
-            <div className='flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300'>
-              <span className='h-2 w-2 rounded-full bg-emerald-400' />
-              Tesla 直播
+            <div className='flex items-center gap-2'>
+              {canManage && (
+                <button
+                  type='button'
+                  onClick={() => setShowManage((value) => !value)}
+                  className='flex min-h-11 items-center gap-1 rounded-xl bg-violet-500/20 px-3 text-xs text-violet-200 active:scale-95'
+                >
+                  {showManage ? (
+                    <X className='h-4 w-4' />
+                  ) : (
+                    <Plus className='h-4 w-4' />
+                  )}
+                  {showManage ? '收起' : '管理'}
+                </button>
+              )}
+              <div className='hidden items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300 xl:flex'>
+                <span className='h-2 w-2 rounded-full bg-emerald-400' />
+                Tesla 直播
+              </div>
             </div>
           </div>
+
+          {canManage && showManage && (
+            <div className='space-y-3 border-b border-violet-400/20 bg-violet-500/5 p-3'>
+              <div className='grid grid-cols-3 gap-2'>
+                {[
+                  ['douyin', '抖音'],
+                  ['huya', '虎牙'],
+                  ['bilibili', 'B站'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type='button'
+                    onClick={() =>
+                      setNewSource((current) => ({
+                        ...current,
+                        platform: value,
+                      }))
+                    }
+                    className={`min-h-11 rounded-xl text-sm ${
+                      newSource.platform === value
+                        ? 'bg-violet-500 text-white'
+                        : 'bg-white/5 text-white/60'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={newSource.name}
+                onChange={(event) =>
+                  setNewSource((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
+                }
+                placeholder='直播间名称，例如 CCTV13'
+                className='min-h-11 w-full rounded-xl bg-white/10 px-3 text-sm outline-none focus:ring-1 focus:ring-violet-400'
+              />
+              <input
+                value={newSource.roomId}
+                onChange={(event) =>
+                  setNewSource((current) => ({
+                    ...current,
+                    roomId: event.target.value,
+                  }))
+                }
+                placeholder='房间 ID 或完整直播链接'
+                className='min-h-11 w-full rounded-xl bg-white/10 px-3 text-sm outline-none focus:ring-1 focus:ring-violet-400'
+              />
+              <button
+                type='button'
+                onClick={addSource}
+                disabled={savingSource}
+                className='flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-500 text-sm font-medium disabled:opacity-50'
+              >
+                {savingSource ? (
+                  <Loader2 className='h-4 w-4 animate-spin' />
+                ) : (
+                  <Plus className='h-4 w-4' />
+                )}
+                添加并刷新
+              </button>
+            </div>
+          )}
 
           <div className='space-y-2 border-b border-white/10 p-3'>
             {qualityOptions.length > 0 && (
               <div>
-                <div className='mb-2 text-xs font-medium text-white/45'>清晰度</div>
+                <div className='mb-2 text-xs font-medium text-white/45'>
+                  清晰度
+                </div>
                 <div className='grid grid-cols-3 gap-2'>
                   {qualityOptions.map((option) => (
                     <button
@@ -542,42 +676,74 @@ function TeslaWebLivePageInner() {
               filteredSources.map((source) => {
                 const active = currentSource?.key === source.key;
                 return (
-                  <button
+                  <div
                     key={source.key}
-                    type='button'
-                    onClick={() => handleSelectSource(source)}
                     className={`flex min-h-16 w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${
                       active
                         ? 'border-violet-400 bg-violet-500/20 text-white'
                         : 'border-white/10 bg-white/5 text-white/65'
                     }`}
                   >
-                    <span
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-                        active ? 'bg-violet-400/20' : 'bg-white/5'
-                      }`}
+                    <button
+                      type='button'
+                      onClick={() => handleSelectSource(source)}
+                      className='flex min-w-0 flex-1 items-center gap-3 text-left'
                     >
-                      <Radio className='h-4 w-4' />
-                    </span>
-                    <span className='min-w-0 flex-1'>
-                      <span className='block truncate text-sm font-medium'>
-                        {source.name}
+                      <span
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          active ? 'bg-violet-400/20' : 'bg-white/5'
+                        }`}
+                      >
+                        <Radio className='h-4 w-4' />
                       </span>
-                      <span className='mt-1 block truncate text-xs text-white/35'>
-                        {platformLabel(source.platform)}
-                        {source.status === 'live'
-                          ? ' · 直播中'
-                          : source.status === 'offline'
-                          ? ' · 待刷新'
-                          : ''}
+                      <span className='min-w-0 flex-1'>
+                        <span className='block truncate text-sm font-medium'>
+                          {source.name}
+                        </span>
+                        <span className='mt-1 block truncate text-xs text-white/35'>
+                          {platformLabel(source.platform)}
+                          {source.status === 'live'
+                            ? ' · 直播中'
+                            : source.status === 'offline'
+                            ? ' · 待刷新'
+                            : ''}
+                        </span>
                       </span>
-                    </span>
-                    {active && (
-                      <span className='rounded-full bg-white/10 px-2 py-1 text-[11px]'>
-                        当前
-                      </span>
+                      {active && (
+                        <span className='rounded-full bg-white/10 px-2 py-1 text-[11px]'>
+                          当前
+                        </span>
+                      )}
+                    </button>
+                    {canManage && source.from !== 'config' && (
+                      <button
+                        type='button'
+                        onClick={() => {
+                          if (deleteConfirmKey === source.key) {
+                            void manageSource({
+                              action: 'delete',
+                              key: source.key,
+                            });
+                          } else {
+                            setDeleteConfirmKey(source.key);
+                          }
+                        }}
+                        disabled={savingSource}
+                        className={`min-h-11 shrink-0 rounded-xl px-3 text-xs ${
+                          deleteConfirmKey === source.key
+                            ? 'bg-red-500 text-white'
+                            : 'bg-white/5 text-red-300'
+                        }`}
+                        aria-label={`删除 ${source.name}`}
+                      >
+                        {deleteConfirmKey === source.key ? (
+                          '确认删除'
+                        ) : (
+                          <Trash2 className='h-4 w-4' />
+                        )}
+                      </button>
                     )}
-                  </button>
+                  </div>
                 );
               })
             )}

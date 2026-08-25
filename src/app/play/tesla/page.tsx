@@ -656,9 +656,7 @@ function TeslaPlayPageInner() {
           `当前源异常，自动切换到 ${next.source_name || next.source}`
         );
       } else {
-        setSourceNotice(
-          '当前影片的候选资源均已尝试，可手动恢复原源或返回原版播放器'
-        );
+        setSourceNotice('当前影片的候选资源均已尝试，可手动恢复原源或重试');
       }
     },
     [allSources, currentDetail, handleSwitchSource]
@@ -822,18 +820,18 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className='mx-auto max-w-[1600px] px-3 pb-6 pt-2 sm:px-4'>
+        <div className='mx-auto max-w-[1800px] px-3 pb-8 pt-2 sm:px-4'>
           <div
             className={`grid items-start gap-4 transition-all duration-300 ease-in-out ${
               rightPanelCollapsed
                 ? 'grid-cols-1'
-                : 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]'
+                : 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px]'
             }`}
           >
             {/* 左侧：播放器 + 详情 */}
             <div className='min-w-0 rounded-xl border border-white/0 transition-all duration-300 ease-in-out dark:border-white/30'>
               {/* 播放器容器 */}
-              <div className='relative mt-2 aspect-video w-full min-h-[220px] max-h-[78vh]'>
+              <div className='relative mt-2 aspect-[16/8.6] w-full min-h-[260px] max-h-[82vh] md:min-h-[320px]'>
                 <div className='h-full w-full overflow-hidden rounded-xl bg-black shadow-lg'>
                   {isLoading && loadingStage !== 'error' && (
                     <div className='absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900'>
@@ -864,13 +862,6 @@ function TeslaPlayPageInner() {
                           className='rounded-lg bg-gray-100 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200'
                         >
                           重试
-                        </button>
-                        <button
-                          type='button'
-                          onClick={backToOriginal}
-                          className='rounded-lg bg-green-500 px-4 py-1.5 text-sm text-white hover:bg-green-600'
-                        >
-                          返回原版
                         </button>
                       </div>
                     </div>
@@ -940,7 +931,7 @@ function TeslaPlayPageInner() {
 
               {/* 视频详情 */}
               {currentDetail && (
-                <div className='mt-4 flex gap-4'>
+                <div className='mt-7 flex gap-4'>
                   {currentDetail.poster && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img

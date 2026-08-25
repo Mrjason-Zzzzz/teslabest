@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   convertDanmakuFormat,
@@ -76,6 +82,8 @@ export default function TeslaDanmakuOverlay({
     Array<{ text: string; time: number; color: string }>
   >([]);
   const [activeComments, setActiveComments] = useState<OverlayComment[]>([]);
+  const [stageSize, setStageSize] = useState({ width: 1280, height: 720 });
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const loadIdentityRef = useRef('');
   const lastTimeRef = useRef(0);
   const sequenceRef = useRef(0);
@@ -86,9 +94,35 @@ export default function TeslaDanmakuOverlay({
   const safeLaneCount = Math.max(3, Math.min(8, Math.floor(laneCount || 7)));
   const safeSpeed = Math.max(1, Math.min(5, Math.floor(speed || 3)));
   const safeFontSize = Math.max(18, Math.min(44, Math.floor(fontSize || 30)));
+  const displayFontSize = Math.max(
+    14,
+    Math.round(safeFontSize * Math.min(1, stageSize.height / 540))
+  );
   const animationDurationSec = 14 - (safeSpeed - 1) * 2;
   const baseTitle = cleanTeslaDanmakuTitle(title);
   const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}`;
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const updateSize = () => {
+      const bounds = stage.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0) {
+        setStageSize({ width: bounds.width, height: bounds.height });
+      }
+    };
+    updateSize();
+    const observer =
+      typeof ResizeObserver === 'function'
+        ? new ResizeObserver(updateSize)
+        : null;
+    observer?.observe(stage);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled || !title || loadIdentityRef.current === contentIdentity)
@@ -292,17 +326,32 @@ export default function TeslaDanmakuOverlay({
       );
       if (due.length === 0) return stillVisible;
 
-      const spawned = due.map((comment) => {
+      // Never evict a comment that is still crossing the screen. The previous
+      // global slice made dense moments remove the oldest text halfway across.
+      // Keep at most two comments per lane and drop only newly due overflow.
+      const laneLoads = Array.from(
+        { length: safeLaneCount },
+        (_, lane) =>
+          stillVisible.filter((comment) => comment.lane === lane).length
+      );
+      const spawned: OverlayComment[] = [];
+      due.forEach((comment) => {
+        let lane = 0;
+        for (let index = 1; index < laneLoads.length; index++) {
+          if (laneLoads[index] < laneLoads[lane]) lane = index;
+        }
+        if (laneLoads[lane] >= 2) return;
         const sequence = sequenceRef.current++;
-        return {
+        laneLoads[lane]++;
+        spawned.push({
           id: `${comment.time}-${sequence}`,
           text: comment.text,
           color: comment.color,
-          lane: sequence % safeLaneCount,
+          lane,
           startedAt: currentTime,
-        };
+        });
       });
-      return [...stillVisible, ...spawned].slice(-(safeLaneCount * 2));
+      return [...stillVisible, ...spawned];
     });
 
     lastTimeRef.current = currentTime;
@@ -317,19 +366,27 @@ export default function TeslaDanmakuOverlay({
 
   return (
     <div
+      ref={stageRef}
       className='pointer-events-none absolute inset-0 z-[7] overflow-hidden'
       aria-hidden='true'
+      style={
+        {
+          '--tesla-danmaku-stage-width': `${stageSize.width}px`,
+        } as CSSProperties
+      }
     >
       {visibleComments.map((comment) => (
         <span
           key={comment.id}
           className='tesla-danmaku-comment absolute whitespace-nowrap font-semibold'
           style={{
-            top: `${6 + comment.lane * (62 / safeLaneCount)}%`,
+            // Keep all lanes in the upper band. Pixel spacing prevents three
+            // lanes from consuming half of a short, non-fullscreen player.
+            top: `${Math.round(10 + comment.lane * displayFontSize * 1.35)}px`,
             color: comment.color,
             animationDuration: `${animationDurationSec}s`,
             animationPlayState: playing ? 'running' : 'paused',
-            fontSize: `${safeFontSize}px`,
+            fontSize: `${displayFontSize}px`,
           }}
         >
           {comment.text}

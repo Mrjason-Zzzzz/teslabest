@@ -1774,8 +1774,8 @@ export class WebCodecsPlayer {
     const maxChunks = this.isLivePlaylist
       ? 8
       : this.playbackRate === 1
-      ? 16
-      : 8;
+      ? 24
+      : 10;
     while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;

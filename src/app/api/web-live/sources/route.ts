@@ -18,7 +18,10 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const config = await getConfig();
     if (!config?.WebLiveConfig) {
-      return NextResponse.json([]);
+      return NextResponse.json({
+        sources: [],
+        canManage: authResult.username === process.env.USERNAME,
+      });
     }
 
     const enabledSources = config.WebLiveConfig.filter(
@@ -30,7 +33,10 @@ export async function GET(request: NextRequest) {
       )
     );
     const sources = enabledSources.filter((_, index) => allowed[index]);
-    return NextResponse.json(sources);
+    return NextResponse.json({
+      sources,
+      canManage: authResult.username === process.env.USERNAME,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '获取失败' },

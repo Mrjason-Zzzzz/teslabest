@@ -32,8 +32,8 @@ describe('Tesla live A/V sync guard', () => {
 
   test('keeps the VOD audio queue cancellable but long enough for Tesla RAF jitter', () => {
     const policy = getTeslaAvSyncPolicy(false, 1, true);
-    expect(policy.maxAudioLeadSec).toBeGreaterThanOrEqual(0.85);
-    expect(policy.maxAudioLeadSec).toBeLessThanOrEqual(1.1);
+    expect(policy.maxAudioLeadSec).toBeGreaterThanOrEqual(1.35);
+    expect(policy.maxAudioLeadSec).toBeLessThanOrEqual(1.5);
     expect(policy.audioStartSafetySec).toBeLessThan(0.03);
   });
 

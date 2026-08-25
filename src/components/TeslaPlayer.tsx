@@ -14,7 +14,6 @@ import {
   Play,
   RefreshCw,
   Rewind,
-  RotateCcw,
   Settings2,
   Volume2,
   VolumeX,
@@ -1017,7 +1016,7 @@ export default function TeslaPlayer({
           // WebCodecs path, so either player keeps an identical timeline.
           // hls.js exposes this constructor type internally; the loader keeps
           // the same runtime contract and is intentionally adapted here.
-          pLoader: createAdFilteringPlaylistLoader(sourceKey) as any,
+          pLoader: createAdFilteringPlaylistLoader(sourceKey, !live) as any,
           // Keep a small live edge cushion, but do not trade synchronization
           // for the large delay produced by a six-segment target.
           lowLatencyMode: false,
@@ -1480,18 +1479,6 @@ export default function TeslaPlayer({
                 <RefreshCw className='h-4 w-4' />
                 重新连接
               </button>
-              {onBackToOriginal && (
-                <button
-                  type='button'
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onBackToOriginal();
-                  }}
-                  className='rounded bg-blue-600 px-4 py-1.5 text-sm text-white'
-                >
-                  返回原版
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -1728,7 +1715,11 @@ export default function TeslaPlayer({
                     event.stopPropagation();
                     toggleDanmaku();
                   }}
-                  className={`flex min-h-11 items-center gap-1 rounded-lg px-3 text-xs ${
+                  className={`flex items-center gap-1 rounded-lg text-xs ${
+                    isWebFullscreen || isFullscreen
+                      ? 'min-h-11 px-3'
+                      : 'min-h-9 px-2'
+                  } ${
                     danmakuEnabled
                       ? 'bg-violet-500 text-white'
                       : 'bg-white/10 text-white/80'
@@ -1745,7 +1736,11 @@ export default function TeslaPlayer({
                       event.stopPropagation();
                       setShowDanmakuSettings((current) => !current);
                     }}
-                    className='flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white/10 text-white'
+                    className={`flex items-center justify-center rounded-lg bg-white/10 text-white ${
+                      isWebFullscreen || isFullscreen
+                        ? 'min-h-11 min-w-11'
+                        : 'min-h-9 min-w-9'
+                    }`}
                     aria-label='弹幕设置'
                     aria-expanded={showDanmakuSettings}
                   >
@@ -1800,21 +1795,6 @@ export default function TeslaPlayer({
               </div>
             )}
 
-            {onBackToOriginal && (
-              <button
-                type='button'
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onBackToOriginal();
-                }}
-                className='flex items-center gap-1 px-2 py-1 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
-                title='返回原版播放器'
-              >
-                <RotateCcw className='h-4 w-4' />
-                原版
-              </button>
-            )}
-
             <button
               type='button'
               onClick={(e) => {
@@ -1848,24 +1828,69 @@ export default function TeslaPlayer({
 
       {!live && danmakuEnabled && showDanmakuSettings && (
         <aside
-          className='pointer-events-auto absolute bottom-20 left-3 top-16 z-30 w-[min(340px,42vw)] overflow-y-auto rounded-2xl border border-violet-300/20 bg-[#110d20]/95 p-5 text-white shadow-2xl backdrop-blur'
+          className={`pointer-events-auto absolute left-3 z-30 overflow-y-auto rounded-2xl border border-violet-300/20 bg-[#110d20]/95 text-white shadow-2xl backdrop-blur ${
+            isWebFullscreen || isFullscreen
+              ? 'bottom-20 top-16 w-[min(340px,42vw)] p-5'
+              : 'bottom-auto top-12 max-h-[calc(100%-3.5rem)] w-[min(300px,48%)] p-3'
+          }`}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <div className='mb-5'>
-            <h2 className='text-base font-semibold'>弹幕设置</h2>
-            <p className='mt-1 text-xs text-white/50'>{danmakuStatus || '自动匹配影片与当前集数'}</p>
+          <div className={isWebFullscreen || isFullscreen ? 'mb-5' : 'mb-3'}>
+            <h2 className='text-sm font-semibold md:text-base'>弹幕设置</h2>
+            <p className='mt-1 text-xs text-white/50'>
+              {danmakuStatus || '自动匹配影片与当前集数'}
+            </p>
           </div>
           {[
-            { label: '显示行数', value: danmakuRows, min: 3, max: 8, suffix: '行', set: setDanmakuRows },
-            { label: '字体大小', value: danmakuFontSize, min: 18, max: 44, suffix: 'px', set: setDanmakuFontSize },
-            { label: '滚动速度', value: danmakuSpeed, min: 1, max: 5, suffix: '档', set: setDanmakuSpeed },
+            {
+              label: '显示行数',
+              value: danmakuRows,
+              min: 3,
+              max: 8,
+              suffix: '行',
+              set: setDanmakuRows,
+            },
+            {
+              label: '字体大小',
+              value: danmakuFontSize,
+              min: 18,
+              max: 44,
+              suffix: 'px',
+              set: setDanmakuFontSize,
+            },
+            {
+              label: '滚动速度',
+              value: danmakuSpeed,
+              min: 1,
+              max: 5,
+              suffix: '档',
+              set: setDanmakuSpeed,
+            },
           ].map((item) => (
-            <label key={item.label} className='mb-5 block text-sm text-white/80'>
-              <span className='mb-2 flex justify-between'><span>{item.label}</span><strong>{item.value} {item.suffix}</strong></span>
-              <input type='range' min={item.min} max={item.max} step={1} value={item.value}
-                onChange={(event) => item.set(Number(event.currentTarget.value))}
-                className='h-10 w-full accent-violet-500' />
+            <label
+              key={item.label}
+              className={`block text-sm text-white/80 ${
+                isWebFullscreen || isFullscreen ? 'mb-5' : 'mb-2'
+              }`}
+            >
+              <span className='mb-2 flex justify-between'>
+                <span>{item.label}</span>
+                <strong>
+                  {item.value} {item.suffix}
+                </strong>
+              </span>
+              <input
+                type='range'
+                min={item.min}
+                max={item.max}
+                step={1}
+                value={item.value}
+                onChange={(event) =>
+                  item.set(Number(event.currentTarget.value))
+                }
+                className='h-10 w-full accent-violet-500'
+              />
             </label>
           ))}
         </aside>
