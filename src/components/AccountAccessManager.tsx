@@ -16,6 +16,7 @@ type Policy = {
   source: 'legacy' | 'admin' | 'redemption';
   createdAt: number;
   updatedAt: number;
+  allowMultiDevice?: boolean;
 };
 type SafeCode = {
   id: string;
@@ -57,6 +58,7 @@ export default function AccountAccessManager({
 }: AccountAccessManagerProps) {
   const [loading, setLoading] = useState(false);
   const [requireCode, setRequireCode] = useState(false);
+  const [singleDeviceLogin, setSingleDeviceLogin] = useState(true);
   const [renewalMessage, setRenewalMessage] = useState('如需续费请联系站长');
   const [codes, setCodes] = useState<SafeCode[]>([]);
   const [policies, setPolicies] = useState<Record<string, Policy>>({});
@@ -67,6 +69,7 @@ export default function AccountAccessManager({
   const [username, setUsername] = useState('');
   const [userPlan, setUserPlan] = useState<AccessPlan>('1_month');
   const [userStatus, setUserStatus] = useState<'active' | 'disabled'>('active');
+  const [allowMultiDevice, setAllowMultiDevice] = useState(false);
   const [message, setMessage] = useState('');
 
   const load = useCallback(async () => {
@@ -77,6 +80,7 @@ export default function AccountAccessManager({
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '读取账户权限失败');
     setRequireCode(Boolean(data.requireRedemptionCode));
+    setSingleDeviceLogin(data.singleDeviceLoginEnabled !== false);
     setRenewalMessage(data.membershipRenewalMessage || '如需续费请联系站长');
     setCodes(data.codes || []);
     setPolicies(data.policies || {});
@@ -148,6 +152,23 @@ export default function AccountAccessManager({
     }
   }
 
+  async function toggleSingleDeviceLogin() {
+    try {
+      const data = await post({
+        action: 'setSingleDeviceMode',
+        enabled: !singleDeviceLogin,
+      });
+      setSingleDeviceLogin(data.enabled !== false);
+      setMessage(
+        data.enabled !== false
+          ? '已启用全站单设备登录，新登录会挤下旧设备'
+          : '已关闭全站单设备限制'
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '保存失败');
+    }
+  }
+
   async function revokeCode(id: string) {
     try {
       await post({ action: 'revokeCode', id });
@@ -169,6 +190,7 @@ export default function AccountAccessManager({
         username: username.trim(),
         plan: userPlan,
         status: userStatus,
+        allowMultiDevice,
       });
       setMessage(
         userStatus === 'disabled'
@@ -200,18 +222,20 @@ export default function AccountAccessManager({
             旧账号默认永久有效；新兑换码一码一用，天卡与月卡均从注册成功时开始计算。
           </p>
         </div>
-        {role === 'owner' && <button
-          type='button'
-          disabled={loading}
-          onClick={toggleRegistration}
-          className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-            requireCode
-              ? 'bg-green-600 hover:bg-green-700'
-              : 'bg-gray-600 hover:bg-gray-700'
-          } disabled:opacity-50`}
-        >
-          {requireCode ? '兑换码注册：已开启' : '启用兑换码注册'}
-        </button>}
+        {role === 'owner' && (
+          <button
+            type='button'
+            disabled={loading}
+            onClick={toggleRegistration}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
+              requireCode
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-gray-600 hover:bg-gray-700'
+            } disabled:opacity-50`}
+          >
+            {requireCode ? '兑换码注册：已开启' : '启用兑换码注册'}
+          </button>
+        )}
       </div>
 
       {message && (
@@ -220,31 +244,59 @@ export default function AccountAccessManager({
         </div>
       )}
 
-      {role === 'owner' && <div className='rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
-        <label className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
-          会员续费提示语
-        </label>
-        <div className='mt-2 flex flex-col gap-2 sm:flex-row'>
-          <input
-            value={renewalMessage}
-            maxLength={120}
-            onChange={(event) => setRenewalMessage(event.target.value)}
-            className='min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
-            placeholder='如需续费请联系站长'
-          />
-          <button
-            type='button'
-            disabled={loading}
-            onClick={saveRenewalMessage}
-            className='rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
-          >
-            保存提示语
-          </button>
+      {role === 'owner' && (
+        <div className='rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
+          <label className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+            会员续费提示语
+          </label>
+          <div className='mt-2 flex flex-col gap-2 sm:flex-row'>
+            <input
+              value={renewalMessage}
+              maxLength={120}
+              onChange={(event) => setRenewalMessage(event.target.value)}
+              className='min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+              placeholder='如需续费请联系站长'
+            />
+            <button
+              type='button'
+              disabled={loading}
+              onClick={saveRenewalMessage}
+              className='rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
+            >
+              保存提示语
+            </button>
+          </div>
+          <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+            保存后用户个人中心立即读取新文案；永久会员不会显示该提示。
+          </p>
         </div>
-        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-          保存后用户个人中心立即读取新文案；永久会员不会显示该提示。
-        </p>
-      </div>}
+      )}
+
+      {role === 'owner' && (
+        <div className='rounded-xl border border-violet-200 bg-white p-4 shadow-sm dark:border-violet-800 dark:bg-gray-900'>
+          <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+            <div>
+              <h5 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                登录设备限制
+              </h5>
+              <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+                开启后同一账号只保留最后登录的设备，旧设备会在 5
+                秒内退出播放并返回登录页。
+              </p>
+            </div>
+            <button
+              type='button'
+              disabled={loading}
+              onClick={toggleSingleDeviceLogin}
+              className={`min-h-12 rounded-xl px-4 py-2 text-sm font-medium text-white ${
+                singleDeviceLogin ? 'bg-violet-600' : 'bg-gray-500'
+              } disabled:opacity-50`}
+            >
+              {singleDeviceLogin ? '单设备登录：已开启' : '单设备登录：已关闭'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className='grid gap-4 lg:grid-cols-2'>
         <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
@@ -320,53 +372,69 @@ export default function AccountAccessManager({
           )}
         </div>
 
-        {role === 'owner' && <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
-          <h5 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
-            修改账户有效期
-          </h5>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            className='w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
-            placeholder='输入用户名'
-          />
-          <div className='grid grid-cols-2 gap-3'>
-            <select
-              value={userPlan}
-              onChange={(event) =>
-                setUserPlan(event.target.value as AccessPlan)
-              }
-              className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+        {role === 'owner' && (
+          <div className='space-y-3 rounded-xl bg-white p-4 shadow-sm dark:bg-gray-900'>
+            <h5 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+              修改账户有效期
+            </h5>
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className='w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+              placeholder='输入用户名'
+            />
+            <div className='grid grid-cols-2 gap-3'>
+              <select
+                value={userPlan}
+                onChange={(event) =>
+                  setUserPlan(event.target.value as AccessPlan)
+                }
+                className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+              >
+                {Object.entries(PLAN_LABELS).map(([value, text]) => (
+                  <option key={value} value={value}>
+                    {text}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={userStatus}
+                onChange={(event) =>
+                  setUserStatus(event.target.value as 'active' | 'disabled')
+                }
+                className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+              >
+                <option value='active'>正常</option>
+                <option value='disabled'>停用</option>
+              </select>
+            </div>
+            <button
+              type='button'
+              onClick={() => setAllowMultiDevice((value) => !value)}
+              className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-medium ${
+                allowMultiDevice
+                  ? 'border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-200'
+                  : 'border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+              }`}
             >
-              {Object.entries(PLAN_LABELS).map(([value, text]) => (
-                <option key={value} value={value}>
-                  {text}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userStatus}
-              onChange={(event) =>
-                setUserStatus(event.target.value as 'active' | 'disabled')
-              }
-              className='rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800'
+              {allowMultiDevice
+                ? '该用户：允许多设备登录'
+                : '该用户：跟随全站单设备限制'}
+            </button>
+            <button
+              type='button'
+              disabled={loading}
+              onClick={updateUserAccess}
+              className='rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50'
             >
-              <option value='active'>正常</option>
-              <option value='disabled'>停用</option>
-            </select>
+              保存并让旧会话失效
+            </button>
+            <p className='text-xs text-gray-500 dark:text-gray-400'>
+              重新选择天卡或 1/3/6/12
+              个月会从现在重新计时；选择永久则不设到期日。
+            </p>
           </div>
-          <button
-            type='button'
-            disabled={loading}
-            onClick={updateUserAccess}
-            className='rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50'
-          >
-            保存并让旧会话失效
-          </button>
-          <p className='text-xs text-gray-500 dark:text-gray-400'>
-            重新选择天卡或 1/3/6/12 个月会从现在重新计时；选择永久则不设到期日。
-          </p>
-        </div>}
+        )}
       </div>
 
       <div className='overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'>
