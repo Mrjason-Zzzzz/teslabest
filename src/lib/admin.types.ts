@@ -57,6 +57,7 @@ export interface AdminConfig {
     RequireRedemptionCode?: boolean; // 注册时要求一次性兑换码
     RegistrationAccessMode?: 'redemption' | 'open'; // P002 注册模式，默认兑换码
     MembershipRenewalMessage?: string; // 会员续费提示语
+    SingleDeviceLoginEnabled?: boolean; // 全站单设备登录，默认开启
     RegistrationRequireTurnstile?: boolean; // 注册启用Cloudflare Turnstile
     LoginRequireTurnstile?: boolean; // 登录启用Cloudflare Turnstile
     TurnstileSiteKey?: string; // Cloudflare Turnstile Site Key
@@ -111,6 +112,7 @@ export interface AdminConfig {
         source: 'legacy' | 'admin' | 'redemption';
         createdAt: number;
         updatedAt: number;
+        allowMultiDevice?: boolean;
       }
     >;
     RedemptionCodes?: {
