@@ -94,7 +94,10 @@ export function resolveAdFilterSourceKey(
   return sourceKey?.trim() || playlistContextType || 'hls';
 }
 
-export function createAdFilteringPlaylistLoader(sourceKey?: string) {
+export function createAdFilteringPlaylistLoader(
+  sourceKey?: string,
+  assumeVod = false
+) {
   const BaseLoader = (Hls as any).DefaultConfig?.loader;
   if (!BaseLoader) return undefined;
 
@@ -133,7 +136,8 @@ export function createAdFilteringPlaylistLoader(sourceKey?: string) {
                   currentContext?.type || context?.type
                 ),
                 response.data,
-                customCode
+                customCode,
+                assumeVod
               );
             }
             onSuccess(response, stats, currentContext, networkDetails);
