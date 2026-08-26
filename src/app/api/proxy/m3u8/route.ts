@@ -3,11 +3,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
-import { getBaseUrl, resolveUrl } from '@/lib/live';
+import {
+  deleteCachedLiveChannels,
+  getBaseUrl,
+  getCachedLiveChannels,
+  resolveUrl,
+} from '@/lib/live';
 import {
   isSourceAllowedForUser,
   requireFeaturePermission,
 } from '@/lib/permissions';
+import { findSameLiveChannel } from '@/lib/tesla/live-channel-identity';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +28,11 @@ export async function GET(request: NextRequest) {
   const url = searchParams.get('url');
   const allowCORS = searchParams.get('allowCORS') === 'true';
   const source = searchParams.get('moontv-source');
+  const channelId = searchParams.get('moontv-channel');
+  const channelTvgId = searchParams.get('moontv-channel-tvg') || '';
+  const channelName = searchParams.get('moontv-channel-name') || '';
+  const channelGroup = searchParams.get('moontv-channel-group') || '';
+  const rootRequest = searchParams.get('moontv-root') === '1';
   if (!url) {
     return NextResponse.json({ error: 'Missing url' }, { status: 400 });
   }
@@ -40,7 +51,53 @@ export async function GET(request: NextRequest) {
   let responseUsed = false;
 
   try {
-    const decodedUrl = decodeURIComponent(url);
+    let decodedUrl = decodeURIComponent(url);
+
+    if (rootRequest && source && channelId) {
+      const probe = await fetch(decodedUrl, {
+        cache: 'no-store',
+        redirect: 'manual',
+        headers: { 'User-Agent': ua },
+      });
+      if (probe.status >= 300 && probe.status < 400) {
+        probe.body?.cancel().catch(() => undefined);
+        deleteCachedLiveChannels(source);
+        const refreshed = await getCachedLiveChannels(source, {
+          includeEpg: false,
+        });
+        const exact = refreshed
+          ? findSameLiveChannel(refreshed.channels, {
+              id: channelId,
+              tvgId: channelTvgId,
+              name: channelName,
+              group: channelGroup,
+              url: decodedUrl,
+            })
+          : null;
+        if (!exact) {
+          console.warn('[LiveProxy] selected channel disappeared on refresh', {
+            source,
+            channelId,
+            channelTvgId,
+            channelName,
+          });
+          return NextResponse.json(
+            { error: '所选频道地址已失效，请重试当前频道' },
+            { status: 409 }
+          );
+        }
+        decodedUrl = exact.url;
+        console.info('[LiveProxy] refreshed the selected channel URL', {
+          source,
+          channelId,
+          matchedChannelId: exact.id,
+          matchedTvgId: exact.tvgId,
+          urlChanged: decodedUrl !== decodeURIComponent(url),
+        });
+      } else {
+        probe.body?.cancel().catch(() => undefined);
+      }
+    }
 
     response = await fetch(decodedUrl, {
       cache: 'no-cache',
@@ -160,6 +217,10 @@ function rewriteM3U8Content(
   // 获取 moontv-source 参数
   const reqUrl = new URL(req.url);
   const source = reqUrl.searchParams.get('moontv-source') || '';
+  const channel = reqUrl.searchParams.get('moontv-channel') || '';
+  const identityParams = `&moontv-source=${encodeURIComponent(
+    source
+  )}&moontv-channel=${encodeURIComponent(channel)}`;
 
   const lines = content.split('\n');
   const rewrittenLines: string[] = [];
@@ -174,19 +235,19 @@ function rewriteM3U8Content(
         ? resolvedUrl
         : `${proxyBase}/segment?url=${encodeURIComponent(
             resolvedUrl
-          )}&moontv-source=${source}`;
+          )}${identityParams}`;
       rewrittenLines.push(proxyUrl);
       continue;
     }
 
     // 处理 EXT-X-MAP 标签中的 URI
     if (line.startsWith('#EXT-X-MAP:')) {
-      line = rewriteMapUri(line, baseUrl, proxyBase, allowCORS, source);
+      line = rewriteMapUri(line, baseUrl, proxyBase, allowCORS, identityParams);
     }
 
     // 处理 EXT-X-KEY 标签中的 URI
     if (line.startsWith('#EXT-X-KEY:')) {
-      line = rewriteKeyUri(line, baseUrl, proxyBase, allowCORS, source);
+      line = rewriteKeyUri(line, baseUrl, proxyBase, allowCORS, identityParams);
     }
 
     // 处理嵌套的 M3U8 文件 (EXT-X-STREAM-INF)
@@ -200,7 +261,7 @@ function rewriteM3U8Content(
           const resolvedUrl = resolveUrl(baseUrl, nextLine);
           const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(
             resolvedUrl
-          )}&moontv-source=${source}`;
+          )}${identityParams}`;
           rewrittenLines.push(proxyUrl);
         } else {
           rewrittenLines.push(nextLine);
@@ -220,7 +281,7 @@ function rewriteMapUri(
   baseUrl: string,
   proxyBase: string,
   allowCORS: boolean,
-  source: string
+  identityParams: string
 ) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
@@ -230,7 +291,7 @@ function rewriteMapUri(
       ? resolvedUrl
       : `${proxyBase}/segment?url=${encodeURIComponent(
           resolvedUrl
-        )}&moontv-source=${source}`;
+        )}${identityParams}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
@@ -241,7 +302,7 @@ function rewriteKeyUri(
   baseUrl: string,
   proxyBase: string,
   allowCORS: boolean,
-  source: string
+  identityParams: string
 ) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
@@ -251,7 +312,7 @@ function rewriteKeyUri(
       ? resolvedUrl
       : `${proxyBase}/key?url=${encodeURIComponent(
           resolvedUrl
-        )}&moontv-source=${source}`;
+        )}${identityParams}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;

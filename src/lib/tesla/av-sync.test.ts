@@ -4,6 +4,7 @@ import {
   hasFutureVideoFrame,
   hasScheduledAudioCoverage,
   shouldContinueAudioPts,
+  shouldResetAudioSchedule,
 } from './av-sync';
 
 describe('Tesla live A/V sync guard', () => {
@@ -46,5 +47,19 @@ describe('Tesla live A/V sync guard', () => {
   test('uses the actual WebAudio horizon instead of last schedule wall time', () => {
     expect(hasScheduledAudioCoverage(20.4, 20, 0.02)).toBe(true);
     expect(hasScheduledAudioCoverage(20.01, 20, 0.02)).toBe(false);
+  });
+
+  test('does not tear down scheduled sound for one ordinary timestamp wobble', () => {
+    expect(shouldResetAudioSchedule(0.18, false)).toBe(false);
+    expect(shouldResetAudioSchedule(0.2, true)).toBe(false);
+    expect(shouldResetAudioSchedule(0.4, false)).toBe(true);
+    expect(shouldResetAudioSchedule(0.35, true)).toBe(true);
+  });
+
+  test('keeps a sub-half-second live audio horizon for Tesla timer stalls', () => {
+    const policy = getTeslaAvSyncPolicy(true, 1, true);
+    expect(policy.maxAudioLeadSec).toBeGreaterThanOrEqual(0.4);
+    expect(policy.maxAudioLeadSec).toBeLessThanOrEqual(0.5);
+    expect(policy.avDriftResetSec).toBeLessThanOrEqual(0.3);
   });
 });

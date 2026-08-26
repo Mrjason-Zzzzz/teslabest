@@ -1772,7 +1772,7 @@ export class WebCodecsPlayer {
 
     let scheduled = 0;
     const maxChunks = this.isLivePlaylist
-      ? 8
+      ? 20
       : this.playbackRate === 1
       ? 24
       : 10;

@@ -6,6 +6,11 @@ import {
   isSourceAllowedForUser,
   requireFeaturePermission,
 } from '@/lib/permissions';
+import {
+  getBilibiliAvcTsVariant,
+  getBilibiliQualityLabels,
+  parseHuyaAvcQualities,
+} from '@/lib/tesla/web-live-quality';
 
 function getAntiCode(oldAntiCode: string, streamName: string): string {
   const paramsT = 100;
@@ -49,6 +54,9 @@ async function getBilibiliStream(roomId: string) {
     'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     Referer: 'https://live.bilibili.com/',
+    ...(process.env.BILIBILI_COOKIE
+      ? { Cookie: process.env.BILIBILI_COOKIE }
+      : {}),
   };
 
   // 获取房间初始化信息
@@ -107,56 +115,59 @@ async function getBilibiliStream(roomId: string) {
     console.warn('获取房间标题失败:', err);
   }
 
-  // 获取播放地址 (原画质量 qn=10000)
-  const playInfoRes = await fetch(
-    `https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=${realRoomId}&protocol=0,1&format=0,1,2&codec=0,1&qn=10000&platform=web&ptype=8`,
-    { headers }
-  );
-  const playInfoData = await playInfoRes.json();
+  const getPlayInfo = async (qn: number) => {
+    const response = await fetch(
+      `https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=${realRoomId}&protocol=0,1&format=0,1,2&codec=0&qn=${qn}&platform=web&ptype=8`,
+      { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) }
+    );
+    const data = await response.json();
+    if (data.code !== 0)
+      throw new Error(data.message || '获取播放信息失败');
+    return data.data?.playurl_info?.playurl;
+  };
 
-  if (playInfoData.code !== 0) {
-    throw new Error(playInfoData.message || '获取播放信息失败');
-  }
-
-  const playurl = playInfoData.data?.playurl_info?.playurl;
-  if (!playurl) {
-    throw new Error('未找到播放地址');
-  }
-
-  // 提取m3u8地址
-  let m3u8Url = '';
-  const streamList = playurl.stream || [];
-
-  for (const stream of streamList) {
-    const formatList = stream.format || [];
-    for (const fmt of formatList) {
-      if (fmt.format_name === 'ts') {
-        const codecList = fmt.codec || [];
-        for (const codec of codecList) {
-          const urlInfoList = codec.url_info || [];
-          const baseUrl = codec.base_url || '';
-
-          if (urlInfoList.length > 0 && baseUrl) {
-            const host = urlInfoList[0].host || '';
-            const extra = urlInfoList[0].extra || '';
-            m3u8Url = `${host}${baseUrl}${extra}`;
-            break;
-          }
-        }
-        if (m3u8Url) break;
+  const initialPlayurl = await getPlayInfo(10000);
+  const initialVariant = getBilibiliAvcTsVariant(initialPlayurl);
+  if (!initialVariant) throw new Error('未找到 Tesla 可用的 H.264 HLS 线路');
+  const labels = getBilibiliQualityLabels(initialPlayurl);
+  const requestedQns = Array.from(
+    new Set([initialVariant.currentQn, ...initialVariant.acceptQn])
+  )
+    .filter((qn) => qn > 0)
+    .sort((left, right) => left - right);
+  const resolved = await Promise.all(
+    requestedQns.map(async (qn) => {
+      try {
+        const playurl =
+          qn === initialVariant.currentQn
+            ? initialPlayurl
+            : await getPlayInfo(qn);
+        return getBilibiliAvcTsVariant(playurl);
+      } catch {
+        return null;
       }
-    }
-    if (m3u8Url) break;
+    })
+  );
+  const variants = new Map<number, NonNullable<typeof initialVariant>>();
+  for (const variant of resolved) {
+    if (variant && variant.currentQn > 0 && !variants.has(variant.currentQn))
+      variants.set(variant.currentQn, variant);
   }
-
-  if (!m3u8Url) {
-    throw new Error('未找到m3u8地址');
-  }
+  const qualities = Array.from(variants.values())
+    .sort((left, right) => left.currentQn - right.currentQn)
+    .map((variant) => ({
+      id: `BILI_${variant.currentQn}`,
+      label: labels.get(variant.currentQn) || `清晰度 ${variant.currentQn}`,
+      urls: variant.urls,
+    }));
+  if (!qualities.length) throw new Error('未找到可用的 B 站清晰度');
 
   return {
-    url: m3u8Url,
+    url: qualities[0].urls[0],
     name: ownerName,
     title: title,
+    qualities,
+    authenticated: Boolean(process.env.BILIBILI_COOKIE),
   };
 }
 
@@ -296,8 +307,6 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const { searchParams } = new URL(request.url);
     const sourceKey = searchParams.get('source');
-    const platform = searchParams.get('platform');
-    const roomId = searchParams.get('roomId');
 
     if (!sourceKey) {
       return NextResponse.json({ error: '缺少参数' }, { status: 400 });
@@ -353,25 +362,34 @@ export async function GET(request: NextRequest) {
       if (streamInfoList.length === 0) {
         return NextResponse.json({ error: '直播未开启' }, { status: 404 });
       }
-      const transports = streamInfoList.map(
-        (streamInfo: Record<string, string>, index: number) => {
-          const antiCode = getAntiCode(
-            streamInfo.sHlsAntiCode,
-            streamInfo.sStreamName
-          );
-          const originalUrl = `${streamInfo.sHlsUrl}/${streamInfo.sStreamName}.${streamInfo.sHlsUrlSuffix}?${antiCode}`;
-          return {
-            id: `huya-hls-${index + 1}`,
-            label: `车机线路 ${index + 1}`,
-            url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
-              originalUrl
-            )}`,
-            originalUrl,
-            streamType: 'hls',
-          };
-        }
-      );
-      const preferred = transports[0];
+      const huyaQualities = parseHuyaAvcQualities(html);
+      const qualityRows = huyaQualities.length
+        ? huyaQualities
+        : [{ id: 'HUYA_0', label: '原画', bitrate: 0 }];
+      const qualities = qualityRows.map((quality) => ({
+        id: quality.id,
+        label: quality.label,
+        transports: streamInfoList.map(
+          (streamInfo: Record<string, string>, index: number) => {
+            const antiCode = getAntiCode(
+              streamInfo.sHlsAntiCode,
+              streamInfo.sStreamName
+            );
+            const ratio = `&ratio=${quality.bitrate}`;
+            const originalUrl = `${streamInfo.sHlsUrl}/${streamInfo.sStreamName}.${streamInfo.sHlsUrlSuffix}?${antiCode}${ratio}`;
+            return {
+              id: `huya-${quality.bitrate}-hls-${index + 1}`,
+              label: `车机线路 ${index + 1}`,
+              url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
+                originalUrl
+              )}`,
+              originalUrl,
+              streamType: 'hls',
+            };
+          }
+        ),
+      }));
+      const preferred = qualities[0].transports[0];
 
       return NextResponse.json({
         url: preferred.url,
@@ -379,27 +397,36 @@ export async function GET(request: NextRequest) {
         name: gameLiveInfo?.nick || '',
         title: gameLiveInfo?.introduction || '',
         streamType: 'hls',
-        qualities: [
-          {
-            id: 'AUTO',
-            label: '虎牙原画',
-            transports,
-          },
-        ],
+        qualities,
       });
     }
 
     if (resolvedPlatform === 'bilibili') {
       const streamData = await getBilibiliStream(resolvedRoomId);
-      const proxyUrl = `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
-        streamData.url
-      )}`;
+      const toProxy = (url: string) =>
+        `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(url)}`;
 
       return NextResponse.json({
-        url: proxyUrl,
+        url: toProxy(streamData.url),
         originalUrl: streamData.url,
         name: streamData.name,
         title: streamData.title,
+        streamType: 'hls',
+        qualityNotice:
+          !streamData.authenticated && streamData.qualities.length === 1
+            ? 'B 站当前仅向未登录服务端返回一档可播清晰度'
+            : '',
+        qualities: streamData.qualities.map((quality) => ({
+          id: quality.id,
+          label: quality.label,
+          transports: quality.urls.map((url, index) => ({
+            id: `${quality.id}-cdn-${index + 1}`,
+            label: `CDN ${index + 1}`,
+            url: toProxy(url),
+            originalUrl: url,
+            streamType: 'hls',
+          })),
+        })),
       });
     }
 

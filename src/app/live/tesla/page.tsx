@@ -5,8 +5,6 @@
 import {
   ArrowLeft,
   Loader2,
-  Radio,
-  RefreshCw,
   RotateCcw,
   Search,
   Server,
@@ -23,6 +21,7 @@ import {
 } from 'react';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
+import { findSameLiveChannel } from '@/lib/tesla/live-channel-identity';
 
 interface LiveSource {
   key: string;
@@ -38,6 +37,7 @@ interface LiveSource {
 
 interface LiveChannel {
   id: string;
+  legacyId?: string;
   tvgId: string;
   name: string;
   logo: string;
@@ -93,6 +93,8 @@ function TeslaLivePageInner() {
     id?: string;
     tvgId?: string;
     name?: string;
+    group?: string;
+    url?: string;
   }>({
     id: initialChannelId || undefined,
   });
@@ -137,16 +139,7 @@ function TeslaLivePageInner() {
         preferred.id || preferred.tvgId || preferred.name
       );
       const matched =
-        list.find((channel) => preferred.id && channel.id === preferred.id) ||
-        list.find(
-          (channel) => preferred.tvgId && channel.tvgId === preferred.tvgId
-        ) ||
-        list.find(
-          (channel) => preferred.name && channel.name === preferred.name
-        ) ||
-        list.find(
-          (channel) => preferred.name && channel.name.includes(preferred.name)
-        ) ||
+        findSameLiveChannel(list, preferred) ||
         (!wantsSpecificChannel ? list[0] : null) ||
         null;
       setCurrentChannel(matched);
@@ -155,6 +148,8 @@ function TeslaLivePageInner() {
           id: matched.id,
           tvgId: matched.tvgId,
           name: matched.name,
+          group: matched.group,
+          url: matched.url,
         };
       }
       if (!list.length) setError(`${currentSource.name} 暂无可用频道`);
@@ -203,6 +198,12 @@ function TeslaLivePageInner() {
       currentSource.key
     )}&moontv-channel=${encodeURIComponent(
       currentChannel.id
+    )}&moontv-channel-tvg=${encodeURIComponent(
+      currentChannel.tvgId || ''
+    )}&moontv-channel-name=${encodeURIComponent(
+      currentChannel.name
+    )}&moontv-channel-group=${encodeURIComponent(
+      currentChannel.group || ''
     )}&moontv-root=1${allowCORS}`;
   }, [currentChannel, currentSource]);
 
@@ -217,12 +218,7 @@ function TeslaLivePageInner() {
       10000
     );
     const refreshed: LiveChannel[] = data?.data || data?.channels || [];
-    const same =
-      refreshed.find((item) => item.id === currentChannel.id) ||
-      refreshed.find(
-        (item) => currentChannel.tvgId && item.tvgId === currentChannel.tvgId
-      ) ||
-      refreshed.find((item) => item.name === currentChannel.name);
+    const same = findSameLiveChannel(refreshed, currentChannel);
     // Never fall back to refreshed[0]. If the selected identity disappeared,
     // retaining the current URL is safer than silently changing programmes.
     if (!same) return playUrl;
@@ -234,7 +230,15 @@ function TeslaLivePageInner() {
       same.url
     )}&moontv-source=${encodeURIComponent(
       currentSource.key
-    )}&moontv-channel=${encodeURIComponent(same.id)}&moontv-root=1${allowCORS}`;
+    )}&moontv-channel=${encodeURIComponent(
+      same.id
+    )}&moontv-channel-tvg=${encodeURIComponent(
+      same.tvgId || ''
+    )}&moontv-channel-name=${encodeURIComponent(
+      same.name
+    )}&moontv-channel-group=${encodeURIComponent(
+      same.group || ''
+    )}&moontv-root=1${allowCORS}`;
   }, [currentChannel, currentSource, playUrl]);
 
   const groups = useMemo(() => {
@@ -275,6 +279,8 @@ function TeslaLivePageInner() {
         id: channel.id,
         tvgId: channel.tvgId,
         name: channel.name,
+        group: channel.group,
+        url: channel.url,
       };
       setCurrentChannel(channel);
       setPlaybackIssue(false);
@@ -346,9 +352,9 @@ function TeslaLivePageInner() {
           </div>
         </div>
         <div className='flex items-center gap-2'>
-          <div className='hidden items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300 sm:flex'>
-            <span className='h-2 w-2 rounded-full bg-emerald-400' />
-            实时直播
+          <div className='hidden items-center gap-2 rounded-full bg-violet-400/10 px-3 py-2 text-xs text-violet-200 sm:flex'>
+            <span className='h-2 w-2 rounded-full bg-violet-400' />
+            当前频道已锁定
           </div>
           <button
             type='button'

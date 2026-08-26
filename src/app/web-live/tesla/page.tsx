@@ -277,7 +277,8 @@ function TeslaWebLivePageInner() {
         triedTransportIdsRef.current.add(firstTransport.id);
         setStreamInfo({ name: data.name, title: data.title });
         setPlaybackNotice(
-          `已加载 ${parsedQualities.length} 档清晰度，线路将自动择优`
+          data.qualityNotice ||
+            `已加载 ${parsedQualities.length} 档清晰度，线路将自动择优`
         );
         setLoadingStream(false);
       })
@@ -542,9 +543,9 @@ function TeslaWebLivePageInner() {
                   {showManage ? '收起' : '管理'}
                 </button>
               )}
-              <div className='hidden items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300 xl:flex'>
-                <span className='h-2 w-2 rounded-full bg-emerald-400' />
-                Tesla 直播
+              <div className='hidden items-center gap-2 rounded-full bg-violet-400/10 px-3 py-2 text-xs text-violet-200 xl:flex'>
+                <span className='h-2 w-2 rounded-full bg-violet-400' />
+                Tesla 可播线路
               </div>
             </div>
           </div>

@@ -22,9 +22,15 @@ export function getTeslaAvSyncPolicy(
     return {
       minVideoFrames: 5,
       minAudioFrames: 10,
-      maxAudioLeadSec: 0.25,
+      // Keep less than half a second of cancellable audio. The previous 250ms
+      // horizon was routinely exhausted by Tesla browser chrome/layout work,
+      // while this remains far below a multi-second live network buffer.
+      maxAudioLeadSec: 0.45,
       audioStartSafetySec: 0.02,
-      audioScheduleResetSec: 0.16,
+      // Do not tear down every future WebAudio node for ordinary TS/PES jitter.
+      // Real programme discontinuities remain caught by the decoder epoch and
+      // the 300ms common-clock guard below.
+      audioScheduleResetSec: 0.28,
       audioPtsContinuitySec: 0.08,
       avDriftHoldSec: 0.12,
       avDriftResetSec: 0.3,
@@ -43,7 +49,7 @@ export function getTeslaAvSyncPolicy(
     // outlast that pause while the existing drift guard remains authoritative.
     maxAudioLeadSec: playbackRate === 1 ? 1.45 : 0.6,
     audioStartSafetySec: 0.02,
-    audioScheduleResetSec: 0.12,
+    audioScheduleResetSec: 0.3,
     audioPtsContinuitySec: 0.12,
     avDriftHoldSec: 0.12,
     avDriftResetSec: 0.32,

@@ -117,4 +117,15 @@ describe('Tesla danmaku automatic match identity', () => {
       )
     ).toBeNull();
   });
+
+  test('uses the real source episode label over the playlist array index', () => {
+    const episodes = [
+      { episodeTitle: '第1集' },
+      { episodeTitle: '第2集' },
+      { episodeTitle: '第3集' },
+    ];
+    expect(selectTeslaDanmakuEpisode(episodes, 2, '第3集')).toBe(
+      episodes[2]
+    );
+  });
 });

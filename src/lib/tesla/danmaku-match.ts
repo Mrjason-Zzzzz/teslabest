@@ -176,22 +176,28 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
   wantedEpisode: number,
   episodeLabel?: string
 ): T | null {
-  const wanted = Math.max(1, Math.floor(wantedEpisode || 1));
+  const labelNumber = episodeLabel
+    ? parseTeslaDanmakuEpisodeNumber(episodeLabel)
+    : null;
+  const wanted = Math.max(1, Math.floor(labelNumber || wantedEpisode || 1));
   const numbered = episodes.map((episode) => ({
     episode,
     number: parseTeslaDanmakuEpisodeNumber(episode.episodeTitle),
   }));
-  const exact = numbered.find((item) => item.number === wanted)?.episode;
-  if (exact) return exact;
 
   if (episodeLabel) {
     const normalizedLabel = normalizeComparableTitle(episodeLabel);
-    const labelMatch = episodes.find(
-      (episode) =>
-        normalizeComparableTitle(episode.episodeTitle) === normalizedLabel
-    );
+    const labelMatch = normalizedLabel
+      ? episodes.find(
+          (episode) =>
+            normalizeComparableTitle(episode.episodeTitle) === normalizedLabel
+        )
+      : undefined;
     if (labelMatch) return labelMatch;
   }
+
+  const exact = numbered.find((item) => item.number === wanted)?.episode;
+  if (exact) return exact;
 
   const knownNumbers = numbered
     .map((item) => item.number)

@@ -2,6 +2,7 @@
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { createStableLiveChannelId } from '@/lib/tesla/live-channel-identity';
 
 const defaultUA = 'AptvPlayer/1.4.10';
 
@@ -33,6 +34,7 @@ export interface LiveChannels {
   channelNumber: number;
   channels: {
     id: string;
+    legacyId: string;
     tvgId: string;
     name: string;
     logo: string;
@@ -457,6 +459,7 @@ function parseTxtLive(
   tvgUrl: string;
   channels: {
     id: string;
+    legacyId: string;
     tvgId: string;
     name: string;
     logo: string;
@@ -466,6 +469,7 @@ function parseTxtLive(
 } {
   const channels: {
     id: string;
+    legacyId: string;
     tvgId: string;
     name: string;
     logo: string;
@@ -503,8 +507,15 @@ function parseTxtLive(
       continue;
     }
 
+    const legacyId = `${sourceKey}-${channelIndex}`;
     channels.push({
-      id: `${sourceKey}-${channelIndex}`,
+      id: createStableLiveChannelId(sourceKey, {
+        tvgId: name,
+        name,
+        group: currentGroup,
+        url: value,
+      }),
+      legacyId,
       tvgId: name,
       name,
       logo: '',
@@ -529,6 +540,7 @@ function parseM3U(
   tvgUrl: string;
   channels: {
     id: string;
+    legacyId: string;
     tvgId: string;
     name: string;
     logo: string;
@@ -538,6 +550,7 @@ function parseM3U(
 } {
   const channels: {
     id: string;
+    legacyId: string;
     tvgId: string;
     name: string;
     logo: string;
@@ -600,8 +613,15 @@ function parseM3U(
 
         // 只有当有名称和URL时才添加到结果中
         if (name && url) {
+          const legacyId = `${sourceKey}-${channelIndex}`;
           channels.push({
-            id: `${sourceKey}-${channelIndex}`,
+            id: createStableLiveChannelId(sourceKey, {
+              tvgId,
+              name,
+              group,
+              url,
+            }),
+            legacyId,
             tvgId,
             name,
             logo,

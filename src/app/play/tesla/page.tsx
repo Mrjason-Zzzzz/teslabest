@@ -808,7 +808,7 @@ function TeslaPlayPageInner() {
             {currentDetail && currentDetail.episodes?.length > 1 && (
               <>
                 <span className='text-gray-400'>›</span>
-                <span className='text-green-600'>{episodeTitle}</span>
+                <span className='text-violet-600'>{episodeTitle}</span>
               </>
             )}
             {currentDetail?.vod_remarks && (
@@ -835,11 +835,11 @@ function TeslaPlayPageInner() {
                 <div className='h-full w-full overflow-hidden rounded-xl bg-black shadow-lg'>
                   {isLoading && loadingStage !== 'error' && (
                     <div className='absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900'>
-                      <Loader2 className='h-8 w-8 animate-spin text-green-500' />
+                      <Loader2 className='h-8 w-8 animate-spin text-violet-500' />
                       <div className='w-56'>
                         <div className='mb-2 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800'>
                           <div
-                            className='h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-500'
+                            className='h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-500'
                             style={{ width: `${progressPercent}%` }}
                           />
                         </div>
@@ -999,7 +999,7 @@ function TeslaPlayPageInner() {
                         onClick={() => setRightTab('episodes')}
                         className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
                           rightTab === 'episodes'
-                            ? 'border-b-2 border-green-500 text-green-600'
+                            ? 'border-b-2 border-violet-500 text-violet-600'
                             : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                         }`}
                       >
@@ -1010,7 +1010,7 @@ function TeslaPlayPageInner() {
                         onClick={() => setRightTab('sources')}
                         className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
                           rightTab === 'sources'
-                            ? 'border-b-2 border-green-500 text-green-600'
+                            ? 'border-b-2 border-violet-500 text-violet-600'
                             : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                         }`}
                       >
@@ -1033,7 +1033,7 @@ function TeslaPlayPageInner() {
                             }
                             className={`relative h-6 w-11 rounded-full transition-colors ${
                               autoPlayEnabled
-                                ? 'bg-green-500'
+                                ? 'bg-violet-500'
                                 : 'bg-gray-300 dark:bg-gray-700'
                             }`}
                           >
@@ -1071,7 +1071,7 @@ function TeslaPlayPageInner() {
                                     onClick={() => setEpisodePage(i)}
                                     className={`rounded px-2 py-0.5 text-xs transition-colors ${
                                       i === episodePage
-                                        ? 'bg-green-500/10 text-green-600 dark:bg-green-500/20 dark:text-green-400'
+                                        ? 'bg-violet-500/10 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300'
                                         : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
                                     }`}
                                   >
@@ -1102,7 +1102,7 @@ function TeslaPlayPageInner() {
                                 onClick={() => handleSelectEpisode(idx)}
                                 className={`rounded px-2.5 py-2 text-xs transition-colors ${
                                   idx === currentEpisodeIndex
-                                    ? 'bg-green-500 font-medium text-white shadow-sm'
+                                    ? 'bg-violet-500 font-medium text-white shadow-sm'
                                     : 'bg-gray-50 text-gray-700 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
                                 }`}
                               >
@@ -1141,7 +1141,7 @@ function TeslaPlayPageInner() {
                               <button
                                 type='button'
                                 onClick={handleSelectRecommended}
-                                className='rounded-lg bg-green-500 px-3 py-2 text-xs font-medium text-white hover:bg-green-600'
+                                className='rounded-lg bg-violet-500 px-3 py-2 text-xs font-medium text-white hover:bg-violet-600'
                               >
                                 优选推荐源
                               </button>
@@ -1168,7 +1168,7 @@ function TeslaPlayPageInner() {
                                   onClick={() => handleSwitchSource(s)}
                                   className={`mb-1.5 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors ${
                                     isActive
-                                      ? 'bg-green-50 text-green-700 ring-1 ring-green-200 dark:bg-green-950/30 dark:text-green-400 dark:ring-green-800'
+                                      ? 'bg-violet-50 text-violet-700 ring-1 ring-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:ring-violet-800'
                                       : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'
                                   }`}
                                 >
@@ -1180,7 +1180,7 @@ function TeslaPlayPageInner() {
                                       {recommendedSource &&
                                         s.source === recommendedSource.source &&
                                         s.id === recommendedSource.id && (
-                                          <span className='rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'>
+                                          <span className='rounded bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'>
                                             推荐
                                           </span>
                                         )}
@@ -1197,7 +1197,7 @@ function TeslaPlayPageInner() {
                                   </div>
                                   <div className='ml-2 flex items-center gap-1'>
                                     {isActive && (
-                                      <span className='text-xs text-green-600 dark:text-green-400'>
+                                      <span className='text-xs text-violet-600 dark:text-violet-300'>
                                         当前
                                       </span>
                                     )}
@@ -1224,7 +1224,7 @@ export default function TeslaPlayPage() {
     <Suspense
       fallback={
         <div className='flex min-h-screen items-center justify-center'>
-          <Loader2 className='h-6 w-6 animate-spin text-green-500' />
+          <Loader2 className='h-6 w-6 animate-spin text-violet-500' />
         </div>
       }
     >
