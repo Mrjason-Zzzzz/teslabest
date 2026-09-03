@@ -24,7 +24,10 @@ export function getLiveUrlFingerprint(value: string | null | undefined) {
       ''
     )}`;
   } catch {
-    return String(value || '').split('?')[0].trim().toLowerCase();
+    return String(value || '')
+      .split('?')[0]
+      .trim()
+      .toLowerCase();
   }
 }
 
@@ -50,6 +53,44 @@ export function createStableLiveChannelId(
   return `${sourceKey}-${stableHash(identity)}`;
 }
 
+export function isLivePlaylistPlaceholder(channel: LiveChannelIdentity) {
+  const group = normalizeLiveChannelText(channel.group);
+  const name = String(channel.name || '').trim();
+  return (
+    group.includes('更新时间') ||
+    /^(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?$/.test(
+      name
+    ) ||
+    /(?:广告|博彩|赌博|casino|lottery|betting)/i.test(
+      `${channel.name || ''} ${channel.group || ''} ${channel.url || ''}`
+    )
+  );
+}
+
+function readCctvToken(value: string | null | undefined) {
+  return normalizeLiveChannelText(value).match(
+    /cctv(\d{1,2})(?:\+|plus)?/
+  )?.[1];
+}
+
+export function isSuspiciousLiveRedirect(
+  fromUrl: string,
+  toUrl: string,
+  channel: Pick<LiveChannelIdentity, 'tvgId' | 'name'>
+) {
+  if (
+    /(?:广告|博彩|赌博|casino|lottery|betting)|(?:^|[/?&_.=-])ads?(?:[/?&_.=-]|$)/i.test(
+      toUrl
+    )
+  )
+    return true;
+  const expected = readCctvToken(channel.tvgId) || readCctvToken(channel.name);
+  const redirected = readCctvToken(toUrl);
+  if (expected && redirected && expected !== redirected) return true;
+  const from = readCctvToken(fromUrl);
+  return Boolean(from && redirected && from !== redirected);
+}
+
 /**
  * Match one and only one channel identity. A failure is safer than silently
  * substituting the first/next channel while a signed IPTV URL is refreshed.
@@ -59,9 +100,7 @@ export function findSameLiveChannel<T extends LiveChannelIdentity>(
   target: LiveChannelIdentity
 ): T | null {
   const exactId = channels.find(
-    (channel) =>
-      Boolean(target.id) &&
-      (channel.id === target.id || channel.legacyId === target.id)
+    (channel) => Boolean(target.id) && channel.id === target.id
   );
   if (exactId) return exactId;
 
@@ -77,7 +116,8 @@ export function findSameLiveChannel<T extends LiveChannelIdentity>(
     );
     const exactMetadata = tvgMatches.filter(
       (channel) =>
-        (!wantedName || normalizeLiveChannelText(channel.name) === wantedName) &&
+        (!wantedName ||
+          normalizeLiveChannelText(channel.name) === wantedName) &&
         (!wantedGroup ||
           normalizeLiveChannelText(channel.group) === wantedGroup)
     );

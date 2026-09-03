@@ -62,4 +62,10 @@ describe('Tesla live A/V sync guard', () => {
     expect(policy.maxAudioLeadSec).toBeLessThanOrEqual(0.5);
     expect(policy.avDriftResetSec).toBeLessThanOrEqual(0.3);
   });
+
+  test('keeps VOD audio as master while video has a brief decode wobble', () => {
+    const policy = getTeslaAvSyncPolicy(false, 1, true);
+    expect(policy.avDriftConfirmMs).toBeGreaterThanOrEqual(600);
+    expect(policy.avDriftResetSec).toBeLessThanOrEqual(0.32);
+  });
 });

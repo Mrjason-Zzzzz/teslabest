@@ -165,6 +165,99 @@ function withoutAdSignals(lines: string[]): string[] {
   return lines.filter((line) => !isAdSignal(line));
 }
 
+function mediaUriFamily(uri: string) {
+  try {
+    const parsed = new URL(uri, 'https://relative.invalid/');
+    const directory = parsed.pathname.replace(/\/[^/]*$/, '/');
+    return `${parsed.hostname}${directory}`.toLowerCase();
+  } catch {
+    return uri
+      .split('?')[0]
+      .replace(/\/[^/]*$/, '/')
+      .toLowerCase();
+  }
+}
+
+/**
+ * Detect a short, discontinuity-bounded URI island which leaves the programme
+ * CDN/path and then returns to the same programme family. This catches the
+ * common provider-side mid-roll layout without guessing from duration alone.
+ * Unmarked or same-path baked-in video remains untouched because its media
+ * identity cannot be proven safely from a playlist.
+ */
+function inferDiscontinuityAdIslandIndexes(lines: string[]) {
+  const segments: Array<{
+    index: number;
+    duration: number;
+    family: string;
+    boundaryBefore: boolean;
+  }> = [];
+  let cursor = 0;
+  let segmentIndex = 0;
+  while (cursor < lines.length) {
+    const extInfIndex = lines.findIndex(
+      (line, index) => index >= cursor && line.trim().startsWith('#EXTINF:')
+    );
+    if (extInfIndex < 0) break;
+    let uriIndex = extInfIndex + 1;
+    while (
+      uriIndex < lines.length &&
+      (!lines[uriIndex].trim() || lines[uriIndex].trim().startsWith('#'))
+    ) {
+      uriIndex += 1;
+    }
+    if (uriIndex >= lines.length) break;
+    segments.push({
+      index: segmentIndex,
+      duration: readExtInfDuration(lines[extInfIndex]),
+      family: mediaUriFamily(lines[uriIndex].trim()),
+      boundaryBefore: lines
+        .slice(cursor, extInfIndex + 1)
+        .some((line) => /^#EXT-X-DISCONTINUITY$/i.test(line.trim())),
+    });
+    cursor = uriIndex + 1;
+    segmentIndex += 1;
+  }
+
+  const runs: Array<typeof segments> = [];
+  for (const segment of segments) {
+    if (segment.boundaryBefore || runs.length === 0) runs.push([]);
+    runs[runs.length - 1].push(segment);
+  }
+
+  const familyOf = (run: typeof segments) => {
+    const counts = new Map<string, number>();
+    for (const segment of run) {
+      counts.set(segment.family, (counts.get(segment.family) || 0) + 1);
+    }
+    return Array.from(counts.entries()).sort(
+      (left, right) => right[1] - left[1]
+    )[0]?.[0];
+  };
+  const inferred = new Set<number>();
+  for (let index = 1; index < runs.length - 1; index += 1) {
+    const previousFamily = familyOf(runs[index - 1]);
+    const currentFamily = familyOf(runs[index]);
+    const nextFamily = familyOf(runs[index + 1]);
+    const duration = runs[index].reduce(
+      (total, segment) => total + segment.duration,
+      0
+    );
+    if (
+      previousFamily &&
+      currentFamily &&
+      previousFamily === nextFamily &&
+      currentFamily !== previousFamily &&
+      duration > 0 &&
+      duration <= 180 &&
+      runs[index].length <= 60
+    ) {
+      for (const segment of runs[index]) inferred.add(segment.index);
+    }
+  }
+  return inferred;
+}
+
 /**
  * Removes only complete, explicit ad segments from a simple HLS media playlist.
  *
@@ -203,6 +296,8 @@ export function filterAdsFromMediaPlaylist(
   // Before removing a complete ad segment, materialize that IV on every segment
   // so later programme segments keep decrypting with their original value.
   if (hasImplicitAesIv(lines)) lines = materializeImplicitAesIvs(lines);
+
+  const topologyAdSegmentIndexes = inferDiscontinuityAdIslandIndexes(lines);
 
   const output: string[] = [];
   let cursor = 0;
@@ -254,6 +349,7 @@ export function filterAdsFromMediaPlaylist(
     const removeSegment =
       adBreakActive ||
       isAdUri(lines[uriIndex].trim()) ||
+      topologyAdSegmentIndexes.has(segmentIndex) ||
       options.additionalAdSegmentIndexes?.has(segmentIndex) === true;
 
     if (removeSegment) {

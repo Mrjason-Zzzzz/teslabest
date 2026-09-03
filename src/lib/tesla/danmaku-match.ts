@@ -27,6 +27,12 @@ function normalizeComparableTitle(value: string) {
     value.replace(/\u3010[^\u3011]*\u3011|\[[^\]]*\]/g, '')
   )
     .replace(/[(\uff08]\d{4}[)\uff09]/g, '')
+    .replace(
+      /第\s*([一二两三四五六七八九十])\s*季/gu,
+      (_match, season) => `s${CHINESE_SEASONS[season] || season}`
+    )
+    .replace(/第\s*(\d{1,2})\s*季/gu, 's$1')
+    .replace(/season\s*0*(\d{1,2})/gi, 's$1')
     .replace(/\bfrom\s+\S+$/i, '')
     .replace(/[^a-z0-9\u4e00-\u9fff]/gi, '')
     .toLowerCase();
@@ -161,7 +167,7 @@ export function parseTeslaDanmakuEpisodeNumber(value: string) {
   const patterns = [
     /S\d{1,2}E0*(\d{1,4})/i,
     /(?:EP?|Episode)\s*0*(\d{1,4})/i,
-    /\u7b2c\s*0*(\d{1,4})\s*(?:\u96c6|\u8bdd)/u,
+    /\u7b2c\s*0*(\d{1,4})\s*(?:\u96c6|\u8bdd|\u671f)/u,
     /(?:^|[_\s-])0*(\d{1,4})(?:$|[_\s-])/,
   ];
   for (const pattern of patterns) {

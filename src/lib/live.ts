@@ -2,7 +2,10 @@
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
-import { createStableLiveChannelId } from '@/lib/tesla/live-channel-identity';
+import {
+  createStableLiveChannelId,
+  isLivePlaylistPlaceholder,
+} from '@/lib/tesla/live-channel-identity';
 
 const defaultUA = 'AptvPlayer/1.4.10';
 
@@ -508,7 +511,7 @@ function parseTxtLive(
     }
 
     const legacyId = `${sourceKey}-${channelIndex}`;
-    channels.push({
+    const channel = {
       id: createStableLiveChannelId(sourceKey, {
         tvgId: name,
         name,
@@ -521,8 +524,11 @@ function parseTxtLive(
       logo: '',
       group: currentGroup,
       url: value,
-    });
-    channelIndex++;
+    };
+    if (!isLivePlaylistPlaceholder(channel)) {
+      channels.push(channel);
+      channelIndex++;
+    }
   }
 
   return { tvgUrl: '', channels };
@@ -614,7 +620,7 @@ function parseM3U(
         // 只有当有名称和URL时才添加到结果中
         if (name && url) {
           const legacyId = `${sourceKey}-${channelIndex}`;
-          channels.push({
+          const channel = {
             id: createStableLiveChannelId(sourceKey, {
               tvgId,
               name,
@@ -627,8 +633,11 @@ function parseM3U(
             logo,
             group,
             url,
-          });
-          channelIndex++;
+          };
+          if (!isLivePlaylistPlaceholder(channel)) {
+            channels.push(channel);
+            channelIndex++;
+          }
         }
 
         // 跳过下一行，因为已经处理了

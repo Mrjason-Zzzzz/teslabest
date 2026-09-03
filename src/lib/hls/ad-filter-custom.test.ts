@@ -99,4 +99,35 @@ describe('applyConfiguredAdFilterSafely', () => {
       applyConfiguredAdFilterSafely('level', numericAdPlaylist, customCode)
     ).toBe(numericAdPlaylist);
   });
+
+  it('删除短暂离开正片路径后返回的 discontinuity 广告岛', () => {
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:10,
+https://vod.example/program/001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://other-cdn.example/insert/101.ts
+#EXTINF:10,
+https://other-cdn.example/insert/102.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://vod.example/program/002.ts
+#EXT-X-ENDLIST`;
+    const filtered = applyConfiguredAdFilterSafely('test', playlist);
+    expect(filtered).not.toContain('other-cdn.example');
+    expect(filtered).toContain('/program/001.ts');
+    expect(filtered).toContain('/program/002.ts');
+  });
+
+  it('不按时长猜测删除未标记或同路径正片', () => {
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:10,
+https://vod.example/program/001.ts
+#EXTINF:10,
+https://vod.example/program/002.ts
+#EXT-X-ENDLIST`;
+    expect(applyConfiguredAdFilterSafely('test', playlist)).toBe(playlist);
+  });
 });

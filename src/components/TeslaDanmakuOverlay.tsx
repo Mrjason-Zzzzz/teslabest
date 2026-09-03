@@ -33,6 +33,24 @@ type OverlayComment = {
   startedAt: number;
 };
 
+export type TeslaDanmakuProgrammeChoice = {
+  animeId: number;
+  animeTitle: string;
+};
+
+export type TeslaDanmakuEpisodeChoice = {
+  episodeId: number;
+  episodeTitle: string;
+};
+
+export type TeslaDanmakuChoices = {
+  programmes: TeslaDanmakuProgrammeChoice[];
+  episodes: TeslaDanmakuEpisodeChoice[];
+  selectedAnimeId: number | null;
+  selectedEpisodeId: number | null;
+  automatic: boolean;
+};
+
 interface TeslaDanmakuOverlayProps {
   enabled: boolean;
   title?: string;
@@ -46,7 +64,10 @@ interface TeslaDanmakuOverlayProps {
   laneCount?: number;
   speed?: number;
   fontSize?: number;
+  manualAnimeId?: number | null;
+  manualEpisodeId?: number | null;
   onStatusChange?: (status: string) => void;
+  onChoicesChange?: (choices: TeslaDanmakuChoices) => void;
 }
 
 function lowerBoundComment(
@@ -76,7 +97,10 @@ export default function TeslaDanmakuOverlay({
   laneCount = 7,
   speed = 3,
   fontSize = 30,
+  manualAnimeId = null,
+  manualEpisodeId = null,
   onStatusChange,
+  onChoicesChange,
 }: TeslaDanmakuOverlayProps) {
   const [comments, setComments] = useState<
     Array<{ text: string; time: number; color: string }>
@@ -100,7 +124,9 @@ export default function TeslaDanmakuOverlay({
   );
   const animationDurationSec = 14 - (safeSpeed - 1) * 2;
   const baseTitle = cleanTeslaDanmakuTitle(title);
-  const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}`;
+  const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}|${
+    manualAnimeId || 0
+  }|${manualEpisodeId || 0}`;
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -148,31 +174,25 @@ export default function TeslaDanmakuOverlay({
           episode: wantedEpisode,
         })
       );
-      const directMatches = [];
-      for (const fileName of fileNames) {
-        const matched = await matchAnime(fileName);
-        if (cancelled) return;
-        directMatches.push(
-          ...(matched.matches || []).filter((item) => {
-            const matchedEpisode = parseTeslaDanmakuEpisodeNumber(
-              item.episodeTitle || ''
-            );
-            return (
-              scoreTeslaDanmakuCandidate(item, context) >= 45 &&
-              (matchedEpisode === null || matchedEpisode === wantedEpisode)
-            );
-          })
-        );
-      }
-
-      const searchedCandidates = [];
-      for (const keyword of searchKeywords) {
-        const searchResult = await searchAnime(keyword);
-        if (cancelled) return;
-        if (searchResult.success) {
-          searchedCandidates.push(...(searchResult.animes || []));
-        }
-      }
+      const [matchResults, searchResults] = await Promise.all([
+        Promise.all(fileNames.map((fileName) => matchAnime(fileName))),
+        Promise.all(searchKeywords.map((keyword) => searchAnime(keyword))),
+      ]);
+      if (cancelled) return;
+      const directMatches = matchResults.flatMap((matched) =>
+        (matched.matches || []).filter((item) => {
+          const matchedEpisode = parseTeslaDanmakuEpisodeNumber(
+            item.episodeTitle || ''
+          );
+          return (
+            scoreTeslaDanmakuCandidate(item, context) >= 45 &&
+            (matchedEpisode === null || matchedEpisode === wantedEpisode)
+          );
+        })
+      );
+      const searchedCandidates = searchResults.flatMap((searchResult) =>
+        searchResult.success ? searchResult.animes || [] : []
+      );
 
       const candidatePool: Array<{
         animeId: number;
@@ -199,43 +219,84 @@ export default function TeslaDanmakuOverlay({
         candidatePool.push(match);
       }
 
-      const selected = selectTeslaDanmakuCandidate(candidatePool, context);
+      const programmes = candidatePool
+        .filter(
+          (candidate) => scoreTeslaDanmakuCandidate(candidate, context) >= 45
+        )
+        .map((candidate) => ({
+          animeId: candidate.animeId,
+          animeTitle: candidate.animeTitle,
+        }));
+      const automaticSelection = selectTeslaDanmakuCandidate(
+        candidatePool,
+        context
+      );
+      const selected = manualAnimeId
+        ? candidatePool.find(
+            (candidate) => candidate.animeId === manualAnimeId
+          ) || null
+        : automaticSelection;
+      onChoicesChange?.({
+        programmes,
+        episodes: [],
+        selectedAnimeId: selected?.animeId || null,
+        selectedEpisodeId: null,
+        automatic: !manualAnimeId,
+      });
       if (!selected) {
-        loadIdentityRef.current = '';
-        onStatusChange?.('未找到唯一可靠的弹幕匹配');
+        onStatusChange?.(
+          programmes.length
+            ? '自动匹配不唯一，请手动选择弹幕节目'
+            : '未找到可用弹幕节目'
+        );
         return;
       }
 
+      const episodeResult = await getEpisodes(selected.animeId);
+      if (cancelled) return;
+      const episodes = episodeResult.bangumi?.episodes?.length
+        ? episodeResult.bangumi.episodes
+        : directMatches
+            .filter(
+              (match) => match.animeId === selected.animeId && match.episodeId
+            )
+            .map((match) => ({
+              episodeId: match.episodeId,
+              episodeTitle: match.episodeTitle,
+            }));
       const directEpisode = directMatches.find(
         (match) =>
           match.animeId === selected.animeId &&
           parseTeslaDanmakuEpisodeNumber(match.episodeTitle || '') ===
             wantedEpisode
       );
-      let episodeId = directEpisode?.episodeId;
-      let matchedEpisodeTitle = directEpisode?.episodeTitle || '';
-      if (!episodeId) {
-        const episodeResult = await getEpisodes(selected.animeId);
-        if (cancelled) return;
-        const episode = selectTeslaDanmakuEpisode(
-          episodeResult.bangumi?.episodes || [],
-          episodeNumber,
-          episodeLabel
-        );
-        if (!episode) {
-          loadIdentityRef.current = '';
-          onStatusChange?.('已找到剧集，但无法可靠确认当前集数');
-          return;
-        }
-        episodeId = episode.episodeId;
-        matchedEpisodeTitle = episode.episodeTitle;
+      const manualEpisode = manualEpisodeId
+        ? episodes.find((episode) => episode.episodeId === manualEpisodeId)
+        : null;
+      const automaticEpisode =
+        directEpisode ||
+        selectTeslaDanmakuEpisode(episodes, episodeNumber, episodeLabel);
+      const selectedEpisode = manualEpisode || automaticEpisode;
+      onChoicesChange?.({
+        programmes,
+        episodes,
+        selectedAnimeId: selected.animeId,
+        selectedEpisodeId: selectedEpisode?.episodeId || null,
+        automatic: !manualAnimeId && !manualEpisodeId,
+      });
+      if (!selectedEpisode) {
+        onStatusChange?.('已找到节目，请手动选择弹幕集数');
+        return;
       }
+
+      const episodeId = selectedEpisode.episodeId;
+      const matchedEpisodeTitle = selectedEpisode.episodeTitle;
 
       const rawComments = await getDanmakuById(
         episodeId,
         baseTitle,
         episodeNumber - 1,
-        undefined,
+        manualAnimeId || manualEpisodeId ? { bypassCache: true } : undefined,
         {
           animeId: selected.animeId,
           animeTitle: selected.animeTitle,
@@ -293,6 +354,9 @@ export default function TeslaDanmakuOverlay({
     episodeLabel,
     episodeNumber,
     mediaType,
+    manualAnimeId,
+    manualEpisodeId,
+    onChoicesChange,
     onStatusChange,
     title,
     totalEpisodes,

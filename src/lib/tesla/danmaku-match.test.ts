@@ -3,6 +3,7 @@ import {
   buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
   inferTeslaDanmakuSeason,
+  parseTeslaDanmakuEpisodeNumber,
   rankTeslaDanmakuCandidates,
   selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
@@ -74,6 +75,27 @@ describe('Tesla danmaku automatic match identity', () => {
     expect(selected?.animeId).toBe(34411);
   });
 
+  test('treats Chinese and Arabic season markers as the same programme', () => {
+    const selected = selectTeslaDanmakuCandidate(
+      [
+        {
+          animeId: 1818089,
+          animeTitle: '地球超新鲜 第2季(2026)【综艺】from tencent',
+          startDate: '2026-01-01',
+          typeDescription: '综艺',
+          episodeCount: 41,
+        },
+      ],
+      {
+        title: '地球超新鲜 第二季',
+        year: '2026',
+        mediaType: 'tv',
+        totalEpisodes: 41,
+      }
+    );
+    expect(selected?.animeId).toBe(1818089);
+  });
+
   test('refuses an ambiguous low-confidence fuzzy match', () => {
     expect(
       selectTeslaDanmakuCandidate(
@@ -124,8 +146,14 @@ describe('Tesla danmaku automatic match identity', () => {
       { episodeTitle: '第2集' },
       { episodeTitle: '第3集' },
     ];
-    expect(selectTeslaDanmakuEpisode(episodes, 2, '第3集')).toBe(
-      episodes[2]
-    );
+    expect(selectTeslaDanmakuEpisode(episodes, 2, '第3集')).toBe(episodes[2]);
+  });
+
+  test('recognizes variety episode labels such as 第1期上', () => {
+    expect(
+      parseTeslaDanmakuEpisodeNumber(
+        '【qq】 第1期上：爆笑开局！地球团连环整蛊郭京飞'
+      )
+    ).toBe(1);
   });
 });

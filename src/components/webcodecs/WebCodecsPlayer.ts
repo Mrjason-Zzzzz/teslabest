@@ -5,6 +5,7 @@ import * as MP4Box from 'mp4box';
 import * as muxjs from 'mux.js';
 
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
+import { selectContiguousAudioBatch } from '@/lib/tesla/audio-batch';
 import {
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
@@ -285,9 +286,9 @@ export class WebCodecsPlayer {
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: this.liveHint ? -1 : startAt,
-      maxBufferLength: this.liveHint ? 24 : 36,
-      maxMaxBufferLength: this.liveHint ? 48 : 72,
-      backBufferLength: this.liveHint ? 8 : 16,
+      maxBufferLength: this.liveHint ? 24 : 24,
+      maxMaxBufferLength: this.liveHint ? 48 : 48,
+      backBufferLength: this.liveHint ? 8 : 8,
       liveSyncDurationCount: this.liveHint ? 3 : undefined,
       liveMaxLatencyDurationCount: this.liveHint ? 10 : undefined,
       maxLiveSyncPlaybackRate: this.liveHint ? 1.03 : 1,
@@ -1771,17 +1772,21 @@ export class WebCodecsPlayer {
       return;
 
     let scheduled = 0;
-    const maxChunks = this.isLivePlaylist
-      ? 20
-      : this.playbackRate === 1
-      ? 24
-      : 10;
+    const maxChunks = this.isLivePlaylist ? 6 : this.playbackRate === 1 ? 8 : 4;
     while (this.decodedAudio.length && scheduled < maxChunks) {
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
       const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
-      const headDuration = head.numberOfFrames / sampleRate;
+      const batchSelection = selectContiguousAudioBatch(
+        this.decodedAudio,
+        this.isLivePlaylist ? 0.13 : 0.2
+      );
+      const batchCount = Math.max(1, batchSelection.count);
+      const batchFrames = this.decodedAudio.slice(0, batchCount);
+      const totalFrames =
+        batchSelection.totalFrames || batchFrames[0].numberOfFrames;
+      const headDuration = totalFrames / sampleRate;
       const mediaNow = this.getMediaTime();
 
       if (headTs + headDuration < mediaNow - 0.08) {
@@ -1823,19 +1828,19 @@ export class WebCodecsPlayer {
 
       let buffer: AudioBuffer;
       try {
-        buffer = this.audioCtx.createBuffer(
-          channels,
-          head.numberOfFrames,
-          sampleRate
-        );
-        for (let channel = 0; channel < channels; channel++) {
-          const dest = new Float32Array(head.numberOfFrames);
-          head.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
-          buffer.copyToChannel(dest, channel);
+        buffer = this.audioCtx.createBuffer(channels, totalFrames, sampleRate);
+        let writeOffset = 0;
+        for (const frame of batchFrames) {
+          for (let channel = 0; channel < channels; channel++) {
+            const dest = new Float32Array(frame.numberOfFrames);
+            frame.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
+            buffer.copyToChannel(dest, channel, writeOffset);
+          }
+          writeOffset += frame.numberOfFrames;
         }
       } finally {
-        head.close();
-        this.decodedAudio.shift();
+        for (const frame of batchFrames) frame.close();
+        this.decodedAudio.splice(0, batchCount);
       }
 
       this.scheduleAudioBuffer(buffer, when, startOffsetSec, this.playbackRate);
@@ -1860,7 +1865,13 @@ export class WebCodecsPlayer {
     src.connect(this.gain);
     src.start(when, startOffsetSec);
     this.activeSources.add(src);
-    src.onended = () => this.activeSources.delete(src);
+    src.onended = () => {
+      this.activeSources.delete(src);
+      try {
+        src.disconnect();
+      } catch {}
+      src.onended = null;
+    };
   }
 
   private presentVideo(clock: number) {
@@ -1945,7 +1956,7 @@ export class WebCodecsPlayer {
     if (
       this.hlsVideoEl &&
       !this.useNativePitchPreservingAudio &&
-      now - this.lastHlsClockSyncMs >= 1000
+      now - this.lastHlsClockSyncMs >= (this.isLivePlaylist ? 2000 : 5000)
     ) {
       this.lastHlsClockSyncMs = now;
       try {
@@ -1960,7 +1971,10 @@ export class WebCodecsPlayer {
             details?.edge
           );
         }
-        if (Math.abs(this.hlsVideoEl.currentTime - syncTarget) > 1) {
+        if (
+          Math.abs(this.hlsVideoEl.currentTime - syncTarget) >
+          (this.isLivePlaylist ? 1.5 : 4)
+        ) {
           this.hlsVideoEl.currentTime = syncTarget;
         }
       } catch {}

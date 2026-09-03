@@ -13,7 +13,10 @@ import {
   isSourceAllowedForUser,
   requireFeaturePermission,
 } from '@/lib/permissions';
-import { findSameLiveChannel } from '@/lib/tesla/live-channel-identity';
+import {
+  findSameLiveChannel,
+  isSuspiciousLiveRedirect,
+} from '@/lib/tesla/live-channel-identity';
 
 export const runtime = 'nodejs';
 
@@ -107,6 +110,29 @@ export async function GET(request: NextRequest) {
         'User-Agent': ua,
       },
     });
+
+    if (
+      rootRequest &&
+      response.url &&
+      response.url !== decodedUrl &&
+      isSuspiciousLiveRedirect(decodedUrl, response.url, {
+        tvgId: channelTvgId,
+        name: channelName,
+      })
+    ) {
+      response.body?.cancel().catch(() => undefined);
+      responseUsed = true;
+      console.warn('[LiveProxy] blocked cross-channel/ad redirect', {
+        source,
+        channelId,
+        channelTvgId,
+        channelName,
+      });
+      return NextResponse.json(
+        { error: '当前线路跳转到其他频道或广告地址，已停止播放' },
+        { status: 409 }
+      );
+    }
 
     if (!response.ok) {
       return NextResponse.json(

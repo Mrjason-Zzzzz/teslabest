@@ -647,19 +647,13 @@ function TeslaPlayPageInner() {
       );
       const failedKey = getTeslaSourceKey(currentDetail);
       triedSourceKeysRef.current.add(failedKey);
-      const next = rankTeslaSources(allSources).find(
-        (item) => !triedSourceKeysRef.current.has(getTeslaSourceKey(item))
-      );
-      if (next) {
-        handleSwitchSource(
-          next,
-          `当前源异常，自动切换到 ${next.source_name || next.source}`
-        );
-      } else {
-        setSourceNotice('当前影片的候选资源均已尝试，可手动恢复原源或重试');
-      }
+      // A transient decoder/network error must never silently change the VOD
+      // provider. Several providers begin with a gambling pre-roll, so an
+      // automatic source swap looks exactly like an ad inserted at 5/35 min.
+      // Keep the current media identity and let the user choose another source.
+      setSourceNotice(`当前源播放异常：${message}。请在右侧手动换源或重试`);
     },
-    [allSources, currentDetail, handleSwitchSource]
+    [currentDetail]
   );
 
   const handleSelectRecommended = useCallback(() => {

@@ -40,7 +40,9 @@ import {
   updateTeslaAudioSession,
 } from '@/lib/tesla/audio-session';
 
-import TeslaDanmakuOverlay from '@/components/TeslaDanmakuOverlay';
+import TeslaDanmakuOverlay, {
+  type TeslaDanmakuChoices,
+} from '@/components/TeslaDanmakuOverlay';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
 type PlayMode = 'video' | 'webcodecs';
@@ -217,6 +219,19 @@ export default function TeslaPlayer({
   const [danmakuRows, setDanmakuRows] = useState(7);
   const [danmakuSpeed, setDanmakuSpeed] = useState(3);
   const [danmakuFontSize, setDanmakuFontSize] = useState(30);
+  const [manualDanmakuAnimeId, setManualDanmakuAnimeId] = useState<
+    number | null
+  >(null);
+  const [manualDanmakuEpisodeId, setManualDanmakuEpisodeId] = useState<
+    number | null
+  >(null);
+  const [danmakuChoices, setDanmakuChoices] = useState<TeslaDanmakuChoices>({
+    programmes: [],
+    episodes: [],
+    selectedAnimeId: null,
+    selectedEpisodeId: null,
+    automatic: true,
+  });
 
   const [mode, setMode] = useState<PlayMode>(() =>
     getInitialMode(live ? 'webcodecs' : defaultModeProp)
@@ -288,6 +303,11 @@ export default function TeslaPlayer({
       return next;
     });
   }, []);
+
+  const handleDanmakuChoicesChange = useCallback(
+    (choices: TeslaDanmakuChoices) => setDanmakuChoices(choices),
+    []
+  );
 
   const reportPlaybackReady = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -1385,7 +1405,10 @@ export default function TeslaPlayer({
           laneCount={danmakuRows}
           speed={danmakuSpeed}
           fontSize={danmakuFontSize}
+          manualAnimeId={manualDanmakuAnimeId}
+          manualEpisodeId={manualDanmakuEpisodeId}
           onStatusChange={setDanmakuStatus}
+          onChoicesChange={handleDanmakuChoicesChange}
         />
       )}
 
@@ -1893,6 +1916,70 @@ export default function TeslaPlayer({
               />
             </label>
           ))}
+          <div className='mt-3 border-t border-white/10 pt-3'>
+            <div className='mb-2 flex items-center justify-between gap-2'>
+              <span className='text-xs font-medium text-white/70'>
+                弹幕匹配
+              </span>
+              {(manualDanmakuAnimeId || manualDanmakuEpisodeId) && (
+                <button
+                  type='button'
+                  onClick={() => {
+                    setManualDanmakuAnimeId(null);
+                    setManualDanmakuEpisodeId(null);
+                  }}
+                  className='min-h-9 rounded-lg bg-violet-500 px-3 text-xs font-medium text-white'
+                >
+                  恢复自动
+                </button>
+              )}
+            </div>
+            {danmakuChoices.programmes.length > 0 && (
+              <div className='mb-3 max-h-32 space-y-1 overflow-y-auto'>
+                {danmakuChoices.programmes.map((programme) => (
+                  <button
+                    key={programme.animeId}
+                    type='button'
+                    onClick={() => {
+                      setManualDanmakuAnimeId(programme.animeId);
+                      setManualDanmakuEpisodeId(null);
+                    }}
+                    className={`block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs ${
+                      danmakuChoices.selectedAnimeId === programme.animeId
+                        ? 'bg-violet-500 text-white'
+                        : 'bg-white/10 text-white/75'
+                    }`}
+                  >
+                    {programme.animeTitle}
+                  </button>
+                ))}
+              </div>
+            )}
+            {danmakuChoices.episodes.length > 0 && (
+              <div>
+                <p className='mb-2 text-xs text-white/50'>手动选择弹幕集数</p>
+                <div className='grid max-h-36 grid-cols-3 gap-1.5 overflow-y-auto'>
+                  {danmakuChoices.episodes.map((episode) => (
+                    <button
+                      key={episode.episodeId}
+                      type='button'
+                      onClick={() =>
+                        setManualDanmakuEpisodeId(episode.episodeId)
+                      }
+                      className={`min-h-10 rounded-lg px-2 py-1 text-xs ${
+                        danmakuChoices.selectedEpisodeId === episode.episodeId
+                          ? 'bg-violet-500 text-white'
+                          : 'bg-white/10 text-white/75'
+                      }`}
+                      title={episode.episodeTitle}
+                    >
+                      {episode.episodeTitle}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </aside>
       )}
     </div>

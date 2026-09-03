@@ -53,7 +53,10 @@ export function getTeslaAvSyncPolicy(
     audioPtsContinuitySec: 0.12,
     avDriftHoldSec: 0.12,
     avDriftResetSec: 0.32,
-    avDriftConfirmMs: 180,
+    // Audio is the master clock. Give the video decoder enough time to output
+    // and let presentVideo drop expired frames instead of stopping audible
+    // audio for a short Tesla main-thread/decode wobble.
+    avDriftConfirmMs: 650,
     videoStarvationMs: 700,
     audioStarvationMs: 950,
     stallRecoveryMs: 12000,

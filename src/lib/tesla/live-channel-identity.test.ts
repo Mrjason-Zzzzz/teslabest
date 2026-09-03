@@ -1,6 +1,8 @@
 import {
   createStableLiveChannelId,
   findSameLiveChannel,
+  isLivePlaylistPlaceholder,
+  isSuspiciousLiveRedirect,
 } from './live-channel-identity';
 
 describe('Tesla live channel identity', () => {
@@ -56,5 +58,43 @@ describe('Tesla live channel identity', () => {
         { name: 'CCTV6' }
       )
     ).toBeNull();
+  });
+
+  test('does not recover through a positional legacy id', () => {
+    expect(
+      findSameLiveChannel(
+        [{ id: 'stable-cctv7', legacyId: 'govin-6', name: 'CCTV7' }],
+        { id: 'govin-6' }
+      )
+    ).toBeNull();
+  });
+
+  test('filters Guovin timestamp and explicit ad placeholders', () => {
+    expect(
+      isLivePlaylistPlaceholder({
+        name: '2026-08-27 14:06:22',
+        group: '🕘️更新时间',
+      })
+    ).toBe(true);
+    expect(
+      isLivePlaylistPlaceholder({ name: 'CCTV-6', group: '央视频道' })
+    ).toBe(false);
+  });
+
+  test('rejects a redirect to another CCTV channel or an ad endpoint', () => {
+    expect(
+      isSuspiciousLiveRedirect(
+        'https://cdn.example/cctv6/index.m3u8',
+        'https://cdn.example/cctv7/index.m3u8',
+        cctv6
+      )
+    ).toBe(true);
+    expect(
+      isSuspiciousLiveRedirect(
+        'https://cdn.example/cctv6/index.m3u8',
+        'https://edge.example/ad/live.m3u8',
+        cctv6
+      )
+    ).toBe(true);
   });
 });
