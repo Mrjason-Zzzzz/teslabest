@@ -282,7 +282,9 @@ export function TokenRefreshManager() {
         // A transient network failure must not interrupt playback.
       }
     };
-    const interval = window.setInterval(checkActiveSession, 5000);
+    // Focus/visibility still checks immediately. A 15 s steady-state poll keeps
+    // single-device eviction responsive without starving Canvas/WebAudio.
+    const interval = window.setInterval(checkActiveSession, 15000);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') void checkActiveSession();
     };

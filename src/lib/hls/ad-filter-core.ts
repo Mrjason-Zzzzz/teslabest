@@ -38,6 +38,25 @@ function isAdUri(uri: string): boolean {
   );
 }
 
+/**
+ * Live playlists cannot have media-sequence entries removed safely. Detect
+ * only explicit provider markers/URIs so the caller can fail closed and move
+ * to an identity-equivalent backup instead of ever rendering the ad.
+ */
+export function detectExplicitLiveAdSignal(m3u8Content: string): string | null {
+  if (!m3u8Content.includes('#EXTM3U')) return null;
+  const lines = m3u8Content.replace(/\r\n/g, '\n').split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (isCueOut(trimmed)) return 'cue-out';
+    if (isAdDateRange(trimmed)) return 'ad-daterange';
+    if (trimmed && !trimmed.startsWith('#') && isAdUri(trimmed)) {
+      return 'ad-uri';
+    }
+  }
+  return null;
+}
+
 export interface AdFilterOptions {
   /**
    * 由站长自定义规则识别出的完整媒体分片序号。核心过滤器仍会

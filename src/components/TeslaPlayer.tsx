@@ -88,7 +88,9 @@ function formatTime(seconds: number): string {
   return `${hh}${mm}:${ss}`;
 }
 
-const PROGRESS_SAVE_INTERVAL = 3000;
+// Persisting every three seconds caused hundreds of API requests per viewing
+// session and competed with the audio scheduler on the vehicle browser.
+const PROGRESS_SAVE_INTERVAL = 15000;
 
 function getSavedProgress(key: string): number {
   if (typeof window === 'undefined') return 0;
@@ -190,6 +192,7 @@ export default function TeslaPlayer({
   const [buffering, setBuffering] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [presentedVideoTime, setPresentedVideoTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
@@ -405,6 +408,7 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     setMode(getInitialMode(live ? 'webcodecs' : defaultModeProp));
+    setPresentedVideoTime(0);
     setError(null);
     setReconnectMessage('');
     playbackReadyReportedRef.current = false;
@@ -428,6 +432,7 @@ export default function TeslaPlayer({
     setSeekToTime(savedProgress);
     currentTimeRef.current = savedProgress;
     setCurrentTime(savedProgress);
+    setPresentedVideoTime(savedProgress);
     if (mode === 'webcodecs') {
       wcPlayerRef.current?.seek(savedProgress);
     } else if (videoRef.current) {
@@ -446,6 +451,7 @@ export default function TeslaPlayer({
         videoRef.current.currentTime = t;
       }
       setCurrentTime(t);
+      setPresentedVideoTime(t);
     },
     [mode]
   );
@@ -1188,6 +1194,9 @@ export default function TeslaPlayer({
             setCurrentTime(t);
           }
         },
+        onVideoTime: (t) => {
+          if (!destroyed) setPresentedVideoTime(t);
+        },
         onDurationChange: (d) => {
           if (!destroyed) setDuration(d);
         },
@@ -1400,7 +1409,7 @@ export default function TeslaPlayer({
           episodeLabel={danmakuEpisodeLabel}
           mediaType={danmakuMediaType}
           totalEpisodes={danmakuTotalEpisodes}
-          currentTime={currentTime}
+          currentTime={presentedVideoTime || currentTime}
           playing={playing}
           laneCount={danmakuRows}
           speed={danmakuSpeed}
@@ -1891,7 +1900,7 @@ export default function TeslaPlayer({
               set: setDanmakuSpeed,
             },
           ].map((item) => (
-            <label
+            <div
               key={item.label}
               className={`block text-sm text-white/80 ${
                 isWebFullscreen || isFullscreen ? 'mb-5' : 'mb-2'
@@ -1903,18 +1912,30 @@ export default function TeslaPlayer({
                   {item.value} {item.suffix}
                 </strong>
               </span>
-              <input
-                type='range'
-                min={item.min}
-                max={item.max}
-                step={1}
-                value={item.value}
-                onChange={(event) =>
-                  item.set(Number(event.currentTarget.value))
-                }
-                className='h-10 w-full accent-violet-500'
-              />
-            </label>
+              <div className='grid grid-cols-[3rem_1fr_3rem] items-center gap-2'>
+                <button
+                  type='button'
+                  className='min-h-12 rounded-xl bg-white/10 text-xl active:scale-95 disabled:opacity-30'
+                  disabled={item.value <= item.min}
+                  onClick={() => item.set(Math.max(item.min, item.value - 1))}
+                  aria-label={`${item.label}减少`}
+                >
+                  −
+                </button>
+                <div className='rounded-xl bg-violet-500/20 py-3 text-center text-base font-semibold text-violet-100'>
+                  {item.value} {item.suffix}
+                </div>
+                <button
+                  type='button'
+                  className='min-h-12 rounded-xl bg-white/10 text-xl active:scale-95 disabled:opacity-30'
+                  disabled={item.value >= item.max}
+                  onClick={() => item.set(Math.min(item.max, item.value + 1))}
+                  aria-label={`${item.label}增加`}
+                >
+                  +
+                </button>
+              </div>
+            </div>
           ))}
           <div className='mt-3 border-t border-white/10 pt-3'>
             <div className='mb-2 flex items-center justify-between gap-2'>

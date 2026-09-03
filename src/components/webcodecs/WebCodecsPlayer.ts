@@ -6,6 +6,7 @@ import * as muxjs from 'mux.js';
 
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import { selectContiguousAudioBatch } from '@/lib/tesla/audio-batch';
+import { sanitizePcmPlaneInPlace } from '@/lib/tesla/audio-quality';
 import {
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
@@ -36,6 +37,8 @@ export type PlayerState =
 
 export interface PlayerCallbacks {
   onTime?: (currentSec: number) => void;
+  /** PTS of the frame actually drawn to Canvas, used by visual overlays. */
+  onVideoTime?: (presentedSec: number) => void;
   onDurationChange?: (durationSec: number) => void;
   onStateChange?: (state: PlayerState) => void;
   onFirstVideoFrame?: () => void;
@@ -98,6 +101,7 @@ export class WebCodecsPlayer {
   private showDebug = false;
   private needVideoKey = true;
   private lastTimeReportMs = 0;
+  private lastVideoTimeReportMs = 0;
   private lastHlsClockSyncMs = 0;
   private lastRenderedAtMs = 0;
   private lastAudioScheduledAtMs = 0;
@@ -128,6 +132,9 @@ export class WebCodecsPlayer {
   private parsedAudioConfig: any = null;
 
   private renderedFrames = 0;
+  private invalidAudioSamples = 0;
+  private clippedAudioSamples = 0;
+  private diagnosticLastAt = new Map<string, number>();
   private firstVideoFrameReported = false;
   private decodedFrames = 0;
   private droppedFrames = 0;
@@ -166,6 +173,13 @@ export class WebCodecsPlayer {
     fragmentDuplicateDrops: 0,
     fragmentStaleDrops: 0,
     lastRecoveryReason: '',
+    diagnosticEvents: [] as Array<{
+      at: string;
+      type: string;
+      mediaPtsSec: number;
+      videoPtsSec: number;
+      detail?: Record<string, unknown>;
+    }>,
   };
 
   constructor(canvas: HTMLCanvasElement, cb: PlayerCallbacks = {}) {
@@ -226,6 +240,8 @@ export class WebCodecsPlayer {
     this.fragmentGuard.reset();
     this.debugStats.fragmentDuplicateDrops = 0;
     this.debugStats.fragmentStaleDrops = 0;
+    this.debugStats.diagnosticEvents = [];
+    this.diagnosticLastAt.clear();
     this.activeVideoTimelineEpoch = null;
     this.activeAudioTimelineEpoch = null;
     this.parsedVideoConfig = null;
@@ -281,14 +297,22 @@ export class WebCodecsPlayer {
       // them. Segment bytes and HLS timing metadata remain untouched.
       pLoader: createAdFilteringPlaylistLoader(
         this.adFilterSource,
-        !this.liveHint
+        !this.liveHint,
+        (reason) => {
+          if (this.destroyed || generation !== this.loadGeneration) return;
+          this.debugStats.lastError = `blocked-live-ad:${reason}`;
+          this.recordDiagnostic('live-ad-blocked', { reason });
+          this.fail('检测到直播广告信号，已阻止播放并准备切换同频道备线');
+        }
       ),
       lowLatencyMode: false,
       autoStartLoad: true,
       startPosition: this.liveHint ? -1 : startAt,
-      maxBufferLength: this.liveHint ? 24 : 24,
-      maxMaxBufferLength: this.liveHint ? 48 : 48,
-      backBufferLength: this.liveHint ? 8 : 8,
+      // Live stays close to the edge; VOD keeps a longer reserve for mobile
+      // network jitter. The decoded queues remain separately bounded below.
+      maxBufferLength: this.liveHint ? 12 : 30,
+      maxMaxBufferLength: this.liveHint ? 24 : 45,
+      backBufferLength: this.liveHint ? 6 : 8,
       liveSyncDurationCount: this.liveHint ? 3 : undefined,
       liveMaxLatencyDurationCount: this.liveHint ? 10 : undefined,
       maxLiveSyncPlaybackRate: this.liveHint ? 1.03 : 1,
@@ -317,9 +341,9 @@ export class WebCodecsPlayer {
       const details = data.details;
       this.isLivePlaylist = Boolean(details?.live);
       if (this.hls?.config && this.isLivePlaylist) {
-        this.hls.config.maxBufferLength = 24;
-        this.hls.config.maxMaxBufferLength = 48;
-        this.hls.config.backBufferLength = 8;
+        this.hls.config.maxBufferLength = this.isLivePlaylist ? 12 : 30;
+        this.hls.config.maxMaxBufferLength = this.isLivePlaylist ? 24 : 45;
+        this.hls.config.backBufferLength = this.isLivePlaylist ? 6 : 8;
       }
       this.debugStats.hlsState = 'level-loaded';
       this.debugStats.currentLevel = data.level;
@@ -406,6 +430,11 @@ export class WebCodecsPlayer {
       if (this.destroyed || generation !== this.loadGeneration) return;
       console.warn('[WebCodecsPlayer] HLS ERROR:', data.type, data.details);
       this.debugStats.lastError = data.details || data.type;
+      this.recordDiagnostic('hls-error', {
+        errorType: data.type,
+        details: data.details,
+        fatal: Boolean(data.fatal),
+      });
       if (!data.fatal) return;
 
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -1774,6 +1803,14 @@ export class WebCodecsPlayer {
     let scheduled = 0;
     const maxChunks = this.isLivePlaylist ? 6 : this.playbackRate === 1 ? 8 : 4;
     while (this.decodedAudio.length && scheduled < maxChunks) {
+      // Re-check on every batch. A single pump may enqueue several hundred ms;
+      // checking only before the loop lets the audio graph grow in bursts.
+      const loopNow = this.audioCtx.currentTime;
+      if (
+        this.nextAudioStartTime !== 0 &&
+        this.nextAudioStartTime - loopNow > maxLeadSec
+      )
+        break;
       const head = this.decodedAudio[0];
       const sampleRate = head.sampleRate;
       const channels = head.numberOfChannels;
@@ -1819,6 +1856,10 @@ export class WebCodecsPlayer {
           }
           this.activeSources.clear();
           this.nextAudioStartTime = 0;
+          this.recordDiagnostic('audio-timeline-reset', {
+            audioPtsSec: headTs,
+            scheduleDriftMs: Math.round(driftSec * 1000),
+          });
           when = Math.max(idealWhen, scheduleFloor);
         } else {
           when = Math.max(this.nextAudioStartTime, scheduleFloor);
@@ -1832,11 +1873,32 @@ export class WebCodecsPlayer {
         let writeOffset = 0;
         for (const frame of batchFrames) {
           for (let channel = 0; channel < channels; channel++) {
-            const dest = new Float32Array(frame.numberOfFrames);
-            frame.copyTo(dest, { planeIndex: channel, format: 'f32-planar' });
-            buffer.copyToChannel(dest, channel, writeOffset);
+            // Write into AudioBuffer storage directly. The old temporary plane
+            // allocation happened for every AAC frame/channel and produced a
+            // repeating GC pause during long VOD playback.
+            const plane = buffer
+              .getChannelData(channel)
+              .subarray(writeOffset, writeOffset + frame.numberOfFrames);
+            frame.copyTo(plane, {
+              planeIndex: channel,
+              format: 'f32-planar',
+            });
           }
           writeOffset += frame.numberOfFrames;
+        }
+        for (let channel = 0; channel < channels; channel++) {
+          const quality = sanitizePcmPlaneInPlace(
+            buffer.getChannelData(channel)
+          );
+          this.invalidAudioSamples += quality.invalidSamples;
+          this.clippedAudioSamples += quality.clippedSamples;
+          if (quality.invalidSamples || quality.clippedSamples) {
+            this.recordDiagnostic('audio-sample-repaired', {
+              invalidSamples: quality.invalidSamples,
+              clippedSamples: quality.clippedSamples,
+              peak: Number(quality.peak.toFixed(3)),
+            });
+          }
         }
       } finally {
         for (const frame of batchFrames) frame.close();
@@ -1892,6 +1954,10 @@ export class WebCodecsPlayer {
       toDraw.close();
       this.renderedFrames++;
       this.lastRenderedAtMs = performance.now();
+      if (this.lastRenderedAtMs - this.lastVideoTimeReportMs >= 100) {
+        this.lastVideoTimeReportMs = this.lastRenderedAtMs;
+        this.cb.onVideoTime?.(this.lastRenderedMediaTime);
+      }
     }
   }
 
@@ -1931,6 +1997,10 @@ export class WebCodecsPlayer {
   private resetClockForAvDrift() {
     const now = performance.now();
     this.avSyncCorrections++;
+    this.recordDiagnostic('av-sync-correction', {
+      driftMs: Math.round(this.lastAvDriftSec * 1000),
+      live: this.isLivePlaylist,
+    });
 
     for (const source of this.activeSources) {
       try {
@@ -2264,10 +2334,36 @@ export class WebCodecsPlayer {
       videoDecoderRecoveries: this.videoDecoderRecoveryCount,
       avDriftMs: Math.round(this.lastAvDriftSec * 1000),
       avSyncCorrections: this.avSyncCorrections,
+      presentedVideoSec: +this.lastRenderedMediaTime.toFixed(3),
+      invalidAudioSamples: this.invalidAudioSamples,
+      clippedAudioSamples: this.clippedAudioSamples,
       fragmentDuplicateDrops: this.debugStats.fragmentDuplicateDrops,
       fragmentStaleDrops: this.debugStats.fragmentStaleDrops,
       lastRecoveryReason: this.debugStats.lastRecoveryReason,
+      diagnosticEvents: this.debugStats.diagnosticEvents.slice(-20),
     };
+  }
+
+  private recordDiagnostic(type: string, detail?: Record<string, unknown>) {
+    const monotonicNow = performance.now();
+    const lastAt = this.diagnosticLastAt.get(type) || 0;
+    if (monotonicNow - lastAt < 2000) return;
+    this.diagnosticLastAt.set(type, monotonicNow);
+    const event = {
+      at: new Date().toISOString(),
+      type,
+      mediaPtsSec: Number(this.getMediaTime().toFixed(3)),
+      videoPtsSec: Number(this.lastRenderedMediaTime.toFixed(3)),
+      detail,
+    };
+    this.debugStats.diagnosticEvents.push(event);
+    if (this.debugStats.diagnosticEvents.length > 40) {
+      this.debugStats.diagnosticEvents.splice(
+        0,
+        this.debugStats.diagnosticEvents.length - 40
+      );
+    }
+    console.warn('[TeslaPlaybackDiagnostic]', event);
   }
 
   private setState(s: PlayerState) {

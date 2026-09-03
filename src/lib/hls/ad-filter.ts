@@ -3,6 +3,7 @@
 import Hls from 'hls.js';
 
 import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
+import { detectExplicitLiveAdSignal } from './ad-filter-core';
 
 interface ConfiguredAdFilterResponse {
   code?: string;
@@ -96,7 +97,8 @@ export function resolveAdFilterSourceKey(
 
 export function createAdFilteringPlaylistLoader(
   sourceKey?: string,
-  assumeVod = false
+  assumeVod = false,
+  onLiveAdBlocked?: (reason: string) => void
 ) {
   const BaseLoader = (Hls as any).DefaultConfig?.loader;
   if (!BaseLoader) return undefined;
@@ -130,6 +132,22 @@ export function createAdFilteringPlaylistLoader(
             if (finished) return;
             finished = true;
             if (typeof response?.data === 'string') {
+              const liveAdReason = assumeVod
+                ? null
+                : detectExplicitLiveAdSignal(response.data);
+              if (liveAdReason) {
+                onLiveAdBlocked?.(liveAdReason);
+                callbacks.onError?.(
+                  {
+                    code: 451,
+                    text: `blocked-live-ad:${liveAdReason}`,
+                  },
+                  currentContext,
+                  networkDetails,
+                  stats
+                );
+                return;
+              }
               response.data = applyConfiguredAdFilterSafely(
                 resolveAdFilterSourceKey(
                   sourceKey,

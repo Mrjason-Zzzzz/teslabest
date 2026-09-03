@@ -53,6 +53,31 @@ export function createStableLiveChannelId(
   return `${sourceKey}-${stableHash(identity)}`;
 }
 
+export function getLogicalLiveChannelKey(channel: LiveChannelIdentity) {
+  const tvgId = normalizeLiveChannelText(channel.tvgId);
+  if (tvgId) return `tvg:${tvgId}`;
+  return `name:${normalizeLiveChannelText(
+    channel.name
+  )}|group:${normalizeLiveChannelText(channel.group)}`;
+}
+
+export function groupLiveChannelVariants<T extends LiveChannelIdentity>(
+  channels: T[]
+) {
+  const groups = new Map<string, T[]>();
+  for (const channel of channels) {
+    const key = getLogicalLiveChannelKey(channel);
+    const variants = groups.get(key) || [];
+    variants.push(channel);
+    groups.set(key, variants);
+  }
+  return Array.from(groups, ([key, variants]) => ({
+    key,
+    primary: variants[0],
+    variants,
+  }));
+}
+
 export function isLivePlaylistPlaceholder(channel: LiveChannelIdentity) {
   const group = normalizeLiveChannelText(channel.group);
   const name = String(channel.name || '').trim();

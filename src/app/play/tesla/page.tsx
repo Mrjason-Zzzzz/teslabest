@@ -825,7 +825,7 @@ function TeslaPlayPageInner() {
             {/* 左侧：播放器 + 详情 */}
             <div className='min-w-0 rounded-xl border border-white/0 transition-all duration-300 ease-in-out dark:border-white/30'>
               {/* 播放器容器 */}
-              <div className='relative mt-2 aspect-[16/8.6] w-full min-h-[260px] max-h-[82vh] md:min-h-[320px]'>
+              <div className='relative mt-2 aspect-video w-full min-h-[340px] max-h-[84vh] md:min-h-[440px] xl:min-h-[520px]'>
                 <div className='h-full w-full overflow-hidden rounded-xl bg-black shadow-lg'>
                   {isLoading && loadingStage !== 'error' && (
                     <div className='absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900'>

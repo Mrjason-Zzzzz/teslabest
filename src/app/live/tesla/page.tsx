@@ -21,7 +21,11 @@ import {
 } from 'react';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
-import { findSameLiveChannel } from '@/lib/tesla/live-channel-identity';
+import {
+  findSameLiveChannel,
+  getLogicalLiveChannelKey,
+  groupLiveChannelVariants,
+} from '@/lib/tesla/live-channel-identity';
 
 interface LiveSource {
   key: string;
@@ -86,9 +90,11 @@ function TeslaLivePageInner() {
   const [playbackNotice, setPlaybackNotice] = useState('');
   const [playbackIssue, setPlaybackIssue] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
+  const [expandedChannelKey, setExpandedChannelKey] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const channelCacheRef = useRef(new Map<string, LiveChannel[]>());
+  const failedChannelLinesRef = useRef(new Set<string>());
   const preferredChannelRef = useRef<{
     id?: string;
     tvgId?: string;
@@ -261,6 +267,11 @@ function TeslaLivePageInner() {
     });
   }, [channels, searchKeyword, activeGroup]);
 
+  const groupedChannels = useMemo(
+    () => groupLiveChannelVariants(filteredChannels),
+    [filteredChannels]
+  );
+
   const syncUrl = useCallback((source: LiveSource, channel: LiveChannel) => {
     const params = new URLSearchParams(window.location.search);
     params.set('source', source.key);
@@ -275,6 +286,7 @@ function TeslaLivePageInner() {
   const selectChannel = useCallback(
     (channel: LiveChannel) => {
       if (!currentSource) return;
+      failedChannelLinesRef.current.clear();
       preferredChannelRef.current = {
         id: channel.id,
         tvgId: channel.tvgId,
@@ -304,12 +316,41 @@ function TeslaLivePageInner() {
     [currentChannel]
   );
 
-  const handlePlaybackError = useCallback((message: string) => {
-    setPlaybackIssue(true);
-    setPlaybackNotice(
-      `当前源暂时无法播放：${message}。请重试当前源，或手动选择其他直播源。`
-    );
-  }, []);
+  const handlePlaybackError = useCallback(
+    (message: string) => {
+      if (currentSource && currentChannel) {
+        failedChannelLinesRef.current.add(currentChannel.id);
+        const logicalKey = getLogicalLiveChannelKey(currentChannel);
+        const alternative = channels.find(
+          (channel) =>
+            getLogicalLiveChannelKey(channel) === logicalKey &&
+            !failedChannelLinesRef.current.has(channel.id)
+        );
+        if (alternative) {
+          preferredChannelRef.current = {
+            id: alternative.id,
+            tvgId: alternative.tvgId,
+            name: alternative.name,
+            group: alternative.group,
+            url: alternative.url,
+          };
+          setPlaybackIssue(false);
+          setPlaybackNotice(
+            `线路异常（${message}），正在切换 ${currentChannel.name} 的同频道备线…`
+          );
+          setCurrentChannel(alternative);
+          setPlaybackAttempt((attempt) => attempt + 1);
+          syncUrl(currentSource, alternative);
+          return;
+        }
+      }
+      setPlaybackIssue(true);
+      setPlaybackNotice(
+        `当前频道的可用线路均播放失败：${message}。不会跳转到其他频道。`
+      );
+    },
+    [channels, currentChannel, currentSource, syncUrl]
+  );
 
   const retryCurrentPlayback = useCallback(() => {
     if (!currentSource || !currentChannel) return;
@@ -534,31 +575,76 @@ function TeslaLivePageInner() {
                   <div className='flex items-center justify-center gap-2 py-10 text-sm text-white/50'>
                     <Loader2 className='h-5 w-5 animate-spin' /> 加载频道…
                   </div>
-                ) : filteredChannels.length === 0 ? (
+                ) : groupedChannels.length === 0 ? (
                   <div className='py-10 text-center text-sm text-white/40'>
                     没有匹配频道
                   </div>
                 ) : (
                   <div className='grid grid-cols-2 gap-2'>
-                    {filteredChannels.map((channel) => (
-                      <button
-                        key={channel.id}
-                        type='button'
-                        onClick={() => selectChannel(channel)}
-                        className={`min-h-16 rounded-xl border px-3 py-3 text-left text-sm leading-5 transition active:scale-[0.98] ${
-                          currentChannel?.id === channel.id
-                            ? 'border-violet-400 bg-violet-500/20 text-white'
-                            : 'border-white/10 bg-white/5 text-white/65'
-                        }`}
-                      >
-                        <span className='line-clamp-2 break-words font-medium'>
-                          {channel.name}
-                        </span>
-                        <span className='mt-1 block truncate text-[11px] text-white/30'>
-                          {channel.group || '直播频道'}
-                        </span>
-                      </button>
-                    ))}
+                    {groupedChannels.map((channelGroup) => {
+                      const selectedVariant = channelGroup.variants.find(
+                        (item) => item.id === currentChannel?.id
+                      );
+                      const representative =
+                        selectedVariant || channelGroup.primary;
+                      const expanded = expandedChannelKey === channelGroup.key;
+                      return (
+                        <div
+                          key={channelGroup.key}
+                          className={`rounded-xl border p-1 ${
+                            selectedVariant
+                              ? 'border-violet-400 bg-violet-500/15'
+                              : 'border-white/10 bg-white/5'
+                          }`}
+                        >
+                          <button
+                            type='button'
+                            onClick={() => selectChannel(representative)}
+                            className='min-h-14 w-full rounded-lg px-2 py-2 text-left text-sm leading-5 text-white/75 active:scale-[0.98]'
+                          >
+                            <span className='line-clamp-2 break-words font-medium text-white'>
+                              {representative.name}
+                            </span>
+                            <span className='mt-1 block truncate text-[11px] text-white/35'>
+                              {representative.group || '直播频道'}
+                            </span>
+                          </button>
+                          {channelGroup.variants.length > 1 && (
+                            <button
+                              type='button'
+                              className='min-h-11 w-full rounded-lg bg-white/10 text-xs text-violet-200 active:scale-95'
+                              onClick={() =>
+                                setExpandedChannelKey(
+                                  expanded ? '' : channelGroup.key
+                                )
+                              }
+                            >
+                              {expanded
+                                ? '收起线路'
+                                : `${channelGroup.variants.length} 条线路`}
+                            </button>
+                          )}
+                          {expanded && (
+                            <div className='mt-1 grid gap-1'>
+                              {channelGroup.variants.map((variant, index) => (
+                                <button
+                                  key={variant.id}
+                                  type='button'
+                                  onClick={() => selectChannel(variant)}
+                                  className={`min-h-11 rounded-lg px-2 text-left text-xs ${
+                                    currentChannel?.id === variant.id
+                                      ? 'bg-violet-500 text-white'
+                                      : 'bg-black/25 text-white/60'
+                                  }`}
+                                >
+                                  线路 {index + 1}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

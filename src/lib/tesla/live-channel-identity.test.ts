@@ -1,6 +1,7 @@
 import {
   createStableLiveChannelId,
   findSameLiveChannel,
+  groupLiveChannelVariants,
   isLivePlaylistPlaceholder,
   isSuspiciousLiveRedirect,
 } from './live-channel-identity';
@@ -96,5 +97,15 @@ describe('Tesla live channel identity', () => {
         cctv6
       )
     ).toBe(true);
+  });
+
+  test('merges same logical channel for display without deleting its lines', () => {
+    const grouped = groupLiveChannelVariants([
+      { id: 'one', tvgId: 'CCTV6', name: 'CCTV-6', url: 'https://a/live' },
+      { id: 'two', tvgId: 'cctv6', name: 'CCTV6电影', url: 'https://b/live' },
+      { id: 'three', tvgId: 'CCTV7', name: 'CCTV-7', url: 'https://c/live' },
+    ]);
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0].variants.map((item) => item.id)).toEqual(['one', 'two']);
   });
 });

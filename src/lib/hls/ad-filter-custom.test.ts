@@ -1,4 +1,5 @@
 import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
+import { detectExplicitLiveAdSignal } from './ad-filter-core';
 
 const VOD_PLAYLIST = `#EXTM3U
 #EXT-X-VERSION:3
@@ -12,6 +13,13 @@ https://media.example.com/program-2.ts
 #EXT-X-ENDLIST`;
 
 describe('applyConfiguredAdFilterSafely', () => {
+  it('直播滑动窗口只识别明确广告信号，不重写媒体序号', () => {
+    const live = `#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:21\n#EXT-X-CUE-OUT:30\n#EXTINF:6,\nad/segment.ts`;
+    expect(detectExplicitLiveAdSignal(live)).toBe('cue-out');
+    expect(
+      detectExplicitLiveAdSignal('#EXTM3U\n#EXTINF:6,\nmain/21.ts')
+    ).toBeNull();
+  });
   it('将自定义规则限制为完整分片删除并保留时间轴边界', () => {
     const customCode = `
       function filterAdsFromM3U8(type, m3u8Content) {
