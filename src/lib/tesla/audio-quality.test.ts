@@ -1,4 +1,7 @@
-import { sanitizePcmPlaneInPlace } from './audio-quality';
+import {
+  sanitizePcmPlaneInPlace,
+  suppressIsolatedPcmImpulsesInPlace,
+} from './audio-quality';
 
 describe('sanitizePcmPlaneInPlace', () => {
   it('repairs only invalid or out-of-range samples', () => {
@@ -19,5 +22,26 @@ describe('sanitizePcmPlaneInPlace', () => {
     expect(Array.from(samples)).toEqual(before);
     expect(result.invalidSamples).toBe(0);
     expect(result.clippedSamples).toBe(0);
+  });
+});
+
+describe('suppressIsolatedPcmImpulsesInPlace', () => {
+  test('repairs an isolated full-scale click without changing array length', () => {
+    const samples = new Float32Array([0.02, 1, 0.01, 0.2]);
+    const result = suppressIsolatedPcmImpulsesInPlace(samples);
+    expect(result.repairedImpulses).toBe(1);
+    expect(samples).toHaveLength(4);
+    expect(samples[1]).toBeCloseTo(0.015, 3);
+  });
+
+  test('preserves sustained loud programme audio', () => {
+    const samples = new Float32Array([0.8, 1, 0.75]);
+    const result = suppressIsolatedPcmImpulsesInPlace(samples);
+    expect(result.repairedImpulses).toBe(0);
+    expect(Array.from(samples)).toEqual([
+      expect.closeTo(0.8, 5),
+      1,
+      expect.closeTo(0.75, 5),
+    ]);
   });
 });

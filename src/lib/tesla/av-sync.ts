@@ -125,6 +125,26 @@ export function shouldResetAudioSchedule(
   return Math.abs(driftSec) >= getTeslaAvSyncPolicy(live).audioScheduleResetSec;
 }
 
+export function shouldRebaseLiveFragmentPts(
+  normalizedPtsSec: number,
+  fragmentStartSec: number,
+  fragmentDurationSec: number,
+  toleranceSec = 2
+): boolean {
+  if (
+    !Number.isFinite(normalizedPtsSec) ||
+    !Number.isFinite(fragmentStartSec) ||
+    !Number.isFinite(fragmentDurationSec)
+  )
+    return false;
+  const tolerance = Math.max(0.25, toleranceSec);
+  return (
+    normalizedPtsSec < fragmentStartSec - tolerance ||
+    normalizedPtsSec >
+      fragmentStartSec + Math.max(0, fragmentDurationSec) + tolerance
+  );
+}
+
 export function chooseCommonAvStart(
   requestedStart: number,
   firstVideoSec: number,

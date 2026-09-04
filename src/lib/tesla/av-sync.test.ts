@@ -4,6 +4,7 @@ import {
   hasFutureVideoFrame,
   hasScheduledAudioCoverage,
   shouldContinueAudioPts,
+  shouldRebaseLiveFragmentPts,
   shouldResetAudioSchedule,
 } from './av-sync';
 
@@ -67,5 +68,17 @@ describe('Tesla live A/V sync guard', () => {
     const policy = getTeslaAvSyncPolicy(false, 1, true);
     expect(policy.avDriftConfirmMs).toBeGreaterThanOrEqual(600);
     expect(policy.avDriftResetSec).toBeLessThanOrEqual(0.32);
+  });
+});
+
+describe('live fragment PTS rebase', () => {
+  test('rebases an unmarked large timestamp reset', () => {
+    expect(shouldRebaseLiveFragmentPts(4, 104, 6)).toBe(true);
+    expect(shouldRebaseLiveFragmentPts(208, 104, 6)).toBe(true);
+  });
+
+  test('keeps ordinary PTS jitter and frame reordering', () => {
+    expect(shouldRebaseLiveFragmentPts(103.8, 104, 6)).toBe(false);
+    expect(shouldRebaseLiveFragmentPts(111.5, 104, 6)).toBe(false);
   });
 });

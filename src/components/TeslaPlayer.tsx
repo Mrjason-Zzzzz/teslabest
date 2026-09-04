@@ -30,6 +30,11 @@ import {
 
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import {
+  findAdSkipTarget,
+  resolveVerifiedAdSkipRanges,
+  toContentTimelineTime,
+} from '@/lib/tesla/ad-skip';
+import {
   bindTeslaMediaSession,
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
@@ -67,6 +72,8 @@ interface TeslaPlayerProps {
   quality?: string;
   onQualityChange?: (qualityId: string) => void;
   sourceKey?: string;
+  sourceName?: string;
+  contentTitle?: string;
   danmakuTitle?: string;
   danmakuYear?: string;
   danmakuEpisodeNumber?: number;
@@ -150,6 +157,8 @@ export default function TeslaPlayer({
   quality,
   onQualityChange,
   sourceKey,
+  sourceName,
+  contentTitle,
   danmakuTitle,
   danmakuYear,
   danmakuEpisodeNumber,
@@ -228,6 +237,34 @@ export default function TeslaPlayer({
   const [manualDanmakuEpisodeId, setManualDanmakuEpisodeId] = useState<
     number | null
   >(null);
+  const verifiedAdRanges = useMemo(
+    () =>
+      live
+        ? []
+        : resolveVerifiedAdSkipRanges({
+            sourceKey,
+            sourceName,
+            title: contentTitle || danmakuTitle || title,
+            episodeLabel: danmakuEpisodeLabel,
+          }),
+    [
+      contentTitle,
+      danmakuEpisodeLabel,
+      danmakuTitle,
+      live,
+      sourceKey,
+      sourceName,
+      title,
+    ]
+  );
+  const danmakuContentTime = useMemo(
+    () =>
+      toContentTimelineTime(
+        presentedVideoTime || currentTime,
+        verifiedAdRanges
+      ),
+    [currentTime, presentedVideoTime, verifiedAdRanges]
+  );
   const [danmakuChoices, setDanmakuChoices] = useState<TeslaDanmakuChoices>({
     programmes: [],
     episodes: [],
@@ -480,6 +517,8 @@ export default function TeslaPlayer({
         return;
       }
       void claimTeslaAudioFocus(title || 'Tesla 视频播放');
+      userPausedRef.current =
+        player.getState() === 'playing' || player.getState() === 'buffering';
       player.togglePlay();
     } else if (videoRef.current) {
       const v = videoRef.current;
@@ -587,8 +626,10 @@ export default function TeslaPlayer({
 
   useEffect(() => {
     playingRef.current = playing;
-    setTeslaMediaSessionState(playing ? 'playing' : 'paused');
-  }, [playing]);
+    setTeslaMediaSessionState(
+      playing || (buffering && !userPausedRef.current) ? 'playing' : 'paused'
+    );
+  }, [buffering, playing]);
 
   useEffect(() => {
     if (live) return;
@@ -609,6 +650,18 @@ export default function TeslaPlayer({
         onPrevious: live ? undefined : onPrevious,
         onNext: live ? undefined : onNext,
         onSeekTo: live ? undefined : seek,
+        onSeekBy: live
+          ? undefined
+          : (deltaSeconds) =>
+              seek(
+                Math.max(
+                  0,
+                  Math.min(
+                    durationRef.current || Number.MAX_SAFE_INTEGER,
+                    currentTimeRef.current + deltaSeconds
+                  )
+                )
+              ),
       }),
     [live, onNext, onPrevious, poster, seek, title, togglePlay]
   );
@@ -1197,12 +1250,27 @@ export default function TeslaPlayer({
         onVideoTime: (t) => {
           if (!destroyed) setPresentedVideoTime(t);
         },
+        resolveAdSkipTarget: (mediaPtsSec) =>
+          findAdSkipTarget(mediaPtsSec, verifiedAdRanges),
+        onAdSkip: (fromSec, toSec) => {
+          console.warn('[TeslaAdSkip]', {
+            sourceKey,
+            sourceName,
+            title: contentTitle || danmakuTitle || title,
+            episodeLabel: danmakuEpisodeLabel,
+            fromSec: Number(fromSec.toFixed(3)),
+            toSec: Number(toSec.toFixed(3)),
+            removedSec: Number((toSec - fromSec).toFixed(3)),
+          });
+          setReconnectMessage('已拦截广告片段，正在衔接正片…');
+        },
         onDurationChange: (d) => {
           if (!destroyed) setDuration(d);
         },
         onStateChange: (s) => {
           if (destroyed) return;
           if (s === 'playing') {
+            userPausedRef.current = false;
             const session = getTeslaAudioSession();
             const audioActive = wcPlayerRef.current?.isAudioActive() ?? false;
             const shouldBeMuted = session.muted || !session.unlocked;
@@ -1343,7 +1411,19 @@ export default function TeslaPlayer({
     // Player instances are rebuilt only when their source identity changes.
     // Callback/state dependencies here would tear down the decoder mid-play.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, mode, live, playbackSession, sourceKey, resolveLiveSource]);
+  }, [
+    url,
+    mode,
+    live,
+    playbackSession,
+    sourceKey,
+    sourceName,
+    contentTitle,
+    danmakuTitle,
+    danmakuEpisodeLabel,
+    resolveLiveSource,
+    verifiedAdRanges,
+  ]);
 
   useEffect(() => {
     wcPlayerRef.current?.setShowDebug(showDebug);
@@ -1409,7 +1489,11 @@ export default function TeslaPlayer({
           episodeLabel={danmakuEpisodeLabel}
           mediaType={danmakuMediaType}
           totalEpisodes={danmakuTotalEpisodes}
-          currentTime={presentedVideoTime || currentTime}
+          currentTime={danmakuContentTime}
+          mediaTime={presentedVideoTime || currentTime}
+          timelineOffsetSec={
+            (presentedVideoTime || currentTime) - danmakuContentTime
+          }
           playing={playing}
           laneCount={danmakuRows}
           speed={danmakuSpeed}
@@ -1517,7 +1601,7 @@ export default function TeslaPlayer({
       )}
 
       {/* 暂停播放按钮 */}
-      {!loading && !playing && !error && (
+      {!loading && !buffering && !playing && !error && (
         <div className='absolute inset-0 flex items-center justify-center pointer-events-none z-10'>
           <button
             type='button'

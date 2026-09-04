@@ -873,6 +873,10 @@ function TeslaPlayPageInner() {
                           poster={currentDetail.poster}
                           live={false}
                           sourceKey={currentDetail.source}
+                          sourceName={currentDetail.source_name}
+                          contentTitle={
+                            initialTitle || currentDetail.title || ''
+                          }
                           onEnded={handlePlayEnded}
                           onPrevious={
                             currentEpisodeIndex > 0

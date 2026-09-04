@@ -60,6 +60,8 @@ interface TeslaDanmakuOverlayProps {
   mediaType?: 'movie' | 'tv';
   totalEpisodes?: number;
   currentTime: number;
+  mediaTime?: number;
+  timelineOffsetSec?: number;
   playing: boolean;
   laneCount?: number;
   speed?: number;
@@ -93,6 +95,8 @@ export default function TeslaDanmakuOverlay({
   mediaType = 'tv',
   totalEpisodes = 0,
   currentTime,
+  mediaTime = currentTime,
+  timelineOffsetSec = 0,
   playing,
   laneCount = 7,
   speed = 3,
@@ -113,6 +117,7 @@ export default function TeslaDanmakuOverlay({
   const sequenceRef = useRef(0);
   const commentCursorRef = useRef(0);
   const currentTimeRef = useRef(currentTime);
+  const lastTimingLogAtRef = useRef(0);
   currentTimeRef.current = currentTime;
 
   const safeLaneCount = Math.max(3, Math.min(8, Math.floor(laneCount || 7)));
@@ -426,11 +431,33 @@ export default function TeslaDanmakuOverlay({
           startedAt: currentTime,
         });
       });
+      if (
+        spawned.length > 0 &&
+        performance.now() - lastTimingLogAtRef.current >= 5000
+      ) {
+        lastTimingLogAtRef.current = performance.now();
+        console.debug('[TeslaDanmakuTiming]', {
+          videoPtsSec: Number(mediaTime.toFixed(3)),
+          rawDanmakuTimeSec: Number(due[0].time.toFixed(3)),
+          correctedRenderMediaPtsSec: Number(
+            (due[0].time + timelineOffsetSec).toFixed(3)
+          ),
+          timelineOffsetSec: Number(timelineOffsetSec.toFixed(3)),
+        });
+      }
       return [...stillVisible, ...spawned];
     });
 
     lastTimeRef.current = currentTime;
-  }, [animationDurationSec, comments, currentTime, enabled, safeLaneCount]);
+  }, [
+    animationDurationSec,
+    comments,
+    currentTime,
+    enabled,
+    mediaTime,
+    safeLaneCount,
+    timelineOffsetSec,
+  ]);
 
   const visibleComments = useMemo(
     () => (enabled ? activeComments : []),

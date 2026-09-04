@@ -6,7 +6,10 @@ import * as muxjs from 'mux.js';
 
 import { createAdFilteringPlaylistLoader } from '@/lib/hls/ad-filter';
 import { selectContiguousAudioBatch } from '@/lib/tesla/audio-batch';
-import { sanitizePcmPlaneInPlace } from '@/lib/tesla/audio-quality';
+import {
+  sanitizePcmPlaneInPlace,
+  suppressIsolatedPcmImpulsesInPlace,
+} from '@/lib/tesla/audio-quality';
 import {
   claimTeslaAudioFocus,
   deferTeslaAudioFocusRelease,
@@ -19,6 +22,7 @@ import {
   hasFutureVideoFrame,
   hasScheduledAudioCoverage,
   shouldContinueAudioPts,
+  shouldRebaseLiveFragmentPts,
   shouldResetAudioSchedule,
 } from '@/lib/tesla/av-sync';
 import {
@@ -43,6 +47,9 @@ export interface PlayerCallbacks {
   onStateChange?: (state: PlayerState) => void;
   onFirstVideoFrame?: () => void;
   onError?: (message: string) => void;
+  /** Return the end PTS when this exact media PTS belongs to a verified ad. */
+  resolveAdSkipTarget?: (mediaPtsSec: number) => number | null;
+  onAdSkip?: (fromSec: number, toSec: number) => void;
   liveHint?: boolean;
   adFilterSource?: string;
   resolveLiveSource?: () => Promise<string | undefined>;
@@ -105,6 +112,11 @@ export class WebCodecsPlayer {
   private lastHlsClockSyncMs = 0;
   private lastRenderedAtMs = 0;
   private lastAudioScheduledAtMs = 0;
+  private lastDecodedAudioPtsSec = 0;
+  private audioOutputRecoveries = 0;
+  private repairedAudioImpulses = 0;
+  private audioRecoveryInFlight = false;
+  private adSkipInFlight = false;
   private bufferingStartedAtMs = 0;
   private recoveryAttempts = 0;
   private pipelineRecoveryTimestamps: number[] = [];
@@ -119,6 +131,8 @@ export class WebCodecsPlayer {
   private audioRemainder = new Uint8Array(0);
   private nextAudioPtsSec: number | null = null;
   private fragmentTimelineStartSec: number | null = null;
+  private currentFragmentStartSec: number | null = null;
+  private currentFragmentDurationSec = 0;
   private fragmentTimelineOffsetSec: number | null = null;
   private fragmentContinuityCounter: number | null = null;
   private fragmentTimelineEpoch = 0;
@@ -173,6 +187,13 @@ export class WebCodecsPlayer {
     fragmentDuplicateDrops: 0,
     fragmentStaleDrops: 0,
     lastRecoveryReason: '',
+    sourceHost: '',
+    container: 'unknown',
+    variantSummary: [] as Array<{
+      bitrate: number;
+      videoCodec: string;
+      audioCodec: string;
+    }>,
     diagnosticEvents: [] as Array<{
       at: string;
       type: string;
@@ -219,6 +240,11 @@ export class WebCodecsPlayer {
     this.teardownAudioGraph();
     this.destroyed = false;
     this.sourceUrl = url;
+    try {
+      this.debugStats.sourceHost = new URL(url, window.location.href).host;
+    } catch {
+      this.debugStats.sourceHost = '';
+    }
     this.sourceKind = this.looksLikeMp4Url(url) ? 'mp4' : 'hls';
     this.useNativePitchPreservingAudio =
       this.sourceKind === 'hls' &&
@@ -234,12 +260,16 @@ export class WebCodecsPlayer {
     this.audioRemainder = new Uint8Array(0);
     this.nextAudioPtsSec = null;
     this.fragmentTimelineStartSec = null;
+    this.currentFragmentStartSec = null;
+    this.currentFragmentDurationSec = 0;
     this.fragmentTimelineOffsetSec = null;
     this.fragmentContinuityCounter = null;
     this.fragmentTimelineEpoch = 0;
     this.fragmentGuard.reset();
     this.debugStats.fragmentDuplicateDrops = 0;
     this.debugStats.fragmentStaleDrops = 0;
+    this.debugStats.container = 'unknown';
+    this.debugStats.variantSummary = [];
     this.debugStats.diagnosticEvents = [];
     this.diagnosticLastAt.clear();
     this.activeVideoTimelineEpoch = null;
@@ -250,6 +280,11 @@ export class WebCodecsPlayer {
     this.lastHlsClockSyncMs = 0;
     this.lastRenderedAtMs = performance.now();
     this.lastAudioScheduledAtMs = performance.now();
+    this.lastDecodedAudioPtsSec = 0;
+    this.audioOutputRecoveries = 0;
+    this.repairedAudioImpulses = 0;
+    this.audioRecoveryInFlight = false;
+    this.adSkipInFlight = false;
     this.bufferingStartedAtMs = performance.now();
     this.baseMediaTime = startAt;
     this.ctxStartTime = null;
@@ -330,6 +365,17 @@ export class WebCodecsPlayer {
       if (this.destroyed || generation !== this.loadGeneration) return;
       this.debugStats.hlsState = 'manifest-parsed';
       this.debugStats.levelCount = data.levels?.length || 0;
+      this.debugStats.variantSummary = (data.levels || []).map(
+        (level: any) => ({
+          bitrate: Number(level.bitrate || level.averageBitrate || 0),
+          videoCodec: String(level.videoCodec || level.codecs || ''),
+          audioCodec: String(level.audioCodec || ''),
+        })
+      );
+      this.recordDiagnostic('stream-manifest', {
+        sourceHost: this.debugStats.sourceHost,
+        variants: this.debugStats.variantSummary,
+      });
       console.log(
         '[WebCodecsPlayer] MANIFEST_PARSED, levels:',
         data.levels?.length
@@ -389,9 +435,18 @@ export class WebCodecsPlayer {
       if (!this.checkedTsContainer) {
         this.checkedTsContainer = true;
         if (!this.isTransportStreamPayload(bytes)) {
-          this.fail('当前直播线路不是 Tesla 播放所需的 H.264/AAC TS');
+          this.debugStats.container = this.detectContainerLabel(bytes);
+          this.recordDiagnostic('unsupported-container', {
+            container: this.debugStats.container,
+            bytes: bytes.byteLength,
+            sourceHost: this.debugStats.sourceHost,
+          });
+          this.fail(
+            `当前线路封装为 ${this.debugStats.container}，Tesla 播放器仅支持 H.264/AAC MPEG-TS`
+          );
           return;
         }
+        this.debugStats.container = 'mpegts';
       }
       this.debugStats.bytesLoaded += bytes.byteLength;
       if (!this.prepareFragmentTimeline(frag, generation)) return;
@@ -434,6 +489,9 @@ export class WebCodecsPlayer {
         errorType: data.type,
         details: data.details,
         fatal: Boolean(data.fatal),
+        responseCode: data.response?.code,
+        responseText: data.response?.text,
+        sourceHost: this.debugStats.sourceHost,
       });
       if (!data.fatal) return;
 
@@ -515,6 +573,21 @@ export class WebCodecsPlayer {
     } catch {
       return /\.mp4(?:\?|$)/i.test(url) || /mime_type=video_mp4/i.test(url);
     }
+  }
+
+  private detectContainerLabel(bytes: Uint8Array): string {
+    if (bytes.length >= 8) {
+      const box = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+      if (box === 'ftyp' || box === 'styp' || box === 'moof') return 'fMP4';
+    }
+    if (
+      bytes.length >= 3 &&
+      bytes[0] === 0x46 &&
+      bytes[1] === 0x4c &&
+      bytes[2] === 0x56
+    )
+      return 'FLV';
+    return '未知封装';
   }
 
   /**
@@ -844,6 +917,10 @@ export class WebCodecsPlayer {
       hasCC &&
       this.fragmentContinuityCounter !== null &&
       cc > this.fragmentContinuityCounter;
+    this.currentFragmentStartSec = hasStart ? start : null;
+    this.currentFragmentDurationSec = Number.isFinite(Number(frag?.duration))
+      ? Math.max(0, Number(frag.duration))
+      : 0;
 
     if (this.fragmentTimelineOffsetSec === null || continuityChanged) {
       this.fragmentTimelineStartSec = hasStart ? start : null;
@@ -878,7 +955,31 @@ export class WebCodecsPlayer {
       this.fragmentTimelineOffsetSec =
         this.fragmentTimelineStartSec - rawPtsSec;
     }
-    return rawPtsSec + (this.fragmentTimelineOffsetSec || 0);
+    let normalized = rawPtsSec + (this.fragmentTimelineOffsetSec || 0);
+    // Huya-style streams can reset MPEG-TS PTS without increasing the HLS
+    // continuity counter. Re-anchor both tracks to the declared fragment time
+    // only when the PTS falls outside that fragment by a proven wide margin.
+    if (
+      this.isLivePlaylist &&
+      this.currentFragmentStartSec !== null &&
+      shouldRebaseLiveFragmentPts(
+        normalized,
+        this.currentFragmentStartSec,
+        this.currentFragmentDurationSec
+      )
+    ) {
+      const previousOffset = this.fragmentTimelineOffsetSec || 0;
+      this.fragmentTimelineOffsetSec = this.currentFragmentStartSec - rawPtsSec;
+      normalized = rawPtsSec + this.fragmentTimelineOffsetSec;
+      this.nextAudioPtsSec = null;
+      this.recordDiagnostic('unmarked-live-pts-rebase', {
+        rawPtsSec: Number(rawPtsSec.toFixed(3)),
+        fragmentStartSec: Number(this.currentFragmentStartSec.toFixed(3)),
+        previousOffsetSec: Number(previousOffset.toFixed(3)),
+        nextOffsetSec: Number(this.fragmentTimelineOffsetSec.toFixed(3)),
+      });
+    }
+    return normalized;
   }
 
   private feedTsData(data: Uint8Array, generation = this.loadGeneration) {
@@ -964,13 +1065,24 @@ export class WebCodecsPlayer {
     const extracted = this.extractAdtsFrames(combined);
     this.audioRemainder = extracted.remainder;
 
-    let framePts = shouldContinueAudioPts(
+    const continuesAudioPts = shouldContinueAudioPts(
       pesPts,
       this.nextAudioPtsSec,
       this.isLivePlaylist
-    )
-      ? this.nextAudioPtsSec
-      : pesPts;
+    );
+    if (
+      this.nextAudioPtsSec !== null &&
+      !continuesAudioPts &&
+      Math.abs(pesPts - this.nextAudioPtsSec) >
+        getTeslaAvSyncPolicy(this.isLivePlaylist).audioPtsContinuitySec
+    ) {
+      this.recordDiagnostic('audio-pts-discontinuity', {
+        pesPtsSec: Number(pesPts.toFixed(3)),
+        expectedPtsSec: Number(this.nextAudioPtsSec.toFixed(3)),
+        deltaMs: Math.round((pesPts - this.nextAudioPtsSec) * 1000),
+      });
+    }
+    let framePts = continuesAudioPts ? this.nextAudioPtsSec : pesPts;
 
     for (const frame of extracted.frames) {
       const adts = this.parseAdts(frame);
@@ -1045,11 +1157,18 @@ export class WebCodecsPlayer {
           data.close();
           return;
         }
+        this.lastDecodedAudioPtsSec = data.timestamp / 1e6;
         this.decodedAudio.push(data);
       },
       error: (e) => {
-        if (generation === this.loadGeneration)
-          this.fail('audio decoder: ' + e.message);
+        if (generation === this.loadGeneration) {
+          this.recordDiagnostic('audio-decoder-error', {
+            message: e.message,
+            audioQueue: this.decodedAudio.length,
+            encodedAudioQueue: this.encodedAudio.length - this.aIdx,
+          });
+          this.rebuildAudioDecoderForBoundary(this.audioConfig);
+        }
       },
     });
     this.audioDecoder = decoder;
@@ -1245,6 +1364,9 @@ export class WebCodecsPlayer {
         if (this.getCurrentAvDriftAction(clock) === 'none') {
           this.scheduleAudio();
         }
+        // This timer continues when Tesla throttles requestAnimationFrame.
+        // Detect and refill a measured WebAudio underrun here as well as in RAF.
+        this.maybeRecoverAudioOutput();
       } catch (error) {
         console.warn('[WebCodecsPlayer] audio scheduler error:', error);
       }
@@ -1269,6 +1391,15 @@ export class WebCodecsPlayer {
         this.drawFirstFrame();
       } else {
         const clock = this.getMediaTime();
+        const adSkipTarget = this.cb.resolveAdSkipTarget?.(clock);
+        if (
+          !this.isLivePlaylist &&
+          Number.isFinite(adSkipTarget) &&
+          Number(adSkipTarget) > clock
+        ) {
+          this.requestVerifiedAdSkip(clock, Number(adSkipTarget));
+          return;
+        }
         this.presentVideo(clock);
         const driftAction = this.getCurrentAvDriftAction(clock);
         if (driftAction === 'reset-clock') {
@@ -1276,6 +1407,7 @@ export class WebCodecsPlayer {
           return;
         }
         if (driftAction === 'none') this.scheduleAudio();
+        this.maybeRecoverAudioOutput();
         this.reportTime(clock);
         this.maybeReportEnded(clock);
         this.maybeEnterBuffering();
@@ -1815,6 +1947,17 @@ export class WebCodecsPlayer {
       const sampleRate = head.sampleRate;
       const channels = head.numberOfChannels;
       const headTs = head.timestamp / 1e6;
+      // Do not enqueue even a fraction of a verified baked-in ad into WebAudio.
+      // The media clock will reach the boundary and requestVerifiedAdSkip will
+      // rebuild both tracks at the same target PTS.
+      const headAdSkipTarget = this.cb.resolveAdSkipTarget?.(headTs);
+      if (
+        !this.isLivePlaylist &&
+        Number.isFinite(headAdSkipTarget) &&
+        Number(headAdSkipTarget) > headTs
+      ) {
+        break;
+      }
       const batchSelection = selectContiguousAudioBatch(
         this.decodedAudio,
         this.isLivePlaylist ? 0.13 : 0.2
@@ -1887,9 +2030,8 @@ export class WebCodecsPlayer {
           writeOffset += frame.numberOfFrames;
         }
         for (let channel = 0; channel < channels; channel++) {
-          const quality = sanitizePcmPlaneInPlace(
-            buffer.getChannelData(channel)
-          );
+          const channelData = buffer.getChannelData(channel);
+          const quality = sanitizePcmPlaneInPlace(channelData);
           this.invalidAudioSamples += quality.invalidSamples;
           this.clippedAudioSamples += quality.clippedSamples;
           if (quality.invalidSamples || quality.clippedSamples) {
@@ -1898,6 +2040,17 @@ export class WebCodecsPlayer {
               clippedSamples: quality.clippedSamples,
               peak: Number(quality.peak.toFixed(3)),
             });
+          }
+          if (this.isLivePlaylist) {
+            const impulseResult =
+              suppressIsolatedPcmImpulsesInPlace(channelData);
+            this.repairedAudioImpulses += impulseResult.repairedImpulses;
+            if (impulseResult.repairedImpulses > 0) {
+              this.recordDiagnostic('live-audio-impulse-repaired', {
+                repairedImpulses: impulseResult.repairedImpulses,
+                audioPtsSec: Number(headTs.toFixed(3)),
+              });
+            }
           }
         }
       } finally {
@@ -1949,7 +2102,19 @@ export class WebCodecsPlayer {
       toDraw = this.frameQueue.shift()!;
     }
     if (toDraw) {
-      this.lastRenderedMediaTime = toDraw.timestamp / 1e6;
+      const framePtsSec = toDraw.timestamp / 1e6;
+      const adSkipTarget = this.cb.resolveAdSkipTarget?.(framePtsSec);
+      if (
+        !this.isLivePlaylist &&
+        Number.isFinite(adSkipTarget) &&
+        Number(adSkipTarget) > framePtsSec
+      ) {
+        toDraw.close();
+        this.droppedFrames++;
+        this.requestVerifiedAdSkip(framePtsSec, Number(adSkipTarget));
+        return;
+      }
+      this.lastRenderedMediaTime = framePtsSec;
       this.drawFrameContained(toDraw);
       toDraw.close();
       this.renderedFrames++;
@@ -1959,6 +2124,81 @@ export class WebCodecsPlayer {
         this.cb.onVideoTime?.(this.lastRenderedMediaTime);
       }
     }
+  }
+
+  private requestVerifiedAdSkip(fromSec: number, toSec: number) {
+    if (this.adSkipInFlight || this.destroyed || !this.sourceUrl) return;
+    this.adSkipInFlight = true;
+    this.recordDiagnostic('verified-ad-skip', {
+      fromSec: Number(fromSec.toFixed(3)),
+      toSec: Number(toSec.toFixed(3)),
+      audioQueue: this.decodedAudio.length,
+    });
+    this.cb.onAdSkip?.(fromSec, toSec);
+    void this.seek(toSec + 0.03).finally(() => {
+      this.adSkipInFlight = false;
+    });
+  }
+
+  private maybeRecoverAudioOutput() {
+    if (
+      this.useNativePitchPreservingAudio ||
+      !this.wantPlaying ||
+      this.state !== 'playing' ||
+      this.ctxStartTime === null ||
+      !this.audioCtx ||
+      !this.gain ||
+      this.gain.gain.value <= 0 ||
+      this.audioRecoveryInFlight
+    )
+      return;
+
+    const now = this.audioCtx.currentTime;
+    const policy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
+    const hasCoverage = hasScheduledAudioCoverage(
+      this.nextAudioStartTime,
+      now,
+      policy.audioStartSafetySec
+    );
+    const hasQueuedAudio =
+      this.decodedAudio.length > 0 ||
+      (this.audioDecoder?.decodeQueueSize || 0) > 0 ||
+      this.aIdx < this.encodedAudio.length;
+    const contextSuspended = this.audioCtx.state !== 'running';
+    const schedulerMissed =
+      !hasCoverage &&
+      hasQueuedAudio &&
+      performance.now() - this.lastAudioScheduledAtMs >= 180;
+    if (!contextSuspended && !schedulerMissed) return;
+
+    this.audioRecoveryInFlight = true;
+    this.audioOutputRecoveries++;
+    this.recordDiagnostic('audio-output-recovery', {
+      contextState: this.audioCtx.state,
+      audioLeadMs: Math.round((this.nextAudioStartTime - now) * 1000),
+      decodedAudioQueue: this.decodedAudio.length,
+      audioDecodeQueue: this.audioDecoder?.decodeQueueSize || 0,
+      encodedAudioQueue: this.encodedAudio.length - this.aIdx,
+      lastAudioPtsSec: Number(this.lastDecodedAudioPtsSec.toFixed(3)),
+    });
+    this.audioCtx
+      .resume()
+      .then(() => {
+        this.pumpAudio();
+        this.scheduleAudio();
+      })
+      .catch((error) => {
+        this.recordDiagnostic('audio-output-recovery-failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        this.audioRecoveryInFlight = false;
+      });
   }
 
   private getCurrentAvDriftAction(clock: number) {
@@ -1987,6 +2227,19 @@ export class WebCodecsPlayer {
       return 'none';
     }
     this.lastAvDriftSec = clock - this.lastRenderedMediaTime;
+    if (Math.abs(this.lastAvDriftSec) >= 0.08) {
+      this.recordDiagnostic('av-drift-observation', {
+        driftMs: Math.round(this.lastAvDriftSec * 1000),
+        audioQueue: this.decodedAudio.length,
+        videoQueue: this.frameQueue.length,
+        audioLeadMs: this.audioCtx
+          ? Math.round(
+              (this.nextAudioStartTime - this.audioCtx.currentTime) * 1000
+            )
+          : 0,
+        live: this.isLivePlaylist,
+      });
+    }
     return getAvDriftAction(
       this.lastRenderedMediaTime,
       clock,
@@ -2074,7 +2327,10 @@ export class WebCodecsPlayer {
   }
 
   togglePlay() {
-    if (this.state === 'playing') this.pause();
+    // Buffering is still an active play intent. Using state === 'playing'
+    // made the pause button call play() during a stall and left Tesla's centre
+    // overlay stuck until a second interruption.
+    if (this.wantPlaying && this.state !== 'ended') this.pause();
     else this.play();
   }
 
@@ -2100,6 +2356,25 @@ export class WebCodecsPlayer {
     if (!this.audioCtx) return true;
     return (
       this.audioCtx.state === 'running' && (this.gain?.gain.value || 0) > 0
+    );
+  }
+
+  isAudioOutputHealthy(): boolean {
+    if (!this.audioCtx || this.useNativePitchPreservingAudio) return true;
+    const policy = getTeslaAvSyncPolicy(
+      this.isLivePlaylist,
+      this.playbackRate,
+      this.canvasSized
+    );
+    return (
+      this.audioCtx.state === 'running' &&
+      (this.gain?.gain.value || 0) > 0 &&
+      (hasScheduledAudioCoverage(
+        this.nextAudioStartTime,
+        this.audioCtx.currentTime,
+        policy.audioStartSafetySec
+      ) ||
+        this.state === 'buffering')
     );
   }
 
@@ -2337,9 +2612,15 @@ export class WebCodecsPlayer {
       presentedVideoSec: +this.lastRenderedMediaTime.toFixed(3),
       invalidAudioSamples: this.invalidAudioSamples,
       clippedAudioSamples: this.clippedAudioSamples,
+      repairedAudioImpulses: this.repairedAudioImpulses,
+      audioOutputRecoveries: this.audioOutputRecoveries,
+      lastDecodedAudioPtsSec: +this.lastDecodedAudioPtsSec.toFixed(3),
       fragmentDuplicateDrops: this.debugStats.fragmentDuplicateDrops,
       fragmentStaleDrops: this.debugStats.fragmentStaleDrops,
       lastRecoveryReason: this.debugStats.lastRecoveryReason,
+      sourceHost: this.debugStats.sourceHost,
+      container: this.debugStats.container,
+      variantSummary: this.debugStats.variantSummary,
       diagnosticEvents: this.debugStats.diagnosticEvents.slice(-20),
     };
   }

@@ -159,6 +159,7 @@ export interface TeslaMediaSessionOptions {
   onPrevious?: () => void;
   onNext?: () => void;
   onSeekTo?: (seconds: number) => void;
+  onSeekBy?: (deltaSeconds: number) => void;
 }
 
 /**
@@ -206,18 +207,26 @@ export function bindTeslaMediaSession(
   register('play', () => invokeMediaControl(activeMediaControls?.onPlay));
   register('pause', () => invokeMediaControl(activeMediaControls?.onPause));
   register('stop', () => invokeMediaControl(activeMediaControls?.onPause));
-  register('previoustrack', () =>
-    invokeMediaControl(activeMediaControls?.onPrevious)
+  // Track buttons are intentionally not advertised to Tesla. Different vehicle
+  // releases interpret them inconsistently, while the current requirement is
+  // reliable play/pause and progress seeking.
+  register('previoustrack', null);
+  register('nexttrack', null);
+  register(
+    'seekbackward',
+    options.onSeekBy
+      ? (details) =>
+          activeMediaControls?.onSeekBy?.(
+            -Math.max(1, details.seekOffset || 10)
+          )
+      : null
   );
-  register('nexttrack', () => invokeMediaControl(activeMediaControls?.onNext));
-  // Some embedded Chromium/Tesla releases expose the left/right media-card
-  // buttons as seek actions instead of track actions. Map both spellings to
-  // the requested episode/video navigation.
-  register('seekbackward', () =>
-    invokeMediaControl(activeMediaControls?.onPrevious)
-  );
-  register('seekforward', () =>
-    invokeMediaControl(activeMediaControls?.onNext)
+  register(
+    'seekforward',
+    options.onSeekBy
+      ? (details) =>
+          activeMediaControls?.onSeekBy?.(Math.max(1, details.seekOffset || 10))
+      : null
   );
   register('seekto', (details) => {
     const seekTime = details.seekTime;
@@ -240,9 +249,9 @@ export function bindTeslaMediaSession(
     } else if (event.key === 'MediaPause' || event.key === 'MediaStop') {
       invokeMediaControl(activeMediaControls?.onPause);
     } else if (event.key === 'MediaTrackPrevious') {
-      invokeMediaControl(activeMediaControls?.onPrevious);
+      return;
     } else if (event.key === 'MediaTrackNext') {
-      invokeMediaControl(activeMediaControls?.onNext);
+      return;
     } else {
       return;
     }
