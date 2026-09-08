@@ -14,6 +14,7 @@ import {
   Play,
   RefreshCw,
   Rewind,
+  Search,
   Settings2,
   Volume2,
   VolumeX,
@@ -49,6 +50,7 @@ import TeslaDanmakuOverlay, {
   type TeslaDanmakuChoices,
 } from '@/components/TeslaDanmakuOverlay';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
+import { parseTeslaDanmakuEpisodeNumber } from '@/lib/tesla/danmaku-match';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -93,6 +95,11 @@ function formatTime(seconds: number): string {
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
   const ss = String(s).padStart(2, '0');
   return `${hh}${mm}:${ss}`;
+}
+
+function formatDanmakuEpisodeChoice(title: string): string {
+  const episodeNumber = parseTeslaDanmakuEpisodeNumber(title);
+  return episodeNumber ? `第 ${episodeNumber} 集` : '未标集数';
 }
 
 // Persisting every three seconds caused hundreds of API requests per viewing
@@ -184,6 +191,7 @@ export default function TeslaPlayer({
   const currentTimeRef = useRef(0);
   const durationRef = useRef(0);
   const playingRef = useRef(false);
+  const controlsLockedOpenRef = useRef(false);
   const scrubTimeRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
   const seekGestureRef = useRef<{
@@ -237,6 +245,7 @@ export default function TeslaPlayer({
   const [manualDanmakuEpisodeId, setManualDanmakuEpisodeId] = useState<
     number | null
   >(null);
+  const [danmakuChoiceQuery, setDanmakuChoiceQuery] = useState('');
   const verifiedAdRanges = useMemo(
     () =>
       live
@@ -272,6 +281,20 @@ export default function TeslaPlayer({
     selectedEpisodeId: null,
     automatic: true,
   });
+  const filteredDanmakuProgrammes = useMemo(() => {
+    const keyword = danmakuChoiceQuery.trim().toLowerCase();
+    if (!keyword) return danmakuChoices.programmes;
+    return danmakuChoices.programmes.filter((programme) =>
+      programme.animeTitle.toLowerCase().includes(keyword)
+    );
+  }, [danmakuChoiceQuery, danmakuChoices.programmes]);
+  const selectedDanmakuProgramme = useMemo(
+    () =>
+      danmakuChoices.programmes.find(
+        (programme) => programme.animeId === danmakuChoices.selectedAnimeId
+      ) || null,
+    [danmakuChoices.programmes, danmakuChoices.selectedAnimeId]
+  );
 
   const [mode, setMode] = useState<PlayMode>(() =>
     getInitialMode(live ? 'webcodecs' : defaultModeProp)
@@ -540,7 +563,6 @@ export default function TeslaPlayer({
       } else {
         userPausedRef.current = true;
         v.pause();
-        deferTeslaAudioFocusRelease(1200);
       }
     }
   }, [mode, muted, title, volume]);
@@ -670,10 +692,39 @@ export default function TeslaPlayer({
     if (hideControlsTimerRef.current)
       clearTimeout(hideControlsTimerRef.current);
     setShowControls(true);
+    if (!playingRef.current || controlsLockedOpenRef.current) return;
     hideControlsTimerRef.current = window.setTimeout(() => {
-      if (playing && !showRateMenu && !showQualityMenu) setShowControls(false);
-    }, 3000);
-  }, [playing, showRateMenu, showQualityMenu]);
+      if (playingRef.current && !controlsLockedOpenRef.current)
+        setShowControls(false);
+    }, 2600);
+  }, []);
+
+  useEffect(() => {
+    const lockedOpen =
+      showRateMenu ||
+      showQualityMenu ||
+      showDanmakuSettings ||
+      scrubTime !== null ||
+      seekGesturePreview !== null;
+    controlsLockedOpenRef.current = lockedOpen;
+    if (lockedOpen || !playing) {
+      if (hideControlsTimerRef.current) {
+        clearTimeout(hideControlsTimerRef.current);
+        hideControlsTimerRef.current = null;
+      }
+      setShowControls(true);
+      return;
+    }
+    resetControlsTimer();
+  }, [
+    playing,
+    resetControlsTimer,
+    scrubTime,
+    seekGesturePreview,
+    showDanmakuSettings,
+    showQualityMenu,
+    showRateMenu,
+  ]);
 
   const persistProgress = useCallback(() => {
     if (live) return;
@@ -2039,31 +2090,66 @@ export default function TeslaPlayer({
                 </button>
               )}
             </div>
+            {selectedDanmakuProgramme && (
+              <div className='mb-2 rounded-xl border border-violet-300/20 bg-violet-500/10 px-3 py-2'>
+                <p className='text-[11px] text-violet-200/65'>当前匹配</p>
+                <p
+                  className='mt-1 line-clamp-2 text-xs leading-5 text-white'
+                  title={selectedDanmakuProgramme.animeTitle}
+                >
+                  {selectedDanmakuProgramme.animeTitle}
+                </p>
+              </div>
+            )}
             {danmakuChoices.programmes.length > 0 && (
-              <div className='mb-3 max-h-32 space-y-1 overflow-y-auto'>
-                {danmakuChoices.programmes.map((programme) => (
-                  <button
-                    key={programme.animeId}
-                    type='button'
-                    onClick={() => {
-                      setManualDanmakuAnimeId(programme.animeId);
-                      setManualDanmakuEpisodeId(null);
-                    }}
-                    className={`block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs ${
-                      danmakuChoices.selectedAnimeId === programme.animeId
-                        ? 'bg-violet-500 text-white'
-                        : 'bg-white/10 text-white/75'
-                    }`}
-                  >
-                    {programme.animeTitle}
-                  </button>
-                ))}
+              <div className='mb-3'>
+                <label className='relative mb-2 block'>
+                  <Search className='pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35' />
+                  <input
+                    value={danmakuChoiceQuery}
+                    onChange={(event) =>
+                      setDanmakuChoiceQuery(event.target.value)
+                    }
+                    placeholder='输入片名筛选匹配结果'
+                    className='min-h-11 w-full rounded-xl bg-white/10 pl-10 pr-3 text-xs text-white outline-none placeholder:text-white/35 focus:ring-1 focus:ring-violet-400'
+                  />
+                </label>
+                <div className='max-h-44 space-y-1.5 overflow-y-auto pr-1'>
+                  {filteredDanmakuProgrammes.map((programme, index) => (
+                    <button
+                      key={programme.animeId}
+                      type='button'
+                      onClick={() => {
+                        setManualDanmakuAnimeId(programme.animeId);
+                        setManualDanmakuEpisodeId(null);
+                      }}
+                      className={`grid min-h-12 w-full grid-cols-[2rem_1fr] items-center gap-2 rounded-xl px-3 py-2 text-left text-xs ${
+                        danmakuChoices.selectedAnimeId === programme.animeId
+                          ? 'bg-violet-500 text-white'
+                          : 'bg-white/10 text-white/75'
+                      }`}
+                      title={programme.animeTitle}
+                    >
+                      <span className='flex h-7 w-7 items-center justify-center rounded-lg bg-black/20 text-[11px]'>
+                        {index + 1}
+                      </span>
+                      <span className='line-clamp-2 break-all leading-5'>
+                        {programme.animeTitle}
+                      </span>
+                    </button>
+                  ))}
+                  {filteredDanmakuProgrammes.length === 0 && (
+                    <p className='py-4 text-center text-xs text-white/40'>
+                      没有匹配的片名
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             {danmakuChoices.episodes.length > 0 && (
               <div>
                 <p className='mb-2 text-xs text-white/50'>手动选择弹幕集数</p>
-                <div className='grid max-h-36 grid-cols-3 gap-1.5 overflow-y-auto'>
+                <div className='grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto'>
                   {danmakuChoices.episodes.map((episode) => (
                     <button
                       key={episode.episodeId}
@@ -2071,14 +2157,19 @@ export default function TeslaPlayer({
                       onClick={() =>
                         setManualDanmakuEpisodeId(episode.episodeId)
                       }
-                      className={`min-h-10 rounded-lg px-2 py-1 text-xs ${
+                      className={`min-h-12 rounded-xl px-3 py-2 text-left text-xs ${
                         danmakuChoices.selectedEpisodeId === episode.episodeId
                           ? 'bg-violet-500 text-white'
                           : 'bg-white/10 text-white/75'
                       }`}
                       title={episode.episodeTitle}
                     >
-                      {episode.episodeTitle}
+                      <span className='block font-medium'>
+                        {formatDanmakuEpisodeChoice(episode.episodeTitle)}
+                      </span>
+                      <span className='mt-1 block truncate text-[10px] opacity-60'>
+                        {episode.episodeTitle}
+                      </span>
                     </button>
                   ))}
                 </div>

@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getFreshConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import {
+  getDefaultWebLiveName,
+  normalizeWebLiveSource,
+} from '@/lib/tesla/web-live-source';
 
 function sanitizeAcl(value: unknown): string[] {
   return Array.isArray(value)
@@ -15,25 +19,6 @@ function sanitizeAcl(value: unknown): string[] {
         )
       ).slice(0, 100)
     : [];
-}
-
-const WEB_LIVE_PLATFORMS = new Set(['huya', 'bilibili', 'douyin']);
-
-function normalizeRoomId(platformValue: unknown, roomValue: unknown) {
-  const platform = String(platformValue || '')
-    .trim()
-    .toLowerCase();
-  let roomId = String(roomValue || '').trim();
-  if (!WEB_LIVE_PLATFORMS.has(platform)) {
-    throw new Error('目前仅支持虎牙、哔哩哔哩和抖音直播');
-  }
-  if (/^https?:\/\//i.test(roomId)) {
-    const parsed = new URL(roomId);
-    roomId = parsed.pathname.split('/').filter(Boolean)[0] || '';
-  }
-  roomId = roomId.replace(/[?#/].*$/, '').trim();
-  if (!roomId || roomId.length > 128) throw new Error('直播间 ID 或链接无效');
-  return { platform, roomId };
 }
 
 export async function POST(request: NextRequest) {
@@ -68,11 +53,11 @@ export async function POST(request: NextRequest) {
 
       case 'add': {
         const { name, platform, roomId, allowedUsers, allowedTags } = body;
-        if (!name || !platform || !roomId) {
+        if (!platform || !roomId) {
           return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
         }
 
-        const normalized = normalizeRoomId(platform, roomId);
+        const normalized = normalizeWebLiveSource(platform, roomId);
         const key = `web_${Date.now()}`;
         if (config.WebLiveConfig.some((s) => s.key === key)) {
           return NextResponse.json({ error: 'Key已存在' }, { status: 400 });
@@ -80,7 +65,9 @@ export async function POST(request: NextRequest) {
 
         config.WebLiveConfig.push({
           key,
-          name: String(name).trim(),
+          name:
+            String(name || '').trim() ||
+            getDefaultWebLiveName(normalized.platform, normalized.roomId),
           platform: normalized.platform,
           roomId: normalized.roomId,
           from: 'custom',
@@ -141,8 +128,10 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        const normalized = normalizeRoomId(platform, roomId);
-        source.name = String(name || '').trim();
+        const normalized = normalizeWebLiveSource(platform, roomId);
+        source.name =
+          String(name || '').trim() ||
+          getDefaultWebLiveName(normalized.platform, normalized.roomId);
         source.platform = normalized.platform;
         source.roomId = normalized.roomId;
         if (allowedUsers !== undefined) {

@@ -1,6 +1,8 @@
 import {
   createStableLiveChannelId,
   findSameLiveChannel,
+  findSuspiciousLivePlaylistUri,
+  findStableLiveChannelById,
   groupLiveChannelVariants,
   isLivePlaylistPlaceholder,
   isSuspiciousLiveRedirect,
@@ -70,6 +72,22 @@ describe('Tesla live channel identity', () => {
     ).toBeNull();
   });
 
+  test('automatic recovery refuses a metadata-only channel replacement', () => {
+    expect(
+      findStableLiveChannelById(
+        [
+          {
+            id: 'replacement-cctv7',
+            tvgId: 'CCTV6',
+            name: 'CCTV-6 电影',
+            url: 'https://cdn.example.com/cctv7/index.m3u8',
+          },
+        ],
+        cctv6.id
+      )
+    ).toBeNull();
+  });
+
   test('filters Guovin timestamp and explicit ad placeholders', () => {
     expect(
       isLivePlaylistPlaceholder({
@@ -97,6 +115,16 @@ describe('Tesla live channel identity', () => {
         cctv6
       )
     ).toBe(true);
+  });
+
+  test('rejects a rolling playlist that injects another CCTV channel', () => {
+    expect(
+      findSuspiciousLivePlaylistUri(
+        '#EXTM3U\n#EXTINF:6,\n../cctv7/segment-22.ts',
+        'https://cdn.example/live/cctv6/index.m3u8',
+        cctv6
+      )
+    ).toContain('/cctv7/');
   });
 
   test('merges same logical channel for display without deleting its lines', () => {

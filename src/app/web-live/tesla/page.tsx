@@ -25,6 +25,7 @@ import {
 } from 'react';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
+import { detectWebLivePlatform } from '@/lib/tesla/web-live-source';
 
 interface WebLiveSource {
   key: string;
@@ -170,8 +171,8 @@ function TeslaWebLivePageInner() {
   );
 
   const addSource = useCallback(() => {
-    if (!newSource.name.trim() || !newSource.roomId.trim()) {
-      setError('请填写直播间名称和房间 ID / 链接');
+    if (!newSource.roomId.trim()) {
+      setError('请填写房间 ID 或粘贴完整直播链接');
       return;
     }
     void manageSource({ action: 'add', ...newSource });
@@ -487,6 +488,8 @@ function TeslaWebLivePageInner() {
                 }))}
                 quality={activeQualityId}
                 onQualityChange={handleSelectQuality}
+                sourceKey={currentSource?.platform}
+                sourceName={currentSource?.name}
                 onPlaybackReady={() => setPlaybackNotice('')}
                 onPlaybackError={handlePlaybackError}
               />
@@ -578,6 +581,20 @@ function TeslaWebLivePageInner() {
                 ))}
               </div>
               <input
+                value={newSource.roomId}
+                onChange={(event) =>
+                  setNewSource((current) => ({
+                    ...current,
+                    roomId: event.target.value,
+                    platform:
+                      detectWebLivePlatform(event.target.value) ||
+                      current.platform,
+                  }))
+                }
+                placeholder='粘贴直播间链接，自动识别平台和房间号'
+                className='min-h-11 w-full rounded-xl bg-white/10 px-3 text-sm outline-none focus:ring-1 focus:ring-violet-400'
+              />
+              <input
                 value={newSource.name}
                 onChange={(event) =>
                   setNewSource((current) => ({
@@ -585,18 +602,7 @@ function TeslaWebLivePageInner() {
                     name: event.target.value,
                   }))
                 }
-                placeholder='直播间名称，例如 CCTV13'
-                className='min-h-11 w-full rounded-xl bg-white/10 px-3 text-sm outline-none focus:ring-1 focus:ring-violet-400'
-              />
-              <input
-                value={newSource.roomId}
-                onChange={(event) =>
-                  setNewSource((current) => ({
-                    ...current,
-                    roomId: event.target.value,
-                  }))
-                }
-                placeholder='房间 ID 或完整直播链接'
+                placeholder='名称（选填，留空自动生成）'
                 className='min-h-11 w-full rounded-xl bg-white/10 px-3 text-sm outline-none focus:ring-1 focus:ring-violet-400'
               />
               <button

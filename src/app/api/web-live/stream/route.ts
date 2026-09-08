@@ -121,8 +121,7 @@ async function getBilibiliStream(roomId: string) {
       { headers, cache: 'no-store', signal: AbortSignal.timeout(8000) }
     );
     const data = await response.json();
-    if (data.code !== 0)
-      throw new Error(data.message || '获取播放信息失败');
+    if (data.code !== 0) throw new Error(data.message || '获取播放信息失败');
     return data.data?.playurl_info?.playurl;
   };
 
@@ -369,7 +368,7 @@ export async function GET(request: NextRequest) {
       const qualities = qualityRows.map((quality) => ({
         id: quality.id,
         label: quality.label,
-        transports: streamInfoList.map(
+        transports: streamInfoList.flatMap(
           (streamInfo: Record<string, string>, index: number) => {
             const antiCode = getAntiCode(
               streamInfo.sHlsAntiCode,
@@ -377,15 +376,24 @@ export async function GET(request: NextRequest) {
             );
             const ratio = `&ratio=${quality.bitrate}`;
             const originalUrl = `${streamInfo.sHlsUrl}/${streamInfo.sStreamName}.${streamInfo.sHlsUrlSuffix}?${antiCode}${ratio}`;
-            return {
-              id: `huya-${quality.bitrate}-hls-${index + 1}`,
-              label: `车机线路 ${index + 1}`,
-              url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
-                originalUrl
-              )}`,
-              originalUrl,
-              streamType: 'hls',
-            };
+            return [
+              {
+                id: `huya-${quality.bitrate}-direct-${index + 1}`,
+                label: `直连 ${index + 1}`,
+                url: originalUrl,
+                originalUrl,
+                streamType: 'hls',
+              },
+              {
+                id: `huya-${quality.bitrate}-proxy-${index + 1}`,
+                label: `代理备用 ${index + 1}`,
+                url: `/api/web-live/proxy/proxy.m3u8?url=${encodeURIComponent(
+                  originalUrl
+                )}`,
+                originalUrl,
+                streamType: 'hls',
+              },
+            ];
           }
         ),
       }));

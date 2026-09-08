@@ -2323,7 +2323,6 @@ export class WebCodecsPlayer {
     if (this.useNativePitchPreservingAudio) this.hlsVideoEl?.pause();
     if (this.state !== 'ended' && this.state !== 'error')
       this.setState('paused');
-    deferTeslaAudioFocusRelease(1200);
   }
 
   togglePlay() {

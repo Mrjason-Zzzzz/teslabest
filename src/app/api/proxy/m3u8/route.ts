@@ -14,7 +14,8 @@ import {
   requireFeaturePermission,
 } from '@/lib/permissions';
 import {
-  findSameLiveChannel,
+  findSuspiciousLivePlaylistUri,
+  findStableLiveChannelById,
   isSuspiciousLiveRedirect,
 } from '@/lib/tesla/live-channel-identity';
 
@@ -36,6 +37,8 @@ export async function GET(request: NextRequest) {
   const channelName = searchParams.get('moontv-channel-name') || '';
   const channelGroup = searchParams.get('moontv-channel-group') || '';
   const rootRequest = searchParams.get('moontv-root') === '1';
+  const playlistIdentityCheck =
+    rootRequest || searchParams.get('moontv-check') === '1';
   if (!url) {
     return NextResponse.json({ error: 'Missing url' }, { status: 400 });
   }
@@ -69,13 +72,7 @@ export async function GET(request: NextRequest) {
           includeEpg: false,
         });
         const exact = refreshed
-          ? findSameLiveChannel(refreshed.channels, {
-              id: channelId,
-              tvgId: channelTvgId,
-              name: channelName,
-              group: channelGroup,
-              url: decodedUrl,
-            })
+          ? findStableLiveChannelById(refreshed.channels, channelId)
           : null;
         if (!exact) {
           console.warn('[LiveProxy] selected channel disappeared on refresh', {
@@ -151,6 +148,25 @@ export async function GET(request: NextRequest) {
       const finalUrl = response.url;
       const m3u8Content = await response.text();
       responseUsed = true; // 标记 response 已被使用
+
+      const suspiciousUri = playlistIdentityCheck
+        ? findSuspiciousLivePlaylistUri(m3u8Content, finalUrl, {
+            tvgId: channelTvgId,
+            name: channelName,
+          })
+        : null;
+      if (suspiciousUri) {
+        console.warn('[LiveProxy] blocked cross-channel playlist URI', {
+          source,
+          channelId,
+          channelTvgId,
+          channelName,
+        });
+        return NextResponse.json(
+          { error: '当前线路插入了其他频道或广告地址，已停止播放' },
+          { status: 409 }
+        );
+      }
 
       // 使用最终的响应URL作为baseUrl，而不是原始的请求URL
       const baseUrl = getBaseUrl(finalUrl);
@@ -244,9 +260,18 @@ function rewriteM3U8Content(
   const reqUrl = new URL(req.url);
   const source = reqUrl.searchParams.get('moontv-source') || '';
   const channel = reqUrl.searchParams.get('moontv-channel') || '';
+  const channelTvg = reqUrl.searchParams.get('moontv-channel-tvg') || '';
+  const channelName = reqUrl.searchParams.get('moontv-channel-name') || '';
+  const channelGroup = reqUrl.searchParams.get('moontv-channel-group') || '';
   const identityParams = `&moontv-source=${encodeURIComponent(
     source
-  )}&moontv-channel=${encodeURIComponent(channel)}`;
+  )}&moontv-channel=${encodeURIComponent(
+    channel
+  )}&moontv-channel-tvg=${encodeURIComponent(
+    channelTvg
+  )}&moontv-channel-name=${encodeURIComponent(
+    channelName
+  )}&moontv-channel-group=${encodeURIComponent(channelGroup)}&moontv-check=1`;
 
   const lines = content.split('\n');
   const rewrittenLines: string[] = [];

@@ -56,6 +56,21 @@ function consumeInternalKeeperAction(action: 'play' | 'pause'): boolean {
   return true;
 }
 
+function syncFocusKeeperState(state: MediaSessionPlaybackState): void {
+  if (!focusAudioElement) return;
+  try {
+    if (state === 'playing' && focusAudioElement.paused) {
+      markInternalKeeperAction('play');
+      void focusAudioElement.play().catch(() => undefined);
+    } else if (state === 'paused' && !focusAudioElement.paused) {
+      markInternalKeeperAction('pause');
+      focusAudioElement.pause();
+    }
+  } catch {
+    // The keeper only bridges Tesla's native media card; playback stays valid.
+  }
+}
+
 function hydrate(): void {
   if (hydrated || typeof window === 'undefined') return;
   hydrated = true;
@@ -122,6 +137,7 @@ export function getTeslaAudioContext(): AudioContext | null {
 export function setTeslaMediaSessionState(
   state: MediaSessionPlaybackState
 ): void {
+  syncFocusKeeperState(state);
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator))
     return;
   try {
@@ -207,11 +223,18 @@ export function bindTeslaMediaSession(
   register('play', () => invokeMediaControl(activeMediaControls?.onPlay));
   register('pause', () => invokeMediaControl(activeMediaControls?.onPause));
   register('stop', () => invokeMediaControl(activeMediaControls?.onPause));
-  // Track buttons are intentionally not advertised to Tesla. Different vehicle
-  // releases interpret them inconsistently, while the current requirement is
-  // reliable play/pause and progress seeking.
-  register('previoustrack', null);
-  register('nexttrack', null);
+  register(
+    'previoustrack',
+    options.onPrevious
+      ? () => invokeMediaControl(activeMediaControls?.onPrevious)
+      : null
+  );
+  register(
+    'nexttrack',
+    options.onNext
+      ? () => invokeMediaControl(activeMediaControls?.onNext)
+      : null
+  );
   register(
     'seekbackward',
     options.onSeekBy
@@ -228,12 +251,17 @@ export function bindTeslaMediaSession(
           activeMediaControls?.onSeekBy?.(Math.max(1, details.seekOffset || 10))
       : null
   );
-  register('seekto', (details) => {
-    const seekTime = details.seekTime;
-    if (Number.isFinite(seekTime)) {
-      activeMediaControls?.onSeekTo?.(seekTime as number);
-    }
-  });
+  register(
+    'seekto',
+    options.onSeekTo
+      ? (details) => {
+          const seekTime = details.seekTime;
+          if (Number.isFinite(seekTime)) {
+            activeMediaControls?.onSeekTo?.(seekTime as number);
+          }
+        }
+      : null
+  );
 
   const handleHardwareMediaKey = (event: KeyboardEvent) => {
     if (event.repeat) return;
@@ -249,9 +277,9 @@ export function bindTeslaMediaSession(
     } else if (event.key === 'MediaPause' || event.key === 'MediaStop') {
       invokeMediaControl(activeMediaControls?.onPause);
     } else if (event.key === 'MediaTrackPrevious') {
-      return;
+      invokeMediaControl(activeMediaControls?.onPrevious);
     } else if (event.key === 'MediaTrackNext') {
-      return;
+      invokeMediaControl(activeMediaControls?.onNext);
     } else {
       return;
     }

@@ -61,6 +61,20 @@ export function getLogicalLiveChannelKey(channel: LiveChannelIdentity) {
   )}|group:${normalizeLiveChannelText(channel.group)}`;
 }
 
+/**
+ * Re-resolve a live URL only when the stable channel id itself still exists.
+ * Metadata-only matching is useful for an explicit user source change, but is
+ * too permissive for automatic recovery: a hostile/incorrect playlist can
+ * reuse CCTV6 metadata while replacing its URL with CCTV7 or an ad stream.
+ */
+export function findStableLiveChannelById<T extends LiveChannelIdentity>(
+  channels: T[],
+  channelId: string | null | undefined
+): T | null {
+  if (!channelId) return null;
+  return channels.find((channel) => channel.id === channelId) || null;
+}
+
 export function groupLiveChannelVariants<T extends LiveChannelIdentity>(
   channels: T[]
 ) {
@@ -114,6 +128,25 @@ export function isSuspiciousLiveRedirect(
   if (expected && redirected && expected !== redirected) return true;
   const from = readCctvToken(fromUrl);
   return Boolean(from && redirected && from !== redirected);
+}
+
+export function findSuspiciousLivePlaylistUri(
+  playlist: string,
+  baseUrl: string,
+  channel: Pick<LiveChannelIdentity, 'tvgId' | 'name'>
+) {
+  for (const rawLine of playlist.replace(/\r\n/g, '\n').split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    let resolved = line;
+    try {
+      resolved = new URL(line, baseUrl).toString();
+    } catch {
+      // Keep the raw URI for keyword checks when a provider returns bad URLs.
+    }
+    if (isSuspiciousLiveRedirect(baseUrl, resolved, channel)) return resolved;
+  }
+  return null;
 }
 
 /**

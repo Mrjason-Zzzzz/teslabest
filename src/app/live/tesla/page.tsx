@@ -23,7 +23,7 @@ import {
 import TeslaPlayer from '@/components/TeslaPlayer';
 import {
   findSameLiveChannel,
-  getLogicalLiveChannelKey,
+  findStableLiveChannelById,
   groupLiveChannelVariants,
 } from '@/lib/tesla/live-channel-identity';
 
@@ -224,9 +224,10 @@ function TeslaLivePageInner() {
       10000
     );
     const refreshed: LiveChannel[] = data?.data || data?.channels || [];
-    const same = findSameLiveChannel(refreshed, currentChannel);
-    // Never fall back to refreshed[0]. If the selected identity disappeared,
-    // retaining the current URL is safer than silently changing programmes.
+    const same = findStableLiveChannelById(refreshed, currentChannel.id);
+    // Automatic recovery is stricter than an explicit user source change: the
+    // stable channel id must survive refresh. Metadata-only matches can be
+    // poisoned by a playlist that relabels another channel as the selected one.
     if (!same) return playUrl;
     channelCacheRef.current.set(currentSource.key, refreshed);
     const mode = currentSource.proxyMode || 'full';
@@ -318,38 +319,13 @@ function TeslaLivePageInner() {
 
   const handlePlaybackError = useCallback(
     (message: string) => {
-      if (currentSource && currentChannel) {
-        failedChannelLinesRef.current.add(currentChannel.id);
-        const logicalKey = getLogicalLiveChannelKey(currentChannel);
-        const alternative = channels.find(
-          (channel) =>
-            getLogicalLiveChannelKey(channel) === logicalKey &&
-            !failedChannelLinesRef.current.has(channel.id)
-        );
-        if (alternative) {
-          preferredChannelRef.current = {
-            id: alternative.id,
-            tvgId: alternative.tvgId,
-            name: alternative.name,
-            group: alternative.group,
-            url: alternative.url,
-          };
-          setPlaybackIssue(false);
-          setPlaybackNotice(
-            `线路异常（${message}），正在切换 ${currentChannel.name} 的同频道备线…`
-          );
-          setCurrentChannel(alternative);
-          setPlaybackAttempt((attempt) => attempt + 1);
-          syncUrl(currentSource, alternative);
-          return;
-        }
-      }
+      if (currentChannel) failedChannelLinesRef.current.add(currentChannel.id);
       setPlaybackIssue(true);
       setPlaybackNotice(
-        `当前频道的可用线路均播放失败：${message}。不会跳转到其他频道。`
+        `当前线路播放失败：${message}。已锁定频道，不会自动切换其他线路或频道。`
       );
     },
-    [channels, currentChannel, currentSource, syncUrl]
+    [currentChannel]
   );
 
   const retryCurrentPlayback = useCallback(() => {
