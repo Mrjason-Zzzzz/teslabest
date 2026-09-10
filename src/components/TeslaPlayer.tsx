@@ -99,7 +99,34 @@ function formatTime(seconds: number): string {
 
 function formatDanmakuEpisodeChoice(title: string): string {
   const episodeNumber = parseTeslaDanmakuEpisodeNumber(title);
-  return episodeNumber ? `第 ${episodeNumber} 集` : '未标集数';
+  if (!episodeNumber) return '未标集数';
+  const normalized = title.normalize('NFKC').replace(/\s+/g, '');
+  const unit = new RegExp(`第${episodeNumber}期`).test(normalized)
+    ? '期'
+    : '集';
+  const labels: string[] = [];
+  if (normalized.includes('会员加更')) labels.push('会员加更');
+  else if (normalized.includes('加更')) labels.push('加更');
+  if (normalized.includes('先导')) labels.push('先导');
+  if (normalized.includes('精编')) labels.push('精编');
+  if (normalized.includes('纯享')) labels.push('纯享');
+  if (normalized.includes('未播')) labels.push('未播');
+  if (normalized.includes('花絮')) labels.push('花絮');
+  if (normalized.includes('番外')) labels.push('番外');
+  const part = normalized.match(
+    new RegExp(`第${episodeNumber}(?:期|集)?(上|中|下)`)
+  )?.[1];
+  if (part) labels.push(part);
+  return `第 ${episodeNumber} ${unit}${
+    labels.length > 0 ? ` · ${labels.join(' · ')}` : ''
+  }`;
+}
+
+function normalizeDanmakuEpisodeQuery(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s·•，,。.:：()（）【】\[\]_-]+/g, '');
 }
 
 // Persisting every three seconds caused hundreds of API requests per viewing
@@ -297,20 +324,23 @@ export default function TeslaPlayer({
     [danmakuChoices.programmes, danmakuChoices.selectedAnimeId]
   );
   const filteredDanmakuEpisodes = useMemo(() => {
-    const keyword = danmakuEpisodeQuery.trim().toLowerCase();
+    const keyword = normalizeDanmakuEpisodeQuery(danmakuEpisodeQuery);
     if (!keyword) return danmakuChoices.episodes;
-    const numericQuery = Number(keyword.replace(/\D/g, ''));
+    const numberMatch = keyword.match(/\d+/);
+    const numericQuery = numberMatch ? Number(numberMatch[0]) : null;
+    const qualifier = keyword.replace(/\d+/g, '').replace(/[第期集]/g, '');
     return danmakuChoices.episodes.filter((episode) => {
-      const title = episode.episodeTitle.toLowerCase();
+      const title = normalizeDanmakuEpisodeQuery(episode.episodeTitle);
       const episodeNumber = parseTeslaDanmakuEpisodeNumber(
         episode.episodeTitle
       );
-      return (
-        title.includes(keyword) ||
-        (Number.isFinite(numericQuery) &&
-          numericQuery > 0 &&
-          episodeNumber === numericQuery)
-      );
+      if (numericQuery !== null && numericQuery > 0) {
+        return (
+          episodeNumber === numericQuery &&
+          (!qualifier || title.includes(qualifier))
+        );
+      }
+      return title.includes(keyword);
     });
   }, [danmakuChoices.episodes, danmakuEpisodeQuery]);
 
@@ -2173,12 +2203,12 @@ export default function TeslaPlayer({
                 <label className='relative mb-2 block'>
                   <Search className='pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35' />
                   <input
-                    inputMode='numeric'
+                    inputMode='text'
                     value={danmakuEpisodeQuery}
                     onChange={(event) =>
                       setDanmakuEpisodeQuery(event.target.value)
                     }
-                    placeholder='输入集数，例如 12'
+                    placeholder='输入 12、12上、12下、12加更'
                     className='min-h-12 w-full rounded-xl bg-white/10 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/35 focus:ring-2 focus:ring-violet-400'
                   />
                 </label>
@@ -2208,7 +2238,7 @@ export default function TeslaPlayer({
                 </div>
                 {filteredDanmakuEpisodes.length === 0 && (
                   <p className='py-4 text-center text-sm text-white/45'>
-                    没有找到该集数，请改用标题关键词
+                    没有找到该期或版本，请缩短关键词
                   </p>
                 )}
               </div>
