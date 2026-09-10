@@ -246,6 +246,7 @@ export default function TeslaPlayer({
     number | null
   >(null);
   const [danmakuChoiceQuery, setDanmakuChoiceQuery] = useState('');
+  const [danmakuEpisodeQuery, setDanmakuEpisodeQuery] = useState('');
   const verifiedAdRanges = useMemo(
     () =>
       live
@@ -295,6 +296,23 @@ export default function TeslaPlayer({
       ) || null,
     [danmakuChoices.programmes, danmakuChoices.selectedAnimeId]
   );
+  const filteredDanmakuEpisodes = useMemo(() => {
+    const keyword = danmakuEpisodeQuery.trim().toLowerCase();
+    if (!keyword) return danmakuChoices.episodes;
+    const numericQuery = Number(keyword.replace(/\D/g, ''));
+    return danmakuChoices.episodes.filter((episode) => {
+      const title = episode.episodeTitle.toLowerCase();
+      const episodeNumber = parseTeslaDanmakuEpisodeNumber(
+        episode.episodeTitle
+      );
+      return (
+        title.includes(keyword) ||
+        (Number.isFinite(numericQuery) &&
+          numericQuery > 0 &&
+          episodeNumber === numericQuery)
+      );
+    });
+  }, [danmakuChoices.episodes, danmakuEpisodeQuery]);
 
   const [mode, setMode] = useState<PlayMode>(() =>
     getInitialMode(live ? 'webcodecs' : defaultModeProp)
@@ -1997,15 +2015,15 @@ export default function TeslaPlayer({
         <aside
           className={`pointer-events-auto absolute left-3 z-30 overflow-y-auto rounded-2xl border border-violet-300/20 bg-[#110d20]/95 text-white shadow-2xl backdrop-blur ${
             isWebFullscreen || isFullscreen
-              ? 'bottom-20 top-16 w-[min(340px,42vw)] p-5'
-              : 'bottom-auto top-12 max-h-[calc(100%-3.5rem)] w-[min(300px,48%)] p-3'
+              ? 'bottom-20 top-16 w-[min(460px,46vw)] p-6'
+              : 'bottom-auto top-12 max-h-[calc(100%-3.5rem)] w-[min(420px,62%)] p-4'
           }`}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className={isWebFullscreen || isFullscreen ? 'mb-5' : 'mb-3'}>
-            <h2 className='text-sm font-semibold md:text-base'>弹幕设置</h2>
-            <p className='mt-1 text-xs text-white/50'>
+            <h2 className='text-lg font-semibold'>弹幕设置</h2>
+            <p className='mt-1 text-sm leading-5 text-white/55'>
               {danmakuStatus || '自动匹配影片与当前集数'}
             </p>
           </div>
@@ -2074,7 +2092,7 @@ export default function TeslaPlayer({
           ))}
           <div className='mt-3 border-t border-white/10 pt-3'>
             <div className='mb-2 flex items-center justify-between gap-2'>
-              <span className='text-xs font-medium text-white/70'>
+              <span className='text-sm font-semibold text-white/80'>
                 弹幕匹配
               </span>
               {(manualDanmakuAnimeId || manualDanmakuEpisodeId) && (
@@ -2111,10 +2129,10 @@ export default function TeslaPlayer({
                       setDanmakuChoiceQuery(event.target.value)
                     }
                     placeholder='输入片名筛选匹配结果'
-                    className='min-h-11 w-full rounded-xl bg-white/10 pl-10 pr-3 text-xs text-white outline-none placeholder:text-white/35 focus:ring-1 focus:ring-violet-400'
+                    className='min-h-12 w-full rounded-xl bg-white/10 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/35 focus:ring-2 focus:ring-violet-400'
                   />
                 </label>
-                <div className='max-h-44 space-y-1.5 overflow-y-auto pr-1'>
+                <div className='max-h-52 space-y-2 overflow-y-auto pr-1'>
                   {filteredDanmakuProgrammes.map((programme, index) => (
                     <button
                       key={programme.animeId}
@@ -2122,18 +2140,19 @@ export default function TeslaPlayer({
                       onClick={() => {
                         setManualDanmakuAnimeId(programme.animeId);
                         setManualDanmakuEpisodeId(null);
+                        setDanmakuEpisodeQuery('');
                       }}
-                      className={`grid min-h-12 w-full grid-cols-[2rem_1fr] items-center gap-2 rounded-xl px-3 py-2 text-left text-xs ${
+                      className={`grid min-h-16 w-full grid-cols-[2.5rem_1fr] items-center gap-3 rounded-xl px-3 py-2 text-left text-sm ring-1 transition active:scale-[0.99] ${
                         danmakuChoices.selectedAnimeId === programme.animeId
-                          ? 'bg-violet-500 text-white'
-                          : 'bg-white/10 text-white/75'
+                          ? 'bg-violet-500 text-white ring-violet-300'
+                          : 'bg-white/10 text-white/80 ring-white/10'
                       }`}
                       title={programme.animeTitle}
                     >
-                      <span className='flex h-7 w-7 items-center justify-center rounded-lg bg-black/20 text-[11px]'>
+                      <span className='flex h-9 w-9 items-center justify-center rounded-lg bg-black/20 text-sm font-bold'>
                         {index + 1}
                       </span>
-                      <span className='line-clamp-2 break-all leading-5'>
+                      <span className='line-clamp-2 break-all font-medium leading-6'>
                         {programme.animeTitle}
                       </span>
                     </button>
@@ -2148,31 +2167,50 @@ export default function TeslaPlayer({
             )}
             {danmakuChoices.episodes.length > 0 && (
               <div>
-                <p className='mb-2 text-xs text-white/50'>手动选择弹幕集数</p>
-                <div className='grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto'>
-                  {danmakuChoices.episodes.map((episode) => (
+                <p className='mb-2 text-sm font-semibold text-white/75'>
+                  第 2 步：选择弹幕集数
+                </p>
+                <label className='relative mb-2 block'>
+                  <Search className='pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35' />
+                  <input
+                    inputMode='numeric'
+                    value={danmakuEpisodeQuery}
+                    onChange={(event) =>
+                      setDanmakuEpisodeQuery(event.target.value)
+                    }
+                    placeholder='输入集数，例如 12'
+                    className='min-h-12 w-full rounded-xl bg-white/10 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/35 focus:ring-2 focus:ring-violet-400'
+                  />
+                </label>
+                <div className='grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1'>
+                  {filteredDanmakuEpisodes.map((episode) => (
                     <button
                       key={episode.episodeId}
                       type='button'
                       onClick={() =>
                         setManualDanmakuEpisodeId(episode.episodeId)
                       }
-                      className={`min-h-12 rounded-xl px-3 py-2 text-left text-xs ${
+                      className={`min-h-16 rounded-xl px-3 py-2 text-left text-sm ring-1 transition active:scale-[0.98] ${
                         danmakuChoices.selectedEpisodeId === episode.episodeId
-                          ? 'bg-violet-500 text-white'
-                          : 'bg-white/10 text-white/75'
+                          ? 'bg-violet-500 text-white ring-violet-300'
+                          : 'bg-white/10 text-white/80 ring-white/10'
                       }`}
                       title={episode.episodeTitle}
                     >
-                      <span className='block font-medium'>
+                      <span className='block text-base font-bold'>
                         {formatDanmakuEpisodeChoice(episode.episodeTitle)}
                       </span>
-                      <span className='mt-1 block truncate text-[10px] opacity-60'>
+                      <span className='mt-1 block truncate text-xs opacity-65'>
                         {episode.episodeTitle}
                       </span>
                     </button>
                   ))}
                 </div>
+                {filteredDanmakuEpisodes.length === 0 && (
+                  <p className='py-4 text-center text-sm text-white/45'>
+                    没有找到该集数，请改用标题关键词
+                  </p>
+                )}
               </div>
             )}
           </div>

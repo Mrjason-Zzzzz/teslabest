@@ -95,6 +95,7 @@ function TeslaWebLivePageInner() {
     roomId: '',
   });
   const triedTransportIdsRef = useRef(new Set<string>());
+  const automaticReparseAttemptsRef = useRef(0);
 
   useEffect(() => {
     if ((window as any).RUNTIME_CONFIG?.WEB_LIVE_ENABLED !== true) {
@@ -304,6 +305,7 @@ function TeslaWebLivePageInner() {
   }, [currentSource, streamReloadToken]);
 
   const handleSelectSource = useCallback((source: WebLiveSource) => {
+    automaticReparseAttemptsRef.current = 0;
     setCurrentSource(source);
     const params = new URLSearchParams();
     params.set('platform', source.platform);
@@ -313,6 +315,12 @@ function TeslaWebLivePageInner() {
       '',
       `${window.location.pathname}?${params.toString()}`
     );
+  }, []);
+
+  const reconnectStream = useCallback(() => {
+    automaticReparseAttemptsRef.current = 0;
+    setError(null);
+    setStreamReloadToken((value) => value + 1);
   }, []);
 
   const activateQuality = useCallback(
@@ -367,10 +375,22 @@ function TeslaWebLivePageInner() {
         return;
       }
 
-      setPlaybackNotice(
-        `当前最低清晰度仍不稳定：${message}。正在重新解析直播地址…`
+      if (automaticReparseAttemptsRef.current < 1) {
+        automaticReparseAttemptsRef.current += 1;
+        setPlaybackNotice(
+          `当前最低清晰度仍不稳定：${message}。正在重新解析一次直播地址…`
+        );
+        window.setTimeout(
+          () => setStreamReloadToken((value) => value + 1),
+          1200
+        );
+        return;
+      }
+
+      setError(
+        `当前房间的 Tesla 可播线路持续异常：${message}。已停止循环重连，请手动重试或换直播间。`
       );
-      window.setTimeout(() => setStreamReloadToken((value) => value + 1), 1200);
+      setPlaybackNotice('');
     },
     [qualityOptions, activeQualityId, activateQuality]
   );
@@ -432,7 +452,7 @@ function TeslaWebLivePageInner() {
         </div>
         <button
           type='button'
-          onClick={() => setStreamReloadToken((value) => value + 1)}
+          onClick={reconnectStream}
           disabled={!currentSource || loadingStream}
           className='flex min-h-12 items-center gap-2 rounded-2xl bg-violet-500 px-4 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40'
         >
@@ -464,9 +484,7 @@ function TeslaWebLivePageInner() {
                 <button
                   type='button'
                   onClick={() =>
-                    currentSource
-                      ? setStreamReloadToken((value) => value + 1)
-                      : loadSources()
+                    currentSource ? reconnectStream() : loadSources()
                   }
                   className='flex min-h-12 items-center gap-2 rounded-xl bg-violet-500 px-5 text-sm font-medium active:scale-95'
                 >
@@ -490,7 +508,17 @@ function TeslaWebLivePageInner() {
                 onQualityChange={handleSelectQuality}
                 sourceKey={currentSource?.platform}
                 sourceName={currentSource?.name}
-                onPlaybackReady={() => setPlaybackNotice('')}
+                onPlaybackReady={() => {
+                  automaticReparseAttemptsRef.current = 0;
+                  setSources((current) =>
+                    current.map((source) =>
+                      source.key === currentSource?.key
+                        ? { ...source, status: 'live' }
+                        : source
+                    )
+                  );
+                  setPlaybackNotice('');
+                }}
                 onPlaybackError={handlePlaybackError}
               />
             )}

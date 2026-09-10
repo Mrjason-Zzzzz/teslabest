@@ -819,13 +819,13 @@ function TeslaPlayPageInner() {
             className={`grid items-start gap-4 transition-all duration-300 ease-in-out ${
               rightPanelCollapsed
                 ? 'grid-cols-1'
-                : 'grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_340px]'
+                : 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]'
             }`}
           >
             {/* 左侧：播放器 + 详情 */}
             <div className='min-w-0 rounded-2xl border border-violet-200/40 bg-gradient-to-b from-violet-50/50 to-transparent p-1.5 shadow-xl shadow-violet-950/5 transition-all duration-300 ease-in-out dark:border-violet-400/20 dark:from-violet-950/20'>
               {/* 播放器容器 */}
-              <div className='relative w-full min-h-[420px] md:min-h-[clamp(500px,68vh,760px)]'>
+              <div className='relative aspect-video w-full min-h-[420px] max-h-[72vh] md:min-h-[460px] lg:min-h-[500px] xl:min-h-[540px]'>
                 <div className='absolute inset-0 h-full w-full overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/20 ring-1 ring-white/10'>
                   {isLoading && loadingStage !== 'error' && (
                     <div className='absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900'>
@@ -989,7 +989,7 @@ function TeslaPlayPageInner() {
               currentDetail.episodes &&
               currentDetail.episodes.length > 0 &&
               !rightPanelCollapsed && (
-                <div className='min-w-0 2xl:sticky 2xl:top-4'>
+                <div className='min-w-0 lg:sticky lg:top-4'>
                   <div className='overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur dark:bg-gray-900/80 dark:ring-gray-700/50'>
                     <div className='flex border-b border-gray-100 dark:border-gray-800'>
                       <button

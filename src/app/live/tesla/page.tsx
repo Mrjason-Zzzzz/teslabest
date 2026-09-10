@@ -24,6 +24,7 @@ import TeslaPlayer from '@/components/TeslaPlayer';
 import {
   findSameLiveChannel,
   findStableLiveChannelById,
+  getLogicalLiveChannelKey,
   groupLiveChannelVariants,
 } from '@/lib/tesla/live-channel-identity';
 
@@ -91,6 +92,9 @@ function TeslaLivePageInner() {
   const [playbackIssue, setPlaybackIssue] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [expandedChannelKey, setExpandedChannelKey] = useState('');
+  const [lastGoodChannelIds, setLastGoodChannelIds] = useState<
+    Record<string, string>
+  >({});
   const [error, setError] = useState<string | null>(null);
 
   const channelCacheRef = useRef(new Map<string, LiveChannel[]>());
@@ -273,6 +277,25 @@ function TeslaLivePageInner() {
     [filteredChannels]
   );
 
+  useEffect(() => {
+    if (!currentSource || groupedChannels.length === 0) return;
+    const restored: Record<string, string> = {};
+    try {
+      for (const channelGroup of groupedChannels) {
+        const storageKey = `${currentSource.key}|${channelGroup.key}`;
+        const channelId = localStorage.getItem(
+          `tesla_live_last_good:${storageKey}`
+        );
+        if (channelId) restored[storageKey] = channelId;
+      }
+    } catch {
+      return;
+    }
+    if (Object.keys(restored).length > 0) {
+      setLastGoodChannelIds((current) => ({ ...current, ...restored }));
+    }
+  }, [currentSource, groupedChannels]);
+
   const syncUrl = useCallback((source: LiveSource, channel: LiveChannel) => {
     const params = new URLSearchParams(window.location.search);
     params.set('source', source.key);
@@ -283,6 +306,22 @@ function TeslaLivePageInner() {
       `${window.location.pathname}?${params.toString()}`
     );
   }, []);
+
+  const rememberPlayableLine = useCallback(
+    (source: LiveSource, channel: LiveChannel) => {
+      const storageKey = `${source.key}|${getLogicalLiveChannelKey(channel)}`;
+      setLastGoodChannelIds((current) => ({
+        ...current,
+        [storageKey]: channel.id,
+      }));
+      try {
+        localStorage.setItem(`tesla_live_last_good:${storageKey}`, channel.id);
+      } catch {
+        // Storage can be unavailable in private browsing; playback continues.
+      }
+    },
+    []
+  );
 
   const selectChannel = useCallback(
     (channel: LiveChannel) => {
@@ -404,8 +443,10 @@ function TeslaLivePageInner() {
                 onPlaybackReady={() => {
                   setPlaybackIssue(false);
                   setPlaybackNotice('');
-                  if (currentSource && currentChannel)
+                  if (currentSource && currentChannel) {
+                    rememberPlayableLine(currentSource, currentChannel);
                     syncUrl(currentSource, currentChannel);
+                  }
                 }}
                 onPlaybackError={handlePlaybackError}
               />
@@ -519,6 +560,28 @@ function TeslaLivePageInner() {
           ) : (
             <>
               <div className='space-y-2 border-b border-white/10 p-3'>
+                <div>
+                  <div className='mb-2 flex items-center justify-between text-xs text-white/45'>
+                    <span>直播源</span>
+                    <span>选择后保留同名频道，不自动串台</span>
+                  </div>
+                  <div className='flex gap-2 overflow-x-auto pb-1'>
+                    {sources.map((source) => (
+                      <button
+                        key={source.key}
+                        type='button'
+                        onClick={() => selectSource(source)}
+                        className={`min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium transition active:scale-95 ${
+                          currentSource?.key === source.key
+                            ? 'bg-violet-500 text-white'
+                            : 'bg-white/5 text-white/60'
+                        }`}
+                      >
+                        {source.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className='relative'>
                   <Search className='absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35' />
                   <input
@@ -558,11 +621,20 @@ function TeslaLivePageInner() {
                 ) : (
                   <div className='grid grid-cols-2 gap-2'>
                     {groupedChannels.map((channelGroup) => {
+                      const storageKey = currentSource
+                        ? `${currentSource.key}|${channelGroup.key}`
+                        : '';
+                      const rememberedId = lastGoodChannelIds[storageKey];
+                      const rememberedVariant = channelGroup.variants.find(
+                        (item) => item.id === rememberedId
+                      );
                       const selectedVariant = channelGroup.variants.find(
                         (item) => item.id === currentChannel?.id
                       );
                       const representative =
-                        selectedVariant || channelGroup.primary;
+                        selectedVariant ||
+                        rememberedVariant ||
+                        channelGroup.primary;
                       const expanded = expandedChannelKey === channelGroup.key;
                       return (
                         <div
@@ -583,6 +655,7 @@ function TeslaLivePageInner() {
                             </span>
                             <span className='mt-1 block truncate text-[11px] text-white/35'>
                               {representative.group || '直播频道'}
+                              {rememberedVariant ? ' · 上次可播' : ''}
                             </span>
                           </button>
                           {channelGroup.variants.length > 1 && (
@@ -614,6 +687,13 @@ function TeslaLivePageInner() {
                                   }`}
                                 >
                                   线路 {index + 1}
+                                  {variant.id === rememberedId
+                                    ? ' · 上次可播'
+                                    : failedChannelLinesRef.current.has(
+                                        variant.id
+                                      )
+                                    ? ' · 本次失败'
+                                    : ''}
                                 </button>
                               ))}
                             </div>
