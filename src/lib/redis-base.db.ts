@@ -1,6 +1,7 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
 import { AdminConfig } from './admin.types';
+import { persistRedisConfig } from './config-persistence';
 import { MangaReadRecord, MangaShelfItem } from './manga.types';
 import { BookReadRecord, BookShelfItem } from './book.types';
 import {
@@ -1878,13 +1879,17 @@ export abstract class BaseRedisStorage implements IStorage {
     const val = await this.withRetry(() =>
       this.adapter.get(this.adminConfigKey())
     );
-    return val ? (JSON.parse(val) as AdminConfig) : null;
+    if (val) return JSON.parse(val) as AdminConfig;
+    // A missing primary key must not silently reinitialize an existing site.
+    const backup = await this.withRetry(() => this.adapter.get('admin:config:latest'));
+    if (backup) {
+      throw new Error('管理员配置主记录缺失，备份仍存在，请恢复备份后继续');
+    }
+    return null;
   }
 
   async setAdminConfig(config: AdminConfig): Promise<void> {
-    await this.withRetry(() =>
-      this.adapter.set(this.adminConfigKey(), JSON.stringify(config))
-    );
+    await persistRedisConfig(this.adapter, config);
   }
 
   // ---------- 跳过片头片尾配置 ----------

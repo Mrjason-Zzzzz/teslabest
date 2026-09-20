@@ -3349,7 +3349,7 @@ export class PostgresStorage implements IStorage {
       return JSON.parse(result.config as string);
     } catch (err) {
       console.error('PostgresStorage.getAdminConfig error:', err);
-      return null;
+      throw err;
     }
   }
 

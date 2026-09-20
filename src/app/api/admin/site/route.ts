@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { normalizeApiBaseUrl } from '@/lib/url';
 
@@ -259,7 +259,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
 
-    const adminConfig = await getConfig();
+    const adminConfig = await getFreshConfig();
 
     // 站点、注册与外部服务密钥属于站长级配置。
     if (username !== process.env.USERNAME) {
@@ -336,6 +336,7 @@ export async function POST(request: NextRequest) {
 
     // 写入数据库
     await db.saveAdminConfig(adminConfig);
+    setCachedConfig(adminConfig);
 
     return NextResponse.json(
       { ok: true },

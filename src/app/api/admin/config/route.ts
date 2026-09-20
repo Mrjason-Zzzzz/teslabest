@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
+import { getFreshConfig } from '@/lib/config';
 
 export const runtime = 'nodejs';
 
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
   const username = authInfo.username;
 
   try {
-    const config = await getConfig();
+    const config = await getFreshConfig();
     const result: AdminConfigResult = {
       Role: 'owner',
       Config: config,

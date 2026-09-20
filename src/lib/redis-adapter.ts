@@ -8,6 +8,7 @@ import type { RedisClientType } from 'redis';
  * 只抽象 API 命名差异，不处理序列化（由调用者负责）
  */
 export interface RedisAdapter {
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
   // Hash 操作
   hSet(key: string, field: string, value: string): Promise<number>;
   hSet(key: string, data: Record<string, string>): Promise<number>;
@@ -47,6 +48,10 @@ export interface RedisAdapter {
  */
 export class StandardRedisAdapter implements RedisAdapter {
   constructor(private client: RedisClientType) {}
+
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    return this.client.eval(script, { keys, arguments: args });
+  }
 
   // Hash 操作
   async hSet(key: string, fieldOrData: string | Record<string, string>, value?: string): Promise<number> {
@@ -151,6 +156,10 @@ export class StandardRedisAdapter implements RedisAdapter {
  */
 export class UpstashRedisAdapter implements RedisAdapter {
   constructor(private client: Redis) {}
+
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    return this.client.eval(script, keys, args);
+  }
 
   // Hash 操作
   async hSet(key: string, fieldOrData: string | Record<string, string>, value?: string): Promise<number> {

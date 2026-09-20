@@ -74,6 +74,7 @@ export const API_CONFIG = {
 
 // 在模块加载时根据环境决定配置来源
 let cachedConfig: AdminConfig;
+let cachedConfigAt = 0;
 let configInitPromise: Promise<AdminConfig> | null = null;
 
 // 从配置文件补充管理员配置
@@ -423,7 +424,7 @@ async function getInitConfig(
 
 export async function getConfig(): Promise<AdminConfig> {
   // 直接使用内存缓存
-  if (cachedConfig) {
+  if (cachedConfig && Date.now() - cachedConfigAt < 5000) {
     return cachedConfig;
   }
 
@@ -441,6 +442,7 @@ export async function getConfig(): Promise<AdminConfig> {
       console.log('localStorage 模式：从环境变量初始化配置');
       const adminConfig = await getInitConfig('');
       cachedConfig = configSelfCheck(adminConfig);
+      cachedConfigAt = Date.now();
       configInitPromise = null;
       return cachedConfig;
     }
@@ -452,7 +454,8 @@ export async function getConfig(): Promise<AdminConfig> {
       adminConfig = await db.getAdminConfig();
     } catch (e) {
       console.error('获取管理员配置失败:', e);
-      dbReadFailed = true;
+      // A temporary outage must never create a writable default configuration.
+      throw e;
     }
 
     // db 中无配置，执行一次初始化
@@ -477,6 +480,7 @@ export async function getConfig(): Promise<AdminConfig> {
 
     adminConfig = configSelfCheck(adminConfig);
     cachedConfig = adminConfig;
+    cachedConfigAt = Date.now();
 
     // 如果进行了Emby配置迁移，保存到数据库
     if (!dbReadFailed && needsEmbyMigration) {
@@ -517,7 +521,12 @@ export async function getConfig(): Promise<AdminConfig> {
     return cachedConfig;
   })();
 
-  return configInitPromise;
+  try {
+    return await configInitPromise;
+  } finally {
+    // Failed initializations must be retryable on the next request.
+    configInitPromise = null;
+  }
 }
 
 /**
@@ -531,8 +540,11 @@ export async function getFreshConfig(): Promise<AdminConfig> {
   if (storageType === 'localstorage') return getConfig();
 
   const persisted = await db.getAdminConfig();
-  if (!persisted) return getConfig();
+  if (!persisted) {
+    throw new Error('管理员配置缺失，请恢复备份；已阻止使用缓存覆盖数据库');
+  }
   cachedConfig = configSelfCheck(persisted);
+  cachedConfigAt = Date.now();
   configInitPromise = null;
   return cachedConfig;
 }
@@ -1117,21 +1129,16 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
 }
 
 export async function resetConfig() {
-  let originConfig: AdminConfig | null = null;
-  try {
-    originConfig = await db.getAdminConfig();
-  } catch (e) {
-    console.error('获取管理员配置失败:', e);
-  }
-  if (!originConfig) {
-    originConfig = {} as AdminConfig;
-  }
+  const originConfig = await getFreshConfig();
   const adminConfig = await getInitConfig(
     originConfig.ConfigFile,
     originConfig.ConfigSubscribtion
   );
-  cachedConfig = adminConfig;
+  Object.assign(adminConfig, {
+    _storageRevision: (originConfig as any)._storageRevision,
+  });
   await db.saveAdminConfig(adminConfig);
+  await setCachedConfig(adminConfig);
 
   return;
 }
@@ -1218,6 +1225,7 @@ export async function getAvailableApiSites(
 
 export async function setCachedConfig(config: AdminConfig) {
   cachedConfig = config;
+  cachedConfigAt = Date.now();
 }
 
 export async function clearConfigCache() {
