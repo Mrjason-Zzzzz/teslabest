@@ -48,6 +48,12 @@ interface ConfigFileStruct {
   lives?: {
     [key: string]: LiveCfg;
   };
+  web_live?: {
+    key: string;
+    name: string;
+    platform: string;
+    roomId: string;
+  }[];
   special_source_apis?: string[];
   specialSourceApis?: string[];
 }
@@ -72,10 +78,205 @@ export const API_CONFIG = {
   },
 };
 
+// 内置默认资源（写死在代码中，按用户原始配置文件整理）。
+// 收录标准：已验证连通、HTTPS、标准苹果CMS采集接口或可获取的 m3u 直播列表。
+// 数据库配置丢失或条目被删除后，这些条目会在读取配置时自动恢复；
+// 后台仍可“停用”单个内置源。设置环境变量 ENABLE_BUILTIN_SOURCES=false 可整体关闭。
+const BUILTIN_DEFAULT_CONFIG: ConfigFileStruct = {
+  cache_time: 7200,
+  api_site: {
+    mtm3u8: {
+      key: 'mtm3u8',
+      name: '茅台资源',
+      api: 'https://caiji.maotai999.vip/api.php/provide/vod/',
+      detail: 'https://caiji.maotai999.vip',
+    },
+    modum3u8: {
+      key: 'modum3u8',
+      name: '魔都资源',
+      api: 'https://www.moduzy.com/api.php/provide/vod/from/modum3u8/',
+      detail: 'https://www.moduzy.com',
+    },
+    bfzym3u8: {
+      key: 'bfzym3u8',
+      name: '非凡影视',
+      api: 'https://cj.ffzyapi.com/api.php/provide/vod/from/ffm3u8/',
+      detail: 'https://cj.ffzyapi.com',
+    },
+    lzm3u8: {
+      key: 'lzm3u8',
+      name: '360资源',
+      api: 'https://360zy.com/api.php/provide/vod/from/lzm3u8/',
+      detail: 'https://360zy.com',
+    },
+    bdm3u8: {
+      key: 'bdm3u8',
+      name: '极速资源',
+      api: 'https://jszyapi.com/api.php/provide/vod',
+      detail: 'https://jszyapi.com',
+    },
+    nby: {
+      key: 'nby',
+      name: '无尽资源',
+      api: 'https://api.wujinapi.me/api.php/provide/vod',
+      detail: 'https://api.wujinapi.me',
+    },
+    ikun: {
+      key: 'ikun',
+      name: 'IKUN资源',
+      api: 'https://ikunzy.com/api.php/provide/vod',
+      detail: '',
+    },
+    jisu: {
+      key: 'jisu',
+      name: '极速专线',
+      api: 'https://jszyapi.com/api.php/provide/vod/from/m3u8',
+      detail: '',
+    },
+  },
+  custom_category: [
+    { name: '华语电影', type: 'movie', query: '华语' },
+    { name: '欧美电影', type: 'movie', query: '欧美' },
+    { name: '豆瓣高分', type: 'movie', query: '豆瓣高分' },
+    { name: '国产剧', type: 'tv', query: '国产剧' },
+    { name: '美剧', type: 'tv', query: '美剧' },
+    { name: '韩剧', type: 'tv', query: '韩剧' },
+    { name: '综艺', type: 'tv', query: '综艺' },
+    { name: '纪录片', type: 'tv', query: '纪录片' },
+    { name: '短剧', type: 'tv', query: '短剧' },
+  ],
+  lives: {
+    guovin: {
+      name: 'Guovin',
+      url: 'https://cdn.jsdelivr.net/gh/Guovin/iptv-api@gd/output/result.m3u',
+    },
+    ghfast: {
+      name: 'ghfast',
+      url: 'https://ghfast.top/raw.githubusercontent.com/TianmuTNT/iptv/main/iptv.m3u',
+    },
+    itvlist: {
+      name: 'itvlist',
+      url: 'https://raw.githubusercontent.com/mzky/checklist/refs/heads/master/itvlist.m3u',
+    },
+    suxuang: {
+      name: 'suxuang',
+      url: 'https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u',
+    },
+  },
+  web_live: [
+    { key: 'web_cctv13', name: 'CCTV13', platform: 'douyin', roomId: '547977714661' },
+    { key: 'web_cctv6', name: 'CCTV6', platform: 'douyin', roomId: '232551178364' },
+    { key: 'web_cctv2', name: 'CCTV2', platform: 'douyin', roomId: '296728101980' },
+    { key: 'web_zengxiaoxian', name: '曾小咸', platform: 'huya', roomId: '11336726' },
+    { key: 'web_zhouxingxing', name: '周星星', platform: 'huya', roomId: '11342412' },
+    { key: 'web_gangpianjingdian', name: '港片经典', platform: 'huya', roomId: '30682679' },
+  ],
+};
+
 // 在模块加载时根据环境决定配置来源
 let cachedConfig: AdminConfig;
 let cachedConfigAt = 0;
 let configInitPromise: Promise<AdminConfig> | null = null;
+
+// 把写死的资源站与直播源合并进当前配置：
+// - 已存在的条目只标记为配置文件来源（from: 'config'，后台不可删除），
+//   不改写 name/api/detail/url，尊重数据库中已配置的值；
+// - 不存在的条目自动补回，实现“删除后自动恢复”。
+// 设置环境变量 ENABLE_BUILTIN_SOURCES=false 可整体关闭内置合并。
+function mergeBuiltinSources(adminConfig: AdminConfig): void {
+  if (process.env.ENABLE_BUILTIN_SOURCES === 'false') {
+    return;
+  }
+
+  const sources = new Map(
+    (adminConfig.SourceConfig || []).map((s) => [s.key, s])
+  );
+  Object.entries(BUILTIN_DEFAULT_CONFIG.api_site || {}).forEach(
+    ([key, site]) => {
+      const existing = sources.get(key);
+      if (existing) {
+        existing.from = 'config';
+      } else {
+        sources.set(key, {
+          key,
+          name: site.name,
+          api: site.api,
+          detail: site.detail,
+          from: 'config',
+          disabled: false,
+        });
+      }
+    }
+  );
+  adminConfig.SourceConfig = Array.from(sources.values());
+
+  const lives = new Map((adminConfig.LiveConfig || []).map((l) => [l.key, l]));
+  Object.entries(BUILTIN_DEFAULT_CONFIG.lives || {}).forEach(
+    ([key, live]) => {
+      const existing = lives.get(key);
+      if (existing) {
+        existing.from = 'config';
+      } else {
+        lives.set(key, {
+          key,
+          name: live.name,
+          url: live.url,
+          ua: live.ua,
+          epg: live.epg,
+          channelNumber: 0,
+          from: 'config',
+          disabled: false,
+        });
+      }
+    }
+  );
+  adminConfig.LiveConfig = Array.from(lives.values());
+
+  // 自定义分类：已有条目保留数据库配置，缺失条目补回
+  const categories = new Map(
+    (adminConfig.CustomCategories || []).map((c) => [c.query + c.type, c])
+  );
+  (BUILTIN_DEFAULT_CONFIG.custom_category || []).forEach((category) => {
+    const key = category.query + category.type;
+    const existing = categories.get(key);
+    if (existing) {
+      existing.from = 'config';
+    } else {
+      categories.set(key, {
+        name: category.name || category.query,
+        type: category.type,
+        query: category.query,
+        from: 'config',
+        disabled: false,
+      });
+    }
+  });
+  adminConfig.CustomCategories = Array.from(categories.values());
+
+  // 网络直播源：已有条目保留数据库配置，缺失条目补回
+  if (!adminConfig.WebLiveConfig) {
+    adminConfig.WebLiveConfig = [];
+  }
+  const webLives = new Map(
+    adminConfig.WebLiveConfig.map((w) => [w.key, w])
+  );
+  (BUILTIN_DEFAULT_CONFIG.web_live || []).forEach((live) => {
+    const existing = webLives.get(live.key);
+    if (existing) {
+      existing.from = 'config';
+    } else {
+      webLives.set(live.key, {
+        key: live.key,
+        name: live.name,
+        platform: live.platform,
+        roomId: live.roomId,
+        from: 'config',
+        disabled: false,
+      });
+    }
+  });
+  adminConfig.WebLiveConfig = Array.from(webLives.values());
+}
 
 // 从配置文件补充管理员配置
 export function refineConfig(adminConfig: AdminConfig): AdminConfig {
@@ -249,9 +450,11 @@ async function getInitConfig(
     }
   }
 
-  // 优先从环境变量读取配置
+  // 优先从环境变量读取配置，其次使用已保存的配置文件；
+  // 都没有时使用代码内置默认配置（写死的资源站与直播源）
   const envConfig = process.env.INIT_CONFIG || '';
-  const configSource = envConfig || configFile;
+  const configSource =
+    envConfig || configFile || JSON.stringify(BUILTIN_DEFAULT_CONFIG);
 
   try {
     cfgFile = JSON.parse(configSource) as ConfigFileStruct;
@@ -332,6 +535,7 @@ async function getInitConfig(
       RequireRedemptionCode: true,
       RegistrationAccessMode: 'redemption',
       MembershipRenewalMessage: '如需续费请联系站长',
+      SingleDeviceLoginEnabled: true,
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -414,6 +618,21 @@ async function getInitConfig(
       ua: live.ua,
       epg: live.epg,
       channelNumber: 0,
+      from: 'config',
+      disabled: false,
+    });
+  });
+
+  // 从配置文件中补充网络直播源信息
+  (cfgFile.web_live || []).forEach((live) => {
+    if (!adminConfig.WebLiveConfig) {
+      adminConfig.WebLiveConfig = [];
+    }
+    adminConfig.WebLiveConfig.push({
+      key: live.key,
+      name: live.name,
+      platform: live.platform,
+      roomId: live.roomId,
       from: 'config',
       disabled: false,
     });
@@ -583,6 +802,7 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       RequireRedemptionCode: true,
       RegistrationAccessMode: 'redemption',
       MembershipRenewalMessage: '如需续费请联系站长',
+      SingleDeviceLoginEnabled: true,
       RegistrationRequireTurnstile: false,
       LoginRequireTurnstile: false,
       TurnstileSiteKey: '',
@@ -637,6 +857,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     adminConfig.SiteConfig.RegistrationAccessMode === 'redemption';
   if (adminConfig.SiteConfig.MembershipRenewalMessage === undefined) {
     adminConfig.SiteConfig.MembershipRenewalMessage = '如需续费请联系站长';
+  }
+  if (adminConfig.SiteConfig.SingleDeviceLoginEnabled === undefined) {
+    adminConfig.SiteConfig.SingleDeviceLoginEnabled = true;
   }
   if (adminConfig.SiteConfig.RegistrationRequireTurnstile === undefined) {
     adminConfig.SiteConfig.RegistrationRequireTurnstile = false;
@@ -1124,6 +1347,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       adminConfig.OPDSConfig.CacheTTL = 10 * 60 * 1000;
     }
   }
+
+  // 合并写死的内置资源站与直播源（删除后自动恢复，禁用状态保留）
+  mergeBuiltinSources(adminConfig);
 
   return adminConfig;
 }
