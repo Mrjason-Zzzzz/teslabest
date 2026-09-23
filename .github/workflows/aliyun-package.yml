@@ -1,0 +1,71 @@
+name: Build Aliyun Package
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/aliyun-package.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aliyun-package
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_STORAGE_TYPE: redis
+      REDIS_URL: redis://127.0.0.1:6379/15
+      DOCKER_ENV: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 固定迁移版本，避免混入尚未验收的新功能
+          ref: 70d5477ff19937c0e7c796c6bbeec5910bb6eeee
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install and build
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -s .next/BUILD_ID
+
+      - name: Package Linux application
+        run: |
+          tar \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./.next/cache' \
+            --exclude='./.env*' \
+            -czf "$RUNNER_TEMP/p002-linux-x64.tar.gz" .
+          cd "$RUNNER_TEMP"
+          sha256sum p002-linux-x64.tar.gz > p002-linux-x64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p002-linux-x64
+          path: |
+            ${{ runner.temp }}/p002-linux-x64.tar.gz
+            ${{ runner.temp }}/p002-linux-x64.sha256
+          retention-days: 3
+          if-no-files-found: error
