@@ -1,0 +1,437 @@
+name: Build Aliyun Playback Fix
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/aliyun-playback-fix.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aliyun-playback-fix
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_STORAGE_TYPE: redis
+      REDIS_URL: redis://127.0.0.1:6379/15
+      DOCKER_ENV: "true"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 70d5477ff19937c0e7c796c6bbeec5910bb6eeee
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Apply isolated playback fixes
+        run: |
+          git apply <<'P002_PATCH'
+          diff --git a/src/app/play/tesla/page.tsx b/src/app/play/tesla/page.tsx
+          index 22e176b..d9c7e2e 100644
+          --- a/src/app/play/tesla/page.tsx
+          +++ b/src/app/play/tesla/page.tsx
+          @@ -31,6 +31,11 @@ import {
+             saveLocalEpisodeProgress,
+           } from '@/lib/episode-progress';
+           import type { SearchResult } from '@/lib/types';
+          +import {
+          +  sameContentTitle,
+          +  filterSourcesForCurrentVideo,
+          +  getVideoType,
+          +} from '@/lib/tesla-content-identity';
+           
+           import PageLayout from '@/components/PageLayout';
+           import TeslaPlayer from '@/components/TeslaPlayer';
+          @@ -68,56 +73,6 @@ function formatResumeTime(seconds: number): string {
+               : `${minutes}:${String(secs).padStart(2, '0')}`;
+           }
+           
+          -function normalizeTitle(title: string): string {
+          -  return title
+          -    .replace(/[\s\u3000]/g, '')
+          -    .replace(/[()（）[\]【】{}「」『』<>《》]/g, '')
+          -    .replace(/[^\w\u4e00-\u9fa5]/g, '')
+          -    .toLowerCase();
+          -}
+          -
+          -function getVideoType(item: SearchResult): 'movie' | 'tv' {
+          -  if (
+          -    item.source === 'emby' ||
+          -    item.source?.startsWith('emby_') ||
+          -    item.source === 'openlist'
+          -  ) {
+          -    return item.type_name === '电影' ? 'movie' : 'tv';
+          -  }
+          -  const typeName = item.type_name?.toLowerCase() || '';
+          -  if (typeName.includes('电影') || typeName.includes('movie')) return 'movie';
+          -  return 'tv';
+          -}
+          -
+          -function filterSourcesForCurrentVideo(
+          -  items: SearchResult[],
+          -  currentTitle: string,
+          -  currentYear: string,
+          -  currentType?: string
+          -): SearchResult[] {
+          -  const normalizedCurrent = normalizeTitle(currentTitle);
+          -  const currentVideoType = currentType === 'movie' ? 'movie' : 'tv';
+          -
+          -  return items.filter((item) => {
+          -    if (normalizeTitle(item.title) !== normalizedCurrent) return false;
+          -    if (currentYear && /^\d{4}$/.test(currentYear)) {
+          -      const itemYear = item.year || '';
+          -      const yearMatch =
+          -        itemYear === currentYear ||
+          -        !itemYear ||
+          -        itemYear.trim() === '' ||
+          -        itemYear === 'unknown' ||
+          -        !/^\d{4}$/.test(itemYear);
+          -      if (!yearMatch) return false;
+          -    }
+          -    if (currentType) {
+          -      const itemType = getVideoType(item);
+          -      if (itemType !== currentVideoType) return false;
+          -    }
+          -    return true;
+          -  });
+          -}
+          -
+           function TeslaPlayPageInner() {
+             const router = useRouter();
+             const searchParams = useSearchParams();
+          @@ -249,6 +204,15 @@ function TeslaPlayPageInner() {
+                   title: title || null,
+                 });
+                 if (seq !== detailSeqRef.current) throw new Error('stale');
+          +      if (!sameContentTitle(title, detail.title)) {
+          +        console.warn('[TeslaPlay] rejected mismatched detail', {
+          +          requestedTitle: title,
+          +          returnedTitle: detail.title,
+          +          source: src,
+          +          id: vid,
+          +        });
+          +        throw new Error('资源返回的影片与所选影片不符，请切换源');
+          +      }
+                 return detail;
+               },
+               []
+          @@ -269,23 +233,9 @@ function TeslaPlayPageInner() {
+                   stypeParam
+                 );
+           
+          -      if (filtered.length === 0) {
+          -        const normalizedCurrent = normalizeTitle(initialTitle);
+          -        filtered = allResults.filter(
+          -          (item) => normalizeTitle(item.title) === normalizedCurrent
+          -        );
+          -      }
+          -
+          -      if (filtered.length === 0 && source && id) {
+          -        const current = allResults.find(
+          -          (item) => item.source === source && item.id === id
+          -        );
+          -        if (current) filtered = [current];
+          -      }
+          -
+          -      if (filtered.length === 0) filtered = allResults;
+                 if (
+                   active &&
+          +        sameContentTitle(initialTitle, active.title) &&
+                   !filtered.some(
+                     (item) => item.source === active.source && item.id === active.id
+                   )
+          @@ -341,6 +291,8 @@ function TeslaPlayPageInner() {
+                   if (allResults.length === 0) throw new Error('未找到匹配的播放源');
+                   const filtered = filterSearchResults(allResults);
+                   setAllSources(filtered);
+          +        if (filtered.length === 0)
+          +          throw new Error('暂无匹配的正片资源，请更换片名或稍后重试');
+           
+                   const requestedSource =
+                     source && id
+          diff --git a/src/components/TeslaPlayer.tsx b/src/components/TeslaPlayer.tsx
+          index cbd03d2..2861126 100644
+          --- a/src/components/TeslaPlayer.tsx
+          +++ b/src/components/TeslaPlayer.tsx
+          @@ -3,6 +3,7 @@
+           /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-empty-function, no-empty */
+           
+           import Hls from 'hls.js';
+          +import { TeslaVisualWatchdog } from '@/lib/tesla-visual-watchdog';
+           import {
+             FastForward,
+             Loader2,
+          @@ -941,8 +942,13 @@ export default function TeslaPlayer({
+               let liveRecoveryAttempts = 0;
+               let visualWatchdogTimer: number | null = null;
+               let videoFrameCallbackId = 0;
+          -    let lastVideoFrameAt = Date.now();
+          -    let lastVideoMediaTime = 0;
+          +    let visualFaultActive = false;
+          +    const visualWatchdog = new TeslaVisualWatchdog();
+          +    const resetVisualObservation = () => {
+          +      visualWatchdog.reset(performance.now(), videoEl.currentTime);
+          +    };
+          +    resetVisualObservation();
+          +    document.addEventListener('visibilitychange', resetVisualObservation);
+               let lastTotalVideoFrames = 0;
+               const supportsVideoFrameCallback =
+                 typeof (HTMLVideoElement.prototype as any).requestVideoFrameCallback ===
+          @@ -1091,8 +1097,14 @@ export default function TeslaPlayer({
+           
+               const observeVideoFrame = (_now: number, metadata: any) => {
+                 if (destroyed) return;
+          -      lastVideoFrameAt = Date.now();
+          -      lastVideoMediaTime = metadata?.mediaTime ?? videoEl.currentTime;
+          +      if (visualFaultActive) {
+          +        visualFaultActive = false;
+          +        setError(null);
+          +      }
+          +      visualWatchdog.reset(
+          +        performance.now(),
+          +        metadata?.mediaTime ?? videoEl.currentTime
+          +      );
+                 setLoading(false);
+                 setBuffering(false);
+                 reportPlaybackReady();
+          @@ -1109,6 +1121,7 @@ export default function TeslaPlayer({
+               visualWatchdogTimer = window.setInterval(() => {
+                 if (
+                   destroyed ||
+          +        document.visibilityState === 'hidden' ||
+                   videoEl.paused ||
+                   userPausedRef.current ||
+                   videoEl.currentTime < 2
+          @@ -1120,18 +1133,21 @@ export default function TeslaPlayer({
+                   const totalFrames = quality?.totalVideoFrames || 0;
+                   if (totalFrames > lastTotalVideoFrames) {
+                     lastTotalVideoFrames = totalFrames;
+          -          lastVideoFrameAt = Date.now();
+          -          lastVideoMediaTime = videoEl.currentTime;
+          +          resetVisualObservation();
+                   }
+                 }
+           
+          -      const audioAdvancedWithoutFrames =
+          -        videoEl.currentTime - lastVideoMediaTime > 3 &&
+          -        Date.now() - lastVideoFrameAt > 6000;
+          +      const audioAdvancedWithoutFrames = visualWatchdog.stalled(
+          +        performance.now(),
+          +        videoEl.currentTime,
+          +        false
+          +      );
+                 if (!audioAdvancedWithoutFrames) return;
+           
+                 if (!live) {
+          -        const message = '当前资源只有声音但没有可解码画面，正在自动换源';
+          +        if (visualFaultActive) return;
+          +        visualFaultActive = true;
+          +        const message = '当前资源画面暂未恢复，请重试或手动切换同片资源';
+                   setError(message);
+                   reportPlaybackError(message);
+                   return;
+          @@ -1149,8 +1165,7 @@ export default function TeslaPlayer({
+                     hlsRef.current.startLoad(-1);
+                   } catch {}
+                   videoEl.play().catch(() => {});
+          -        lastVideoFrameAt = Date.now();
+          -        lastVideoMediaTime = videoEl.currentTime;
+          +        resetVisualObservation();
+                 } else {
+                   scheduleAutomaticReconnect('直播有声音但画面已停止');
+                 }
+          @@ -1275,6 +1290,7 @@ export default function TeslaPlayer({
+                 destroyed = true;
+                 clearLiveStallRecovery();
+                 if (visualWatchdogTimer) clearInterval(visualWatchdogTimer);
+          +      document.removeEventListener('visibilitychange', resetVisualObservation);
+                 if (supportsVideoFrameCallback && videoFrameCallbackId) {
+                   try {
+                     (videoEl as any).cancelVideoFrameCallback(videoFrameCallbackId);
+          diff --git a/src/lib/tesla-content-identity.ts b/src/lib/tesla-content-identity.ts
+          new file mode 100644
+          index 0000000..575303e
+          --- /dev/null
+          +++ b/src/lib/tesla-content-identity.ts
+          @@ -0,0 +1,39 @@
+          +import type { SearchResult } from './types';
+          +
+          +export function getVideoType(item: SearchResult): 'movie' | 'tv' {
+          +  const type = item.type_name?.toLowerCase() || '';
+          +  return type.includes('电影') || type.includes('movie') ? 'movie' : 'tv';
+          +}
+          +
+          +// Fail closed: source ranking must never substitute a different programme.
+          +export function sameContentTitle(expected: string, actual: string): boolean {
+          +  const normalize = (value: string) =>
+          +    value
+          +      .normalize('NFKC')
+          +      .replace(/[\s\u3000]/g, '')
+          +      .replace(/[^\w\u4e00-\u9fa5]/g, '')
+          +      .toLowerCase();
+          +  const key = normalize(expected);
+          +  return Boolean(key) && key === normalize(actual);
+          +}
+          +
+          +export function filterSourcesForCurrentVideo(
+          +  items: SearchResult[],
+          +  title: string,
+          +  year: string,
+          +  type?: string
+          +): SearchResult[] {
+          +  return items.filter((item) => {
+          +    if (!sameContentTitle(title, item.title)) return false;
+          +    const itemYear = (item.year || '').trim();
+          +    if (/^\d{4}$/.test(year) && /^\d{4}$/.test(itemYear) && itemYear !== year)
+          +      return false;
+          +    const typeName = item.type_name?.toLowerCase() || '';
+          +    // Missing category is unknown, not proof of a different type.
+          +    if (type && typeName) {
+          +      const movie = typeName.includes('电影') || typeName.includes('movie');
+          +      if ((type === 'movie') !== movie) return false;
+          +    }
+          +    return true;
+          +  });
+          +}
+          diff --git a/src/lib/tesla-visual-watchdog.ts b/src/lib/tesla-visual-watchdog.ts
+          new file mode 100644
+          index 0000000..7f6efbd
+          --- /dev/null
+          +++ b/src/lib/tesla-visual-watchdog.ts
+          @@ -0,0 +1,18 @@
+          +// Only foreground observation time may establish a missing-video fault.
+          +export class TeslaVisualWatchdog {
+          +  private observedAt = 0;
+          +  private mediaTime = 0;
+          +
+          +  reset(now: number, mediaTime: number) {
+          +    this.observedAt = now;
+          +    this.mediaTime = mediaTime;
+          +  }
+          +
+          +  stalled(now: number, mediaTime: number, hidden: boolean): boolean {
+          +    if (hidden) {
+          +      this.reset(now, mediaTime);
+          +      return false;
+          +    }
+          +    return now - this.observedAt > 6000 && mediaTime - this.mediaTime > 3;
+          +  }
+          +}
+          diff --git a/src/lib/tesla-playback-guards.test.ts b/src/lib/tesla-playback-guards.test.ts
+          new file mode 100644
+          index 0000000..975a827
+          --- /dev/null
+          +++ b/src/lib/tesla-playback-guards.test.ts
+          @@ -0,0 +1,66 @@
+          +import {
+          +  sameContentTitle,
+          +  filterSourcesForCurrentVideo,
+          +} from './tesla-content-identity';
+          +import type { SearchResult } from './types';
+          +import { TeslaVisualWatchdog } from './tesla-visual-watchdog';
+          +
+          +describe('content identity', () => {
+          +  const result = (title: string, year = '2026', type_name = '电影') =>
+          +    ({ title, year, type_name } as SearchResult);
+          +  test('no matching film returns no candidates, never a popular unrelated result', () => {
+          +    expect(
+          +      filterSourcesForCurrentVideo(
+          +        [result('2026微博音乐盛典'), result('同床异梦2')],
+          +        '年会不能停！2',
+          +        '2026',
+          +        'movie'
+          +      )
+          +    ).toEqual([]);
+          +  });
+          +  test('rejects explicit year/category mismatch and retains matching film', () => {
+          +    const correct = result('年会不能停！2');
+          +    expect(
+          +      filterSourcesForCurrentVideo(
+          +        [
+          +          result('年会不能停！2', '2025'),
+          +          result('年会不能停！2', '2026', '综艺'),
+          +          correct,
+          +        ],
+          +        '年会不能停！2',
+          +        '2026',
+          +        'movie'
+          +      )
+          +    ).toEqual([correct]);
+          +  });
+          +  test.each(['2026微博音乐盛典', '同床异梦2', '年会不能停！'])(
+          +    'rejects %s',
+          +    (title) => {
+          +      expect(sameContentTitle('年会不能停！2', title)).toBe(false);
+          +    }
+          +  );
+          +  test('accepts punctuation and fullwidth differences, not empty titles', () => {
+          +    expect(sameContentTitle('年会不能停！2', '年会不能停!２')).toBe(true);
+          +    expect(sameContentTitle('', '')).toBe(false);
+          +  });
+          +});
+          +
+          +describe('foreground frame observation', () => {
+          +  test('background audio advancement is not a video failure', () => {
+          +    const guard = new TeslaVisualWatchdog();
+          +    guard.reset(0, 0);
+          +    expect(guard.stalled(60000, 60, true)).toBe(false);
+          +    // visibilitychange resets observation even if hidden timers never ran.
+          +    guard.reset(120000, 120);
+          +    expect(guard.stalled(120001, 120, false)).toBe(false);
+          +    expect(guard.stalled(125000, 125, false)).toBe(false);
+          +    expect(guard.stalled(129000, 129, false)).toBe(true);
+          +  });
+          +  test('presented frames and paused media do not trigger a fault', () => {
+          +    const guard = new TeslaVisualWatchdog();
+          +    guard.reset(10000, 10);
+          +    expect(guard.stalled(30000, 10, false)).toBe(false);
+          +    guard.reset(30000, 30);
+          +    expect(guard.stalled(31000, 31, false)).toBe(false);
+          +  });
+          +});
+          P002_PATCH
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'server.js';
+          const text = fs.readFileSync(path, 'utf8');
+          const before = '.listen(port, () => {';
+          if (text.split(before).length !== 2) throw new Error('Unexpected listener; stop build');
+          fs.writeFileSync(path, text.replace(before, '.listen(port, hostname, () => {'));
+          NODE
+          node --check server.js
+      - name: Test and build
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm install --frozen-lockfile
+          node node_modules/typescript/bin/tsc --noEmit --incremental false
+          node node_modules/jest/bin/jest.js src/lib/tesla-playback-guards.test.ts src/lib/tesla/av-sync.test.ts src/lib/tesla/ad-skip.test.ts src/lib/hls/ad-filter-custom.test.ts src/lib/hls/ad-filter-source.test.ts --runInBand
+          pnpm build
+          test -s .next/BUILD_ID
+          printf '%s\n' '70d5477 + playback-identity-visibility-fix-20260924 + hostname-bind' > P002_BUILD_INFO.txt
+      - name: Package Linux application
+        run: |
+          tar --exclude='./.git' --exclude='./.github' --exclude='./.next/cache' --exclude='./.env*' -czf "$RUNNER_TEMP/p002-linux-x64.tar.gz" .
+          cd "$RUNNER_TEMP"
+          sha256sum p002-linux-x64.tar.gz > p002-linux-x64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p002-playback-fix-20260924
+          path: |
+            ${{ runner.temp }}/p002-linux-x64.tar.gz
+            ${{ runner.temp }}/p002-linux-x64.sha256
+          retention-days: 7
+          if-no-files-found: error
