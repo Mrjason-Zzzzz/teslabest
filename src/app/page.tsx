@@ -10,6 +10,7 @@ import {
   Link as LinkIcon,
   ListVideo,
   Music,
+  QrCode,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
@@ -825,6 +826,15 @@ function HomeClient() {
                 <LinkIcon size={18} />
                 <span>直链播放</span>
               </button>
+              <Link href='/cast' prefetch={false}>
+                <button
+                  className='flex min-h-11 items-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700'
+                  title='手机扫码接力播放'
+                >
+                  <QrCode size={18} />
+                  <span>手机接力</span>
+                </button>
+              </Link>
 
               {musicEnabled && (
                 <Link href='/music' prefetch={false}>
