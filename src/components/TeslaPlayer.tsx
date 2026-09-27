@@ -349,8 +349,7 @@ export default function TeslaPlayer({
   const [mode, setMode] = useState<PlayMode>(() =>
     selectTeslaPlaybackMode(
       live ? 'webcodecs' : defaultModeProp,
-      WebCodecsPlayer.isSupported(),
-      typeof navigator === 'undefined' ? '' : navigator.userAgent
+      WebCodecsPlayer.isSupported()
     )
   );
 
@@ -524,8 +523,7 @@ export default function TeslaPlayer({
     setMode(
       selectTeslaPlaybackMode(
         live ? 'webcodecs' : defaultModeProp,
-        WebCodecsPlayer.isSupported(),
-        navigator.userAgent
+        WebCodecsPlayer.isSupported()
       )
     );
     setPresentedVideoTime(0);

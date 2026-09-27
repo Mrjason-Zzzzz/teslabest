@@ -391,13 +391,18 @@ div[data-media-provider] video {
  * retain a playable video area, then make the selector reachable by normal
  * page scrolling. Large car displays retain the two-column locked layout.
  */
-@media (max-width: 1500px), (max-height: 1000px) {
+@media (max-width: 1600px), (max-height: 1100px) {
   .tesla-live-route {
     position: relative !important;
     inset: auto !important;
+    height: auto !important;
+    max-height: none !important;
     min-height: 100dvh;
     overflow-x: hidden !important;
     overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
   }
 
   .tesla-live-route > header {
@@ -408,6 +413,7 @@ div[data-media-provider] video {
 
   .tesla-live-route > main {
     height: auto !important;
+    max-height: none !important;
     min-height: calc(100dvh - 4rem) !important;
     grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(14rem, 48dvh) auto !important;

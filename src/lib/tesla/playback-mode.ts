@@ -1,26 +1,13 @@
 export type TeslaPlaybackMode = 'video' | 'webcodecs';
 
-/**
- * Canvas/WebCodecs is mandatory for the moving-car renderer, where the native
- * video layer can be blanked by the vehicle browser. Desktop browsers do not
- * have that restriction and their native media clock is the more compatible
- * A/V master for ordinary playback verification.
- */
-export function isTeslaVehicleBrowser(userAgent: string): boolean {
-  return /tesla|qtcarbrowser|teslabrowser|teslaos|carbrowser/i.test(userAgent);
-}
-
 export function selectTeslaPlaybackMode(
   wanted: TeslaPlaybackMode,
-  webCodecsSupported: boolean,
-  userAgent: string
+  webCodecsSupported: boolean
 ): TeslaPlaybackMode {
-  if (
-    wanted === 'webcodecs' &&
-    webCodecsSupported &&
-    isTeslaVehicleBrowser(userAgent)
-  ) {
-    return 'webcodecs';
-  }
-  return 'video';
+  // Tesla's browser user-agent is not a stable contract: recent vehicle
+  // releases may present as a generic Chromium/Linux browser. A UA split
+  // therefore routes a moving vehicle to the native video layer, which can be
+  // blanked while driving. Keep the established capability-based rule: the
+  // Tesla route requests WebCodecs and uses Canvas whenever it is available.
+  return wanted === 'webcodecs' && webCodecsSupported ? 'webcodecs' : 'video';
 }
