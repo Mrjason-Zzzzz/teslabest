@@ -294,6 +294,13 @@ function shouldSkipAuth(pathname: string): boolean {
     '/icons/',
     '/logo.png',
     '/screenshot.png',
+    // The vehicle creates the session behind normal authentication. The phone
+    // only receives an expiring, high-entropy handoff capability in its QR
+    // code, so it must be able to open this sender page without its own login.
+    // The cast API still verifies either the vehicle owner (polling) or that
+    // one-time capability (submission); it is never a public media endpoint.
+    '/cast/send',
+    '/api/cast/sessions/',
   ];
 
   return skipPaths.some((path) => pathname.startsWith(path));
