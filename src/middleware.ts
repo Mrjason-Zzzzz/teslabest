@@ -23,7 +23,14 @@ export async function middleware(request: NextRequest) {
     '/web-live': '/web-live/tesla',
   };
   const teslaDestination = teslaEntrypoints[pathname];
-  if (teslaDestination) {
+  // Direct handoff streams do not have a catalogue title or episode identity.
+  // Keep them on the existing direct-play route, which accepts only the
+  // encoded URL. Redirecting them to /play/tesla makes that page reject the
+  // request as a missing-title catalogue entry.
+  const isDirectPlayHandoff =
+    pathname === '/play' &&
+    request.nextUrl.searchParams.get('source') === 'directplay';
+  if (teslaDestination && !isDirectPlayHandoff) {
     const teslaUrl = request.nextUrl.clone();
     teslaUrl.pathname = teslaDestination;
     return NextResponse.redirect(teslaUrl);
