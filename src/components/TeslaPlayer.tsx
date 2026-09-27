@@ -16,6 +16,8 @@ import {
   Rewind,
   Search,
   Settings2,
+  SkipBack,
+  SkipForward,
   Volume2,
   VolumeX,
   WifiOff,
@@ -220,6 +222,11 @@ export default function TeslaPlayer({
   const playingRef = useRef(false);
   const controlsLockedOpenRef = useRef(false);
   const scrubTimeRef = useRef<number | null>(null);
+  const progressGestureRef = useRef<{
+    pointerId: number;
+    startX: number;
+    moved: boolean;
+  } | null>(null);
   const suppressClickRef = useRef(false);
   const seekGestureRef = useRef<{
     pointerId: number;
@@ -256,6 +263,7 @@ export default function TeslaPlayer({
   const [reconnectMessage, setReconnectMessage] = useState('');
   const [playbackSession, setPlaybackSession] = useState(0);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [seekTapHint, setSeekTapHint] = useState(false);
   const [seekGesturePreview, setSeekGesturePreview] = useState<{
     targetTime: number;
     delta: number;
@@ -565,6 +573,17 @@ export default function TeslaPlayer({
   );
 
   const togglePlay = useCallback(() => {
+    const requestAutoHideAfterStart = () => {
+      if (hideControlsTimerRef.current) {
+        clearTimeout(hideControlsTimerRef.current);
+      }
+      setShowControls(true);
+      hideControlsTimerRef.current = window.setTimeout(() => {
+        if (playingRef.current && !controlsLockedOpenRef.current) {
+          setShowControls(false);
+        }
+      }, 2600);
+    };
     const unlockAndRemember = async () => {
       const unlocked = await unlockTeslaAudioSession();
       if (!unlocked) return false;
@@ -579,6 +598,7 @@ export default function TeslaPlayer({
       if (!player) return;
       const session = getTeslaAudioSession();
       if (!session.unlocked || muted || !player.isAudioActive()) {
+        requestAutoHideAfterStart();
         unlockAndRemember()
           .then((unlocked) => unlocked && player.ensureAudible())
           .then(() => {
@@ -591,11 +611,13 @@ export default function TeslaPlayer({
       userPausedRef.current =
         player.getState() === 'playing' || player.getState() === 'buffering';
       player.togglePlay();
+      if (!userPausedRef.current) requestAutoHideAfterStart();
     } else if (videoRef.current) {
       const v = videoRef.current;
       const session = getTeslaAudioSession();
       if (!session.unlocked || v.muted || muted) {
         userPausedRef.current = false;
+        requestAutoHideAfterStart();
         unlockAndRemember().then((unlocked) => {
           if (!unlocked) return;
           v.muted = false;
@@ -608,6 +630,7 @@ export default function TeslaPlayer({
         userPausedRef.current = false;
         void claimTeslaAudioFocus(title || 'Tesla 视频播放');
         v.play().catch(() => {});
+        requestAutoHideAfterStart();
       } else {
         userPausedRef.current = true;
         v.pause();
@@ -1774,6 +1797,22 @@ export default function TeslaPlayer({
               max={Math.max(duration, 1)}
               step={0.1}
               value={scrubTime ?? currentTime}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                progressGestureRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  moved: false,
+                };
+                setSeekTapHint(false);
+              }}
+              onPointerMove={(event) => {
+                const gesture = progressGestureRef.current;
+                if (!gesture || gesture.pointerId !== event.pointerId) return;
+                if (Math.abs(event.clientX - gesture.startX) >= 10) {
+                  gesture.moved = true;
+                }
+              }}
               onChange={(event) => {
                 const value = Number(event.currentTarget.value);
                 scrubTimeRef.current = value;
@@ -1783,7 +1822,25 @@ export default function TeslaPlayer({
                 event.stopPropagation();
                 const value =
                   scrubTimeRef.current ?? Number(event.currentTarget.value);
-                seek(value);
+                const gesture = progressGestureRef.current;
+                const shouldSeek =
+                  !gesture ||
+                  gesture.pointerId !== event.pointerId ||
+                  gesture.moved;
+                progressGestureRef.current = null;
+                if (shouldSeek) {
+                  seek(value);
+                } else {
+                  // Tesla 的触摸屏很容易把一次轻点误判为拖动。轻点仅提示，
+                  // 真正拖动超过 10px 后松手才会跳转，避免意外跳过剧情。
+                  setSeekTapHint(true);
+                  window.setTimeout(() => setSeekTapHint(false), 1800);
+                }
+                scrubTimeRef.current = null;
+                setScrubTime(null);
+              }}
+              onPointerCancel={() => {
+                progressGestureRef.current = null;
                 scrubTimeRef.current = null;
                 setScrubTime(null);
               }}
@@ -1809,12 +1866,31 @@ export default function TeslaPlayer({
                 跳转至 {formatTime(scrubTime)}
               </div>
             )}
+            {seekTapHint && scrubTime === null && (
+              <div className='-mt-2 text-center text-xs text-white/75'>
+                请拖动进度条后松手跳转
+              </div>
+            )}
           </div>
         )}
 
         {/* 控制按钮行 */}
         <div className='pointer-events-auto flex items-center justify-between'>
-          <div className='flex items-center gap-0.5 md:gap-1'>
+          <div className='flex items-center gap-1'>
+            {!live && onPrevious && (
+              <button
+                type='button'
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPrevious();
+                }}
+                className='min-h-11 min-w-11 rounded p-2 text-white/90 hover:bg-white/10 hover:text-white transition-colors'
+                title='上一集'
+                aria-label='上一集'
+              >
+                <SkipBack className='h-5 w-5' />
+              </button>
+            )}
             {!live && (
               <button
                 type='button'
@@ -1822,13 +1898,11 @@ export default function TeslaPlayer({
                   e.stopPropagation();
                   seek(Math.max(0, currentTime - 10));
                 }}
-                className='relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
+                className='flex min-h-11 min-w-11 items-center justify-center gap-0.5 rounded px-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white'
                 title='快退10秒'
               >
                 <Rewind className='h-5 w-5' />
-                <span className='absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold'>
-                  10
-                </span>
+                <span className='text-[10px] font-bold leading-none'>10</span>
               </button>
             )}
 
@@ -1854,13 +1928,25 @@ export default function TeslaPlayer({
                   e.stopPropagation();
                   seek(Math.min(duration || 1, currentTime + 10));
                 }}
-                className='relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
+                className='flex min-h-11 min-w-11 items-center justify-center gap-0.5 rounded px-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white'
                 title='快进10秒'
               >
                 <FastForward className='h-5 w-5' />
-                <span className='absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold'>
-                  10
-                </span>
+                <span className='text-[10px] font-bold leading-none'>10</span>
+              </button>
+            )}
+            {!live && onNext && (
+              <button
+                type='button'
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onNext();
+                }}
+                className='min-h-11 min-w-11 rounded p-2 text-white/90 hover:bg-white/10 hover:text-white transition-colors'
+                title='下一集'
+                aria-label='下一集'
+              >
+                <SkipForward className='h-5 w-5' />
               </button>
             )}
 

@@ -79,6 +79,31 @@ html:not(.dark) body {
   background-attachment: fixed;
 }
 
+/*
+ * Tesla browser updates occasionally change the effective CSS viewport without
+ * changing the physical screen. Keep the desktop shell content-first in a
+ * short, wide viewport instead of scaling the entire document (which would
+ * make touch targets inaccurate).
+ */
+@media (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-height: 900px) {
+  .tesla-app-shell .tesla-sidebar {
+    width: clamp(11.5rem, 14vw, 14rem) !important;
+  }
+
+  .tesla-app-shell .tesla-sidebar-offset {
+    width: clamp(11.5rem, 14vw, 14rem) !important;
+  }
+
+  .tesla-app-shell .tesla-home-content {
+    padding-left: clamp(0.75rem, 1.5vw, 1.5rem);
+    padding-right: clamp(0.75rem, 1.5vw, 1.5rem);
+  }
+
+  .tesla-app-shell .tesla-home-banner {
+    max-height: min(420px, 44vh);
+  }
+}
+
 /* 自定义滚动条样式 */
 ::-webkit-scrollbar {
   width: 8px;

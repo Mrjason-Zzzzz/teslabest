@@ -29,9 +29,12 @@ interface BannerCarouselProps {
 type HomeBannerHeightScale = '1' | '1.5' | '2';
 
 const bannerHeightClassMap: Record<HomeBannerHeightScale, string> = {
-  '1': 'h-[200px] sm:h-[300px] md:h-[400px] lg:h-[500px]',
-  '1.5': 'h-[300px] sm:h-[450px] md:h-[600px] lg:h-[750px]',
-  '2': 'h-[400px] sm:h-[600px] md:h-[800px] lg:h-[1000px]',
+  // Do not let a browser zoom / Tesla viewport regression turn the home
+  // banner into most of the screen. vh follows the real usable viewport,
+  // while clamp keeps phones and large desktop screens legible.
+  '1': 'h-[clamp(200px,38vh,420px)]',
+  '1.5': 'h-[clamp(260px,48vh,540px)]',
+  '2': 'h-[clamp(320px,58vh,620px)]',
 };
 
 const getSavedBannerHeightScale = (): HomeBannerHeightScale => {
@@ -465,7 +468,7 @@ export default function BannerCarousel({
 
   return (
     <div
-      className={`relative w-full ${bannerHeightClassMap[bannerHeightScale]} overflow-hidden group`}
+      className={`tesla-home-banner relative w-full ${bannerHeightClassMap[bannerHeightScale]} overflow-hidden group`}
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onTouchStart={handleTouchStart}
@@ -525,11 +528,11 @@ export default function BannerCarousel({
       </div>
 
       {/* 内容信息 */}
-      <div className='absolute inset-0 flex items-end p-8 md:p-12 pointer-events-none'>
+      <div className='absolute inset-0 flex items-end p-5 md:p-8 pointer-events-none'>
         <div className='max-w-2xl space-y-4'>
           <h2
             ref={titleRef}
-            className='text-3xl md:text-5xl font-bold text-white drop-shadow-lg'
+            className='text-3xl md:text-[clamp(2rem,3.6vw,3.5rem)] font-bold text-white drop-shadow-lg'
             style={
               isMobileView && bannerHeightScale === '1'
                 ? { fontSize: `${mobileTitleFontSize}px` }

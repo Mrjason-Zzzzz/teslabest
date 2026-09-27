@@ -10,6 +10,7 @@ import {
   Link as LinkIcon,
   ListVideo,
   Music,
+  QrCode,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
@@ -807,8 +808,8 @@ function HomeClient() {
         </div>
       )}
 
-      <div className='px-2 sm:px-10 pb-4 sm:pb-8 overflow-visible'>
-        <div className='max-w-[95%] mx-auto'>
+      <div className='tesla-home-content px-2 sm:px-6 lg:px-8 pb-4 sm:pb-8 overflow-visible'>
+        <div className='max-w-[98%] mx-auto'>
           {/* 首页内容 */}
           <>
             {/* 源站寻片和AI问片入口 */}
@@ -819,11 +820,21 @@ function HomeClient() {
             >
               <button
                 onClick={handleDirectPlay}
-                className='p-1.5 rounded-lg text-blue-500 hover:text-blue-600 transition-colors'
-                title='直链播放'
+                className='flex min-h-11 items-center gap-2 rounded-xl border border-violet-200/80 bg-white/80 px-3 py-2 text-sm font-semibold text-violet-700 shadow-sm transition-colors hover:bg-violet-50 dark:border-violet-500/30 dark:bg-gray-900/80 dark:text-violet-200 dark:hover:bg-violet-950/40'
+                title='直链播放与手机接力'
               >
                 <LinkIcon size={18} />
+                <span>直链播放</span>
               </button>
+              <Link href='/cast' prefetch={false}>
+                <button
+                  className='flex min-h-11 items-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700'
+                  title='手机扫码接力播放'
+                >
+                  <QrCode size={18} />
+                  <span>手机接力</span>
+                </button>
+              </Link>
 
               {musicEnabled && (
                 <Link href='/music' prefetch={false}>

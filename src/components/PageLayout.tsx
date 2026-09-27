@@ -75,7 +75,7 @@ const PageLayout = ({
 
   return (
     <VersionCheckProvider>
-      <div className='relative w-full min-h-screen overflow-hidden'>
+      <div className='tesla-app-shell relative w-full min-h-screen overflow-hidden'>
         {shouldShowSharedBackground && backgroundImage && (
           <>
             <div
