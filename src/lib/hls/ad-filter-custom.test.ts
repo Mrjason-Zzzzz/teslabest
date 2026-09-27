@@ -128,6 +128,61 @@ https://vod.example/program/002.ts
     expect(filtered).toContain('/program/002.ts');
   });
 
+  it('识别相对正片路径切到绝对 CDN 后包围的外来广告岛', () => {
+    // 魔都资源「重生废皇子」真实清单的结构：正片在清单前半段为相对
+    // URI，广告岛后回到同一目录的绝对 CDN URI。两边的节目目录相同，
+    // 但广告目录和日期均不同；不能因相对/绝对形式不同而漏掉广告岛。
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:10,
+/20260923/UVqm0CSC/3050kb/hls/original-001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+/20260917/khKm9Z55/10110kb/hls/insert-001.ts
+#EXTINF:10,
+/20260917/khKm9Z55/10110kb/hls/insert-002.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://bf.modujx17.com/20260923/UVqm0CSC/3050kb/hls/original-002.ts
+#EXT-X-ENDLIST`;
+    const filtered = applyConfiguredAdFilterSafely('modum3u8', playlist);
+
+    expect(filtered).toContain('original-001.ts');
+    expect(filtered).toContain('original-002.ts');
+    expect(filtered).not.toContain('khKm9Z55');
+    expect(filtered).toContain('#EXT-X-DISCONTINUITY');
+  });
+
+  it('移除同一清单内已被证实广告岛的重复末尾插入', () => {
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:10,
+https://vod.example/program/001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://ads.example/foreign/insert-001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://vod.example/program/002.ts
+#EXTINF:10,
+https://vod.example/program/003.ts
+#EXTINF:10,
+https://vod.example/program/004.ts
+#EXTINF:10,
+https://vod.example/program/005.ts
+#EXTINF:10,
+https://vod.example/program/006.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://ads.example/foreign/insert-002.ts
+#EXT-X-ENDLIST`;
+    const filtered = applyConfiguredAdFilterSafely('test', playlist);
+
+    expect(filtered).toContain('/program/001.ts');
+    expect(filtered).toContain('/program/003.ts');
+    expect(filtered).not.toContain('ads.example/foreign');
+  });
+
   it('不按时长猜测删除未标记或同路径正片', () => {
     const playlist = `#EXTM3U
 #EXT-X-PLAYLIST-TYPE:VOD

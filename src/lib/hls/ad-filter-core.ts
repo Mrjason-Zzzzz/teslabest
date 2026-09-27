@@ -19,6 +19,13 @@ const GAMBLING_AD_URI_PATTERN =
 const UNSAFE_PLAYLIST_TAG =
   /^#EXT-X-(BYTERANGE|PART|PRELOAD-HINT|GAP|SKIP|RENDITION-REPORT)/i;
 
+// A topology-only heuristic must stay deliberately conservative: a normal
+// scene/outro may live in a different directory. The verified provider insert
+// is a handful of 2-5 second fragments, so we only infer a *short* island and
+// leave anything longer for explicit HLS ad markers or a reviewed mapping.
+const MAX_INFERRED_AD_RUN_SECONDS = 45;
+const MAX_INFERRED_AD_RUN_SEGMENTS = 15;
+
 function isAdUri(uri: string): boolean {
   let normalized = uri.toLowerCase();
   // Tesla 代理链路会把真实分片地址包在 ?url= 中。最多解码三层，
@@ -184,17 +191,48 @@ function withoutAdSignals(lines: string[]): string[] {
   return lines.filter((line) => !isAdSignal(line));
 }
 
-function mediaUriFamily(uri: string) {
+interface MediaUriFamily {
+  /** Empty for a playlist-relative URI. */
+  host: string;
+  /** The programme-specific directory, without the segment filename. */
+  directory: string;
+}
+
+function mediaUriFamily(uri: string): MediaUriFamily {
   try {
     const parsed = new URL(uri, 'https://relative.invalid/');
     const directory = parsed.pathname.replace(/\/[^/]*$/, '/');
-    return `${parsed.hostname}${directory}`.toLowerCase();
+    return {
+      // HLS providers frequently change from a relative path to an absolute
+      // CDN URL on the other side of a discontinuity. Keep the relative side
+      // origin-neutral so the identical programme directory can still be
+      // compared without treating two different absolute CDNs as equivalent.
+      host:
+        parsed.hostname === 'relative.invalid'
+          ? ''
+          : parsed.hostname.toLowerCase(),
+      directory: directory.toLowerCase(),
+    };
   } catch {
-    return uri
-      .split('?')[0]
-      .replace(/\/[^/]*$/, '/')
-      .toLowerCase();
+    return {
+      host: '',
+      directory: uri
+        .split('?')[0]
+        .replace(/\/[^/]*$/, '/')
+        .toLowerCase(),
+    };
   }
+}
+
+function isSameProgrammeFamily(
+  left: MediaUriFamily | undefined,
+  right: MediaUriFamily | undefined
+) {
+  if (!left || !right || left.directory !== right.directory) return false;
+  // Two absolute sources must retain the same host. Only a relative URI is
+  // allowed to match an absolute URL, because its origin is supplied by the
+  // playlist request itself rather than the text line.
+  return !left.host || !right.host || left.host === right.host;
 }
 
 /**
@@ -208,7 +246,7 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
   const segments: Array<{
     index: number;
     duration: number;
-    family: string;
+    family: MediaUriFamily;
     boundaryBefore: boolean;
   }> = [];
   let cursor = 0;
@@ -245,15 +283,21 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
   }
 
   const familyOf = (run: typeof segments) => {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, { family: MediaUriFamily; count: number }>();
     for (const segment of run) {
-      counts.set(segment.family, (counts.get(segment.family) || 0) + 1);
+      const key = `${segment.family.host}|${segment.family.directory}`;
+      const current = counts.get(key);
+      counts.set(key, {
+        family: segment.family,
+        count: (current?.count || 0) + 1,
+      });
     }
-    return Array.from(counts.entries()).sort(
-      (left, right) => right[1] - left[1]
-    )[0]?.[0];
+    return Array.from(counts.values()).sort(
+      (left, right) => right.count - left.count
+    )[0]?.family;
   };
   const inferred = new Set<number>();
+  const confirmedAdFamilyKeys = new Set<string>();
   for (let index = 1; index < runs.length - 1; index += 1) {
     const previousFamily = familyOf(runs[index - 1]);
     const currentFamily = familyOf(runs[index]);
@@ -265,13 +309,41 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
     if (
       previousFamily &&
       currentFamily &&
-      previousFamily === nextFamily &&
-      currentFamily !== previousFamily &&
+      isSameProgrammeFamily(previousFamily, nextFamily) &&
+      !isSameProgrammeFamily(currentFamily, previousFamily) &&
       duration > 0 &&
-      duration <= 180 &&
-      runs[index].length <= 60
+      duration <= MAX_INFERRED_AD_RUN_SECONDS &&
+      runs[index].length <= MAX_INFERRED_AD_RUN_SEGMENTS
     ) {
       for (const segment of runs[index]) inferred.add(segment.index);
+      confirmedAdFamilyKeys.add(
+        `${currentFamily.host}|${currentFamily.directory}`
+      );
+    }
+  }
+
+  // Providers sometimes repeat the same already-proven insertion at ENDLIST.
+  // A tail run alone is not enough evidence to call it an ad: it could be a
+  // legitimate separately-hosted outro. We only remove it if the same short
+  // foreign directory was already proven as a discontinuity-bounded insertion
+  // earlier in this *same* playlist. This keeps the decision topology-based,
+  // rather than guessing from its time position or duration.
+  if (confirmedAdFamilyKeys.size > 0) {
+    for (const run of runs) {
+      const family = familyOf(run);
+      const duration = run.reduce(
+        (total, segment) => total + segment.duration,
+        0
+      );
+      if (
+        family &&
+        confirmedAdFamilyKeys.has(`${family.host}|${family.directory}`) &&
+        duration > 0 &&
+        duration <= MAX_INFERRED_AD_RUN_SECONDS &&
+        run.length <= MAX_INFERRED_AD_RUN_SEGMENTS
+      ) {
+        for (const segment of run) inferred.add(segment.index);
+      }
     }
   }
   return inferred;
