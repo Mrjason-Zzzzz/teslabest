@@ -298,6 +298,8 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
   };
   const inferred = new Set<number>();
   const confirmedAdFamilyKeys = new Set<string>();
+  const familyKey = (family: MediaUriFamily) =>
+    `${family.host}|${family.directory}`;
   for (let index = 1; index < runs.length - 1; index += 1) {
     const previousFamily = familyOf(runs[index - 1]);
     const currentFamily = familyOf(runs[index]);
@@ -311,23 +313,26 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
       currentFamily &&
       isSameProgrammeFamily(previousFamily, nextFamily) &&
       !isSameProgrammeFamily(currentFamily, previousFamily) &&
+      // A tail reuse can create ad -> programme -> ad. The programme run is
+      // not another insertion merely because the two known ad runs share a
+      // family, so never infer a new island from an already-proven ad side.
+      !confirmedAdFamilyKeys.has(familyKey(previousFamily)) &&
       duration > 0 &&
       duration <= MAX_INFERRED_AD_RUN_SECONDS &&
       runs[index].length <= MAX_INFERRED_AD_RUN_SEGMENTS
     ) {
       for (const segment of runs[index]) inferred.add(segment.index);
-      confirmedAdFamilyKeys.add(
-        `${currentFamily.host}|${currentFamily.directory}`
-      );
+      confirmedAdFamilyKeys.add(familyKey(currentFamily));
     }
   }
 
   // Providers sometimes repeat the same already-proven insertion at ENDLIST.
   // A tail run alone is not enough evidence to call it an ad: it could be a
-  // legitimate separately-hosted outro. We only remove it if the same short
-  // foreign directory was already proven as a discontinuity-bounded insertion
-  // earlier in this *same* playlist. This keeps the decision topology-based,
-  // rather than guessing from its time position or duration.
+  // legitimate separately-hosted outro. Once a foreign directory has already
+  // been proven as a short, discontinuity-bounded insertion in this *same*
+  // playlist, however, every complete run from that directory is an ad run.
+  // Do not keep a second duration cap here: providers can make the tail ad
+  // much longer than the mid-roll while retaining its same media identity.
   if (confirmedAdFamilyKeys.size > 0) {
     for (const run of runs) {
       const family = familyOf(run);
@@ -337,10 +342,8 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
       );
       if (
         family &&
-        confirmedAdFamilyKeys.has(`${family.host}|${family.directory}`) &&
-        duration > 0 &&
-        duration <= MAX_INFERRED_AD_RUN_SECONDS &&
-        run.length <= MAX_INFERRED_AD_RUN_SEGMENTS
+        confirmedAdFamilyKeys.has(familyKey(family)) &&
+        duration > 0
       ) {
         for (const segment of run) inferred.add(segment.index);
       }

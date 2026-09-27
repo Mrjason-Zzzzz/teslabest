@@ -7,7 +7,6 @@ import {
   FastForward,
   Loader2,
   Maximize,
-  Maximize2,
   MessageSquareText,
   Minimize,
   Pause,
@@ -53,6 +52,7 @@ import TeslaDanmakuOverlay, {
 } from '@/components/TeslaDanmakuOverlay';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import { parseTeslaDanmakuEpisodeNumber } from '@/lib/tesla/danmaku-match';
+import { selectTeslaPlaybackMode } from '@/lib/tesla/playback-mode';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -152,12 +152,6 @@ function saveProgress(key: string, time: number): void {
   } catch {
     // ignore
   }
-}
-
-function getInitialMode(wanted: PlayMode): PlayMode {
-  if (wanted === 'webcodecs' && WebCodecsPlayer.isSupported())
-    return 'webcodecs';
-  return 'video';
 }
 
 function getUrlKind(url: string): 'hls' | 'flv' | 'file' | 'unknown' {
@@ -353,7 +347,11 @@ export default function TeslaPlayer({
   }, [danmakuChoices.episodes, danmakuEpisodeQuery]);
 
   const [mode, setMode] = useState<PlayMode>(() =>
-    getInitialMode(live ? 'webcodecs' : defaultModeProp)
+    selectTeslaPlaybackMode(
+      live ? 'webcodecs' : defaultModeProp,
+      WebCodecsPlayer.isSupported(),
+      typeof navigator === 'undefined' ? '' : navigator.userAgent
+    )
   );
 
   useEffect(() => {
@@ -523,7 +521,13 @@ export default function TeslaPlayer({
   }, [requestReconnect]);
 
   useEffect(() => {
-    setMode(getInitialMode(live ? 'webcodecs' : defaultModeProp));
+    setMode(
+      selectTeslaPlaybackMode(
+        live ? 'webcodecs' : defaultModeProp,
+        WebCodecsPlayer.isSupported(),
+        navigator.userAgent
+      )
+    );
     setPresentedVideoTime(0);
     setError(null);
     setReconnectMessage('');
@@ -640,22 +644,40 @@ export default function TeslaPlayer({
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen?.()?.catch(() => {});
-    } else {
-      document.exitFullscreen?.()?.catch(() => {});
+    if (document.fullscreenElement || isWebFullscreen) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+      setIsWebFullscreen(false);
+      return;
     }
-  }, []);
 
-  const toggleWebFullscreen = useCallback(() => {
-    setIsWebFullscreen((prev) => !prev);
-  }, []);
+    const request = containerRef.current.requestFullscreen;
+    if (!request) {
+      setIsWebFullscreen(true);
+      return;
+    }
+    request.call(containerRef.current).catch(() => {
+      // Some vehicle browsers expose the API but reject it. The CSS fallback
+      // still fills the player and retains Canvas plus the danmaku overlay.
+      setIsWebFullscreen(true);
+    });
+  }, [isWebFullscreen]);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
+
+  useEffect(() => {
+    if (!isFullscreen && !isWebFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFullscreen, isWebFullscreen]);
 
   const setPlaybackRate = useCallback(
     (r: number) => {
@@ -2100,24 +2122,12 @@ export default function TeslaPlayer({
               type='button'
               onClick={(e) => {
                 e.stopPropagation();
-                toggleWebFullscreen();
-              }}
-              className='p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
-              title={isWebFullscreen ? '退出网页全屏' : '网页全屏'}
-            >
-              <Maximize2 className='h-5 w-5' />
-            </button>
-
-            <button
-              type='button'
-              onClick={(e) => {
-                e.stopPropagation();
                 toggleFullscreen();
               }}
               className='p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
-              title={isFullscreen ? '退出全屏' : '全屏'}
+              title={isFullscreen || isWebFullscreen ? '退出全屏' : '全屏'}
             >
-              {isFullscreen ? (
+              {isFullscreen || isWebFullscreen ? (
                 <Minimize className='h-5 w-5' />
               ) : (
                 <Maximize className='h-5 w-5' />

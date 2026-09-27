@@ -183,6 +183,29 @@ https://ads.example/foreign/insert-002.ts
     expect(filtered).not.toContain('ads.example/foreign');
   });
 
+  it('移除同一已证实广告目录的长尾片段，不按结尾时长放行', () => {
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:10,
+https://vod.example/program/001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://ads.example/foreign/insert-001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10,
+https://vod.example/program/002.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:60,
+https://ads.example/foreign/insert-long-tail.ts
+#EXT-X-ENDLIST`;
+
+    const filtered = applyConfiguredAdFilterSafely('test', playlist);
+
+    expect(filtered).toContain('/program/001.ts');
+    expect(filtered).toContain('/program/002.ts');
+    expect(filtered).not.toContain('insert-long-tail.ts');
+  });
+
   it('不按时长猜测删除未标记或同路径正片', () => {
     const playlist = `#EXTM3U
 #EXT-X-PLAYLIST-TYPE:VOD

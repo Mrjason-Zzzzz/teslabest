@@ -41,6 +41,22 @@ export async function generateMetadata(): Promise<Metadata> {
     title: siteName,
     description: '影视聚合',
     manifest: '/manifest.json',
+    icons: {
+      icon: [
+        {
+          url: '/icons/dorezst-tab-icon.png',
+          type: 'image/png',
+          sizes: '64x64',
+        },
+      ],
+      apple: [
+        {
+          url: '/icons/dorezst-192.png',
+          type: 'image/png',
+          sizes: '192x192',
+        },
+      ],
+    },
     // iOS 添加到主屏幕：沉浸式状态栏（需配合 viewport-fit=cover + 顶部 safe-area）
     appleWebApp: {
       capable: true,
@@ -350,7 +366,7 @@ export default async function RootLayout({
           name='viewport'
           content='width=device-width, initial-scale=1.0, viewport-fit=cover'
         />
-        <link rel='apple-touch-icon' href='/icons/icon-192x192.png' />
+        <link rel='apple-touch-icon' href='/icons/dorezst-192.png' />
         {/* 主题CSS */}
         <link rel='stylesheet' href='/api/theme/css' />
         {/* 将配置序列化后直接写入脚本，浏览器端可通过 window.RUNTIME_CONFIG 获取 */}
