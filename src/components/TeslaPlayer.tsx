@@ -1876,7 +1876,7 @@ export default function TeslaPlayer({
 
         {/* 控制按钮行 */}
         <div className='pointer-events-auto flex items-center justify-between'>
-          <div className='flex items-center gap-0.5 md:gap-1'>
+          <div className='flex items-center gap-1'>
             {!live && onPrevious && (
               <button
                 type='button'
@@ -1898,13 +1898,11 @@ export default function TeslaPlayer({
                   e.stopPropagation();
                   seek(Math.max(0, currentTime - 10));
                 }}
-                className='relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
+                className='flex min-h-11 min-w-11 items-center justify-center gap-0.5 rounded px-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white'
                 title='快退10秒'
               >
                 <Rewind className='h-5 w-5' />
-                <span className='absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold'>
-                  10
-                </span>
+                <span className='text-[10px] font-bold leading-none'>10</span>
               </button>
             )}
 
@@ -1930,13 +1928,11 @@ export default function TeslaPlayer({
                   e.stopPropagation();
                   seek(Math.min(duration || 1, currentTime + 10));
                 }}
-                className='relative p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
+                className='flex min-h-11 min-w-11 items-center justify-center gap-0.5 rounded px-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white'
                 title='快进10秒'
               >
                 <FastForward className='h-5 w-5' />
-                <span className='absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold'>
-                  10
-                </span>
+                <span className='text-[10px] font-bold leading-none'>10</span>
               </button>
             )}
             {!live && onNext && (
