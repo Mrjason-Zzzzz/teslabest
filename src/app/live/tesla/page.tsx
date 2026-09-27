@@ -384,8 +384,8 @@ function TeslaLivePageInner() {
   }, [sources, initialSourceKey, initialChannelId]);
 
   return (
-    <div className='fixed inset-0 overflow-hidden bg-[#06080c] text-white'>
-      <header className='flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:px-6'>
+    <div className='tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden'>
+      <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
             type='button'
@@ -423,9 +423,9 @@ function TeslaLivePageInner() {
         </div>
       </header>
 
-      <main className='grid h-[calc(100%-4rem)] min-h-0 grid-rows-[minmax(300px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
-        <section className='min-h-0 bg-[#050609] p-2 lg:p-4 lg:pr-2'>
-          <div className='relative h-full min-h-[300px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10'>
+      <main className='grid min-h-[calc(100dvh-4rem)] grid-rows-[minmax(14rem,48dvh)_auto] lg:h-[calc(100%-4rem)] lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
+        <section className='bg-[#050609] p-2 lg:min-h-0 lg:p-4 lg:pr-2'>
+          <div className='relative h-full min-h-[14rem] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10'>
             {loadingSources && (
               <div className='absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65'>
                 <Loader2 className='h-9 w-9 animate-spin text-violet-400' />
@@ -485,7 +485,7 @@ function TeslaLivePageInner() {
           </div>
         </section>
 
-        <aside className='flex min-h-0 flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10'>
+        <aside className='flex min-h-[24rem] flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:min-h-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10'>
           <div className='grid grid-cols-2 gap-2 border-b border-white/10 p-3'>
             <button
               type='button'

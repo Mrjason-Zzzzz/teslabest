@@ -382,3 +382,45 @@ div[data-media-provider] video {
   will-change: transform;
   animation: tesla-danmaku-scroll 9s linear forwards;
 }
+
+/*
+ * Tesla browser updates and desktop zoom can report a wide viewport while the
+ * usable height is very small. The live pages used to stay fixed in that
+ * state, leaving the channel/source panel below the fold with no way to
+ * scroll. Treat short or effectively narrow viewports as a compact layout:
+ * retain a playable video area, then make the selector reachable by normal
+ * page scrolling. Large car displays retain the two-column locked layout.
+ */
+@media (max-width: 1500px), (max-height: 1000px) {
+  .tesla-live-route {
+    position: relative !important;
+    inset: auto !important;
+    min-height: 100dvh;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  .tesla-live-route > header {
+    position: sticky !important;
+    top: 0;
+    z-index: 40;
+  }
+
+  .tesla-live-route > main {
+    height: auto !important;
+    min-height: calc(100dvh - 4rem) !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(14rem, 48dvh) auto !important;
+  }
+
+  .tesla-live-route > main > section {
+    min-height: 14rem !important;
+  }
+
+  .tesla-live-route > main > aside {
+    min-height: 24rem !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+  }
+}
