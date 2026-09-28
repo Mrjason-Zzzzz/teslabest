@@ -85,7 +85,7 @@ html:not(.dark) body {
  * short, wide viewport instead of scaling the entire document (which would
  * make touch targets inaccurate).
  */
-@media (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-height: 900px) {
+@media (min-width: 900px) and (min-aspect-ratio: 16/9) and (max-height: 900px) {
   .tesla-app-shell .tesla-sidebar {
     width: clamp(11.5rem, 14vw, 14rem) !important;
   }
@@ -454,5 +454,58 @@ div[data-media-provider] video {
     overflow: hidden !important;
     border: 1px solid rgb(255 255 255 / 0.1) !important;
     border-radius: 1rem !important;
+  }
+}
+
+/*
+ * Cockpit landscape: Tesla's 1254x784 display currently reports an effective
+ * browser viewport around 773x601. Keep the player and selector side by side
+ * without scaling the document: 64px navigation | fluid player | 204px rail.
+ * Fullscreen remains on the untransformed player node, so Canvas, danmaku and
+ * media controls retain their native coordinate system.
+ */
+@media (min-width: 720px) and (max-width: 899px) and (max-height: 720px) {
+  .tesla-app-shell .tesla-sidebar,
+  .tesla-app-shell .tesla-sidebar-offset {
+    width: 4rem !important;
+  }
+
+  .tesla-app-shell .tesla-sidebar-toggle {
+    display: none !important;
+  }
+
+  .tesla-vod-route .tesla-vod-content {
+    max-width: none;
+    padding: 0.25rem 0.5rem 1rem;
+  }
+
+  .tesla-vod-route .tesla-vod-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(12.75rem, 26vw) !important;
+    gap: 0.5rem;
+  }
+
+  .tesla-vod-route .tesla-vod-player-frame {
+    width: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel {
+    top: 0.25rem;
+    max-height: calc(100dvh - 0.5rem);
+    overflow: hidden;
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel > div {
+    max-height: calc(100dvh - 0.5rem);
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel .max-h-\[500px\] {
+    max-height: calc(100dvh - 8rem) !important;
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel .text-sm {
+    font-size: 0.75rem;
+    line-height: 1rem;
   }
 }

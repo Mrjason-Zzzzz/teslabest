@@ -75,7 +75,9 @@ const PageLayout = ({
 
   return (
     <VersionCheckProvider>
-      <div className='tesla-app-shell relative w-full min-h-screen overflow-hidden'>
+      {/* Do not clip vertical document scrolling here. In a zoomed vehicle
+          viewport, live/VOD source panels may be taller than the visible area. */}
+      <div className='tesla-app-shell relative w-full min-h-screen overflow-x-hidden'>
         {shouldShowSharedBackground && backgroundImage && (
           <>
             <div

@@ -149,6 +149,28 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
     return false; // 默认展开
   });
 
+  // Tesla updates can expose a desktop display as a 720–899px CSS viewport.
+  // Keep navigation touchable without consuming the player/source workspace.
+  // This is based on usable viewport geometry, not on a fragile user-agent.
+  const [isCockpitViewport, setIsCockpitViewport] = useState(() =>
+    typeof window !== 'undefined' &&
+    window.matchMedia(
+      '(min-width: 720px) and (max-width: 899px) and (max-height: 720px)'
+    ).matches
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia(
+      '(min-width: 720px) and (max-width: 899px) and (max-height: 720px)'
+    );
+    const update = () => setIsCockpitViewport(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  const effectiveCollapsed = isCollapsed || isCockpitViewport;
+
   // 首次挂载时读取 localStorage，以便刷新后仍保持上次的折叠状态
   useLayoutEffect(() => {
     const saved = localStorage.getItem('sidebarCollapsed');
@@ -193,7 +215,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
   }, [isCollapsed, onToggle]);
 
   const contextValue = {
-    isCollapsed,
+    isCollapsed: effectiveCollapsed,
   };
 
   const [menuItems, setMenuItems] = useState([
@@ -322,7 +344,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
         <aside
           data-sidebar
           className={`tesla-sidebar fixed top-0 left-0 h-screen bg-white/40 backdrop-blur-xl transition-all duration-300 border-r border-gray-200/50 z-10 shadow-lg dark:bg-gray-900/70 dark:border-gray-700/50 ${
-            isCollapsed ? 'w-16' : 'w-64'
+            effectiveCollapsed ? 'w-16' : 'w-64'
           }`}
           style={{
             backdropFilter: 'blur(20px)',
@@ -334,17 +356,17 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
             <div className='relative h-16'>
               <div
                 className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${
-                  isCollapsed ? 'opacity-0' : 'opacity-100'
+                  effectiveCollapsed ? 'opacity-0' : 'opacity-100'
                 }`}
               >
                 <div className='w-[calc(100%-4rem)] flex justify-center'>
-                  {!isCollapsed && <Logo />}
+                  {!effectiveCollapsed && <Logo />}
                 </div>
               </div>
               <button
                 onClick={handleToggle}
-                className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 transition-colors duration-200 z-10 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50 ${
-                  isCollapsed ? 'left-1/2 -translate-x-1/2' : 'right-2'
+                className={`tesla-sidebar-toggle absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 transition-colors duration-200 z-10 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50 ${
+                  effectiveCollapsed ? 'left-1/2 -translate-x-1/2' : 'right-2'
                 }`}
               >
                 <Menu className='h-4 w-4' />
@@ -362,13 +384,13 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                 }}
                 data-active={active === '/'}
                 className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
-                  isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                  effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                 } gap-3 justify-start`}
               >
                 <div className='w-4 h-4 flex items-center justify-center'>
                   <Home className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                 </div>
-                {!isCollapsed && (
+                {!effectiveCollapsed && (
                   <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                     首页
                   </span>
@@ -378,13 +400,13 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                 href='/search'
                 data-active={active === '/search'}
                 className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
-                  isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                  effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                 } gap-3 justify-start`}
               >
                 <div className='w-4 h-4 flex items-center justify-center'>
                   <Search className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                 </div>
-                {!isCollapsed && (
+                {!effectiveCollapsed && (
                   <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                     搜索
                   </span>
@@ -420,13 +442,13 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                       href={item.href}
                       data-active={isActive}
                       className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
-                        isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
+                        effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                       } gap-3 justify-start`}
                     >
                       <div className='w-4 h-4 flex items-center justify-center'>
                         <Icon className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                       </div>
-                      {!isCollapsed && (
+                      {!effectiveCollapsed && (
                         <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                           {item.label}
                         </span>
@@ -439,7 +461,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
 
             {showMembershipCard && (
               <div className='px-2 pb-3 pt-2'>
-                {isCollapsed ? (
+                {effectiveCollapsed ? (
                   <div
                     className={`mx-auto flex h-11 w-11 items-center justify-center rounded-xl border shadow-sm ${
                       membership?.status === 'disabled' || membership?.isExpired
@@ -514,7 +536,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
         </aside>
         <div
           className={`tesla-sidebar-offset transition-all duration-300 sidebar-offset ${
-            isCollapsed ? 'w-16' : 'w-64'
+            effectiveCollapsed ? 'w-16' : 'w-64'
           }`}
         ></div>
       </div>
