@@ -148,7 +148,6 @@ function TeslaPlayPageInner() {
   const [rightTab, setRightTab] = useState<'episodes' | 'sources'>('episodes');
   const [episodePage, setEpisodePage] = useState(0);
   const [episodeOrderAsc, setEpisodeOrderAsc] = useState(true);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const EPISODES_PER_PAGE = 50;
 
   const detailSeqRef = useRef(0);
@@ -815,13 +814,7 @@ function TeslaPlayPageInner() {
 
         {/* 主体 */}
         <div className='tesla-vod-content mx-auto max-w-[1800px] px-3 pb-8 pt-2 sm:px-4'>
-          <div
-            className={`grid items-start gap-4 transition-all duration-300 ease-in-out ${
-              rightPanelCollapsed
-                ? 'grid-cols-1'
-                : 'grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]'
-            }`}
-          >
+          <div className='tesla-vod-layout grid grid-cols-1 items-start gap-4'>
             {/* 左侧：播放器 + 详情 */}
             <div className='min-w-0 rounded-2xl border border-violet-200/40 bg-gradient-to-b from-violet-50/50 to-transparent p-1.5 shadow-xl shadow-violet-950/5 transition-all duration-300 ease-in-out dark:border-violet-400/20 dark:from-violet-950/20'>
               {/* 播放器容器 */}
@@ -984,12 +977,12 @@ function TeslaPlayPageInner() {
               )}
             </div>
 
-            {/* 右侧面板（可折叠） */}
+            {/* 选集与换源始终是播放器右侧的独立操作区；窄屏才自然落到下方。 */}
             {currentDetail &&
               currentDetail.episodes &&
               currentDetail.episodes.length > 0 &&
-              !rightPanelCollapsed && (
-                <div className='min-w-0 lg:sticky lg:top-4'>
+              (
+                <div className='tesla-vod-side-panel min-w-0'>
                   <div className='overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur dark:bg-gray-900/80 dark:ring-gray-700/50'>
                     <div className='flex border-b border-gray-100 dark:border-gray-800'>
                       <button

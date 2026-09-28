@@ -412,6 +412,20 @@ div[data-media-provider] video {
  * inferred zoom mode, so it cannot unexpectedly stack the selector below.
  */
 @media (min-width: 720px) {
+  /* Keep VOD in the same stable player-left / selector-right composition as
+     live playback. The vehicle may expose a CSS viewport narrower than
+     Tailwind's `lg` breakpoint, so this must not rely on a zoom guess or an
+     `lg:` utility. Details remain below the player in the left column. */
+  .tesla-vod-route .tesla-vod-layout {
+    grid-template-columns: minmax(0, 1fr) clamp(17rem, 24vw, 21rem) !important;
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel {
+    position: sticky;
+    top: 1rem;
+    min-width: 0;
+  }
+
   .tesla-live-route {
     position: fixed !important;
     inset: 0 !important;
