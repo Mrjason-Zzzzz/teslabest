@@ -419,18 +419,9 @@ function PlayPageClient() {
   // 跳过检查的时间间隔控制
   const lastSkipCheckRef = useRef(0);
 
-  // 去广告开关（从 localStorage 继承，默认 true）
-  const [blockAdEnabled, setBlockAdEnabled] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const v = localStorage.getItem('enable_blockad');
-      if (v !== null) return v === 'true';
-    }
-    return true;
-  });
-  const blockAdEnabledRef = useRef(blockAdEnabled);
-  useEffect(() => {
-    blockAdEnabledRef.current = blockAdEnabled;
-  }, [blockAdEnabled]);
+  // 点播清单过滤是同步与广告隔离的基础保护，不能被旧浏览器的
+  // localStorage 开关意外关闭。仅处理安全条件满足的完整 VOD 分片。
+  const blockAdEnabled = true;
 
   // 外部播放器去广告开关（独立状态，默认 false）
   const [externalPlayerAdBlock, setExternalPlayerAdBlock] = useState<boolean>(
@@ -7299,8 +7290,8 @@ function PlayPageClient() {
                 video.hls.destroy();
               }
 
-              // 每次创建HLS实例时，都读取最新的blockAdEnabled状态
-              const shouldUseCustomLoader = blockAdEnabledRef.current;
+              // VOD 始终使用与 Tesla/服务端一致的安全清单过滤器。
+              const shouldUseCustomLoader = true;
 
               // 从localStorage读取缓冲策略
               const bufferStrategy =
@@ -7600,27 +7591,9 @@ function PlayPageClient() {
             {
               html: '去广告',
               icon: '<text x="50%" y="50%" font-size="20" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">AD</text>',
-              tooltip: blockAdEnabled ? '已开启' : '已关闭',
+              tooltip: '已保护',
               onClick() {
-                const newVal = !blockAdEnabled;
-                try {
-                  localStorage.setItem('enable_blockad', String(newVal));
-                  if (artPlayerRef.current) {
-                    resumeTimeRef.current = artPlayerRef.current.currentTime;
-                    if (
-                      artPlayerRef.current.video &&
-                      artPlayerRef.current.video.hls
-                    ) {
-                      artPlayerRef.current.video.hls.destroy();
-                    }
-                    artPlayerRef.current.destroy();
-                    artPlayerRef.current = null;
-                  }
-                  setBlockAdEnabled(newVal);
-                } catch (_) {
-                  // ignore
-                }
-                return newVal ? '当前开启' : '当前关闭';
+                return '广告过滤已固定开启';
               },
             },
             {
@@ -9992,7 +9965,7 @@ function PlayPageClient() {
 
     // 调用异步初始化函数
     initPlayer();
-  }, [videoUrl, loading, blockAdEnabled]);
+  }, [videoUrl, loading]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
