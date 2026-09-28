@@ -1,0 +1,160 @@
+name: Deploy tested commit to Aliyun
+
+on:
+  push:
+    branches:
+      - user/codex/tesla-player-recovery
+    paths:
+      - '.github/workflows/aliyun-auto-deploy.yml'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'next.config.*'
+      - 'server.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Do not cancel a deployment that is already replacing the systemd release.
+concurrency:
+  group: p002-aliyun-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_STORAGE_TYPE: redis
+      REDIS_URL: redis://127.0.0.1:6379/15
+      DOCKER_ENV: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+      ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+      ALIYUN_PORT: ${{ secrets.ALIYUN_PORT || '22' }}
+      ALIYUN_USER: ${{ secrets.ALIYUN_USER || 'root' }}
+      ALIYUN_KNOWN_HOSTS: ${{ secrets.ALIYUN_KNOWN_HOSTS }}
+      ALIYUN_SSH_PRIVATE_KEY: ${{ secrets.ALIYUN_SSH_PRIVATE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build the exact tested commit
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -s .next/BUILD_ID
+          {
+            printf 'commit=%s\n' "$GITHUB_SHA"
+            printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'storage=redis-local-on-ecs\n'
+          } > P002_BUILD_INFO.txt
+          tar \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./.next/cache' \
+            --exclude='./.env*' \
+            -czf "$RUNNER_TEMP/p002-linux-x64.tar.gz" .
+          sha256sum "$RUNNER_TEMP/p002-linux-x64.tar.gz" \
+            > "$RUNNER_TEMP/p002-linux-x64.sha256"
+
+      - name: Configure verified SSH transport
+        run: |
+          test -n "$ALIYUN_HOST"
+          test -n "$ALIYUN_PORT"
+          test -n "$ALIYUN_USER"
+          test -n "$ALIYUN_KNOWN_HOSTS"
+          test -n "$ALIYUN_SSH_PRIVATE_KEY"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$ALIYUN_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$ALIYUN_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload release package
+        run: |
+          remote_dir="/opt/p002-upload/ci/${GITHUB_SHA}"
+          ssh -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -p "$ALIYUN_PORT" "$ALIYUN_USER@$ALIYUN_HOST" \
+            "install -d -m 700 '$remote_dir'"
+          scp -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -P "$ALIYUN_PORT" \
+            "$RUNNER_TEMP/p002-linux-x64.tar.gz" \
+            "$RUNNER_TEMP/p002-linux-x64.sha256" \
+            "$ALIYUN_USER@$ALIYUN_HOST:$remote_dir/"
+
+      - name: Atomically switch ECS release and roll back on failure
+        run: |
+          ssh -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -p "$ALIYUN_PORT" "$ALIYUN_USER@$ALIYUN_HOST" \
+            "GITHUB_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          case "$GITHUB_SHA" in
+            (*[!0-9a-f]*|'') echo 'invalid commit identifier' >&2; exit 2 ;;
+          esac
+
+          upload="/opt/p002-upload/ci/$GITHUB_SHA"
+          previous="$(systemctl show p002-player -p WorkingDirectory --value)"
+          test -d "$previous"
+          cd "$upload"
+          sha256sum -c p002-linux-x64.sha256
+
+          backup="/opt/p002-auto-deploy-backup-$(date +%Y%m%d-%H%M%S)"
+          new="/opt/p002-releases/p002-${GITHUB_SHA:0:12}-$(date +%H%M%S)"
+          install -d -m 700 "$backup"
+          redis-cli --rdb "$backup/redis-before.rdb"
+          systemctl cat p002-player > "$backup/p002-player-before.txt"
+
+          install -d -o p002 -g p002 -m 750 "$new"
+          tar --no-same-owner -xzf p002-linux-x64.tar.gz -C "$new"
+          chown -R p002:p002 "$new"
+          test -s "$new/.next/BUILD_ID"
+          test -s "$new/P002_BUILD_INFO.txt"
+          grep -Fxq "commit=$GITHUB_SHA" "$new/P002_BUILD_INFO.txt"
+
+          dropin=/etc/systemd/system/p002-player.service.d/99-ci-release.conf
+          install -d -m 755 /etc/systemd/system/p002-player.service.d
+          printf '[Service]\nWorkingDirectory=%s\n' "$new" > "$dropin"
+          systemctl daemon-reload
+          systemctl restart p002-player
+
+          healthy=0
+          for attempt in $(seq 1 16); do
+            if curl --noproxy '*' -fsS --max-time 5 \
+              http://127.0.0.1:3000/api/health > "$backup/health-after.json"; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$healthy" -ne 1 ]; then
+            printf '[Service]\nWorkingDirectory=%s\n' "$previous" > "$dropin"
+            systemctl daemon-reload
+            systemctl restart p002-player
+            echo "rollback complete: $previous" >&2
+            exit 1
+          fi
+
+          printf 'deployed=%s\nbackup=%s\n' "$new" "$backup"
+          cat "$backup/health-after.json"
+          REMOTE
