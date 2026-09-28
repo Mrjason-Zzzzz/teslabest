@@ -58,9 +58,25 @@ export function useAdaptiveLiveLayout() {
     window.localStorage.setItem(STORAGE_KEY, next);
   }, []);
 
+  const isCompact = mode === 'compact' || (mode === 'auto' && autoCompact);
+
+  useEffect(() => {
+    // Tesla's current browser can ignore a nested overflow-y container after
+    // its viewport scaling update. Compact mode therefore deliberately gives
+    // the gesture to the document, not the player shell or source panel.
+    const root = document.documentElement;
+    const body = document.body;
+    root.classList.toggle('tesla-live-document-scroll', isCompact);
+    body.classList.toggle('tesla-live-document-scroll', isCompact);
+    return () => {
+      root.classList.remove('tesla-live-document-scroll');
+      body.classList.remove('tesla-live-document-scroll');
+    };
+  }, [isCompact]);
+
   return {
     mode,
     chooseMode,
-    isCompact: mode === 'compact' || (mode === 'auto' && autoCompact),
+    isCompact,
   };
 }
