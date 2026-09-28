@@ -52,7 +52,11 @@ import TeslaDanmakuOverlay, {
 } from '@/components/TeslaDanmakuOverlay';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import { parseTeslaDanmakuEpisodeNumber } from '@/lib/tesla/danmaku-match';
-import { selectTeslaPlaybackMode } from '@/lib/tesla/playback-mode';
+import {
+  resolveTeslaVodDefaultMode,
+  selectTeslaPlaybackMode,
+  type TeslaVodPlaybackPreference,
+} from '@/lib/tesla/playback-mode';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -61,7 +65,7 @@ interface TeslaPlayerProps {
   title?: string;
   poster?: string;
   live?: boolean;
-  defaultMode?: PlayMode;
+  defaultMode?: TeslaVodPlaybackPreference;
   onBackToOriginal?: () => void;
   onEnded?: () => void;
   onPrevious?: () => void;
@@ -172,7 +176,7 @@ export default function TeslaPlayer({
   title,
   poster,
   live = false,
-  defaultMode: defaultModeProp = 'webcodecs',
+  defaultMode: defaultModeProp = 'auto',
   onBackToOriginal,
   onEnded: onEndedCallback,
   onPrevious,
@@ -251,7 +255,6 @@ export default function TeslaPlayer({
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(true);
-  const [audioUnlockRequired, setAudioUnlockRequired] = useState(true);
   const [engineLabel, setEngineLabel] = useState('Tesla 播放');
   const [networkOffline, setNetworkOffline] = useState(false);
   const [reconnectMessage, setReconnectMessage] = useState('');
@@ -346,18 +349,21 @@ export default function TeslaPlayer({
     });
   }, [danmakuChoices.episodes, danmakuEpisodeQuery]);
 
+  const preferredMode = () =>
+    live
+      ? 'webcodecs'
+      : defaultModeProp === 'auto'
+        ? resolveTeslaVodDefaultMode()
+        : defaultModeProp;
+
   const [mode, setMode] = useState<PlayMode>(() =>
-    selectTeslaPlaybackMode(
-      live ? 'webcodecs' : defaultModeProp,
-      WebCodecsPlayer.isSupported()
-    )
+    selectTeslaPlaybackMode(preferredMode(), WebCodecsPlayer.isSupported())
   );
 
   useEffect(() => {
     const session = getTeslaAudioSession();
     setVolume(session.volume);
     setMuted(session.muted || !session.unlocked);
-    setAudioUnlockRequired(!session.unlocked && !session.muted);
   }, []);
 
   useEffect(() => {
@@ -520,12 +526,7 @@ export default function TeslaPlayer({
   }, [requestReconnect]);
 
   useEffect(() => {
-    setMode(
-      selectTeslaPlaybackMode(
-        live ? 'webcodecs' : defaultModeProp,
-        WebCodecsPlayer.isSupported()
-      )
-    );
+    setMode(selectTeslaPlaybackMode(preferredMode(), WebCodecsPlayer.isSupported()));
     setPresentedVideoTime(0);
     setError(null);
     setReconnectMessage('');
@@ -591,7 +592,6 @@ export default function TeslaPlayer({
       if (!unlocked) return false;
       updateTeslaAudioSession({ unlocked: true, muted: false, volume });
       setMuted(false);
-      setAudioUnlockRequired(false);
       return true;
     };
 
@@ -730,7 +730,6 @@ export default function TeslaPlayer({
       }
     }
     setMuted(newMuted);
-    setAudioUnlockRequired(false);
   }, [muted, volume, mode]);
 
   useEffect(() => {
@@ -1004,7 +1003,6 @@ export default function TeslaPlayer({
     const shouldStartMuted = audioSession.muted || !audioSession.unlocked;
     setVolume(audioSession.volume);
     setMuted(shouldStartMuted);
-    setAudioUnlockRequired(!audioSession.unlocked && !audioSession.muted);
 
     // 创建 video 元素
     const videoEl = document.createElement('video') as HTMLVideoElement & {
@@ -1040,11 +1038,7 @@ export default function TeslaPlayer({
       if (!destroyed) {
         userPausedRef.current = false;
         setPlaying(true);
-        const session = getTeslaAudioSession();
         setMuted(videoEl.muted);
-        setAudioUnlockRequired(
-          videoEl.muted && !session.muted && !session.unlocked
-        );
         setBuffering(false);
         setLoading(false);
         clearBufferingTimeout();
@@ -1088,11 +1082,7 @@ export default function TeslaPlayer({
       clearLiveStallRecovery();
       liveRecoveryAttempts = 0;
       setPlaying(true);
-      const session = getTeslaAudioSession();
       setMuted(videoEl.muted);
-      setAudioUnlockRequired(
-        videoEl.muted && !session.muted && !session.unlocked
-      );
       setBuffering(false);
       clearBufferingTimeout();
       if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
@@ -1418,7 +1408,6 @@ export default function TeslaPlayer({
             const shouldBeMuted = session.muted || !session.unlocked;
             setPlaying(true);
             setMuted(shouldBeMuted || !audioActive);
-            setAudioUnlockRequired(!session.muted && !session.unlocked);
             if (session.unlocked && !session.muted && !audioActive) {
               wcPlayerRef.current?.ensureAudible().catch(() => {});
             }
@@ -1754,21 +1743,6 @@ export default function TeslaPlayer({
             className='pointer-events-auto rounded-full bg-black/40 p-5 backdrop-blur-sm hover:bg-black/60 transition-all active:scale-95'
           >
             <Play className='h-10 w-10 text-white md:h-12 md:w-12' />
-          </button>
-        </div>
-      )}
-
-      {audioUnlockRequired && playing && (
-        <div className='pointer-events-none absolute inset-x-0 bottom-20 z-20 flex justify-center px-4'>
-          <button
-            type='button'
-            onClick={(event) => {
-              event.stopPropagation();
-              togglePlay();
-            }}
-            className='pointer-events-auto rounded-full bg-amber-500 px-4 py-2 text-sm font-medium text-black shadow-lg'
-          >
-            画面已播放，点击开启声音
           </button>
         </div>
       )}
