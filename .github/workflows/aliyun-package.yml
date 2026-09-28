@@ -2,9 +2,23 @@ name: Build Aliyun Package
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: '要打包的 Git 提交、分支或标签；留空即当前提交'
+        required: false
+        type: string
   push:
+    branches:
+      - user/codex/tesla-player-recovery
     paths:
       - ".github/workflows/aliyun-package.yml"
+      - "src/**"
+      - "public/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "next.config.*"
+      - "server.js"
 
 permissions:
   contents: read
@@ -34,8 +48,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 固定迁移版本，避免混入尚未验收的新功能
-          ref: 70d5477ff19937c0e7c796c6bbeec5910bb6eeee
+          # The TEST deployment and this package must come from the exact same
+          # commit. Never pin a historical recovery SHA here.
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@v4
@@ -52,6 +67,9 @@ jobs:
 
       - name: Package Linux application
         run: |
+          printf 'commit=%s\n' "$(git rev-parse HEAD)" > P002_BUILD_INFO.txt
+          printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> P002_BUILD_INFO.txt
+          printf 'storage=redis-local-on-ecs\n' >> P002_BUILD_INFO.txt
           tar \
             --exclude='./.git' \
             --exclude='./.github' \
