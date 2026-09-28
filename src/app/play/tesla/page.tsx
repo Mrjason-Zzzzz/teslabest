@@ -1022,7 +1022,7 @@ function TeslaPlayPageInner() {
                             onClick={() =>
                               setAutoPlayEnabled((enabled) => !enabled)
                             }
-                            className={`relative h-6 w-11 rounded-full transition-colors ${
+                            className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors ${
                               autoPlayEnabled
                                 ? 'bg-violet-500'
                                 : 'bg-gray-300 dark:bg-gray-700'

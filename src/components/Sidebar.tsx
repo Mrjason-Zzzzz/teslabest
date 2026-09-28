@@ -383,14 +383,14 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                   e.currentTarget.blur();
                 }}
                 data-active={active === '/'}
-                className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
+                className={`tesla-sidebar-nav-link group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
                   effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                 } gap-3 justify-start`}
               >
                 <div className='w-4 h-4 flex items-center justify-center'>
                   <Home className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                 </div>
-                {!effectiveCollapsed && (
+                {(!effectiveCollapsed || isCockpitViewport) && (
                   <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                     首页
                   </span>
@@ -399,14 +399,14 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
               <Link
                 href='/search'
                 data-active={active === '/search'}
-                className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
+                className={`tesla-sidebar-nav-link group flex items-center rounded-xl px-3 py-2.5 pl-4 text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 font-medium transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
                   effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                 } gap-3 justify-start`}
               >
                 <div className='w-4 h-4 flex items-center justify-center'>
                   <Search className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                 </div>
-                {!effectiveCollapsed && (
+                {(!effectiveCollapsed || isCockpitViewport) && (
                   <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                     搜索
                   </span>
@@ -441,14 +441,14 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                       key={item.label}
                       href={item.href}
                       data-active={isActive}
-                      className={`group flex items-center rounded-xl px-3 py-2.5 pl-4 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
+                      className={`tesla-sidebar-nav-link group flex items-center rounded-xl px-3 py-2.5 pl-4 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-600 data-[active=true]:bg-violet-500/15 data-[active=true]:text-violet-700 transition-colors duration-200 min-h-[44px] dark:text-gray-300 dark:hover:text-violet-300 dark:data-[active=true]:bg-violet-500/15 dark:data-[active=true]:text-violet-300 ${
                         effectiveCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                       } gap-3 justify-start`}
                     >
                       <div className='w-4 h-4 flex items-center justify-center'>
                         <Icon className='h-4 w-4 text-gray-500 group-hover:text-violet-600 data-[active=true]:text-violet-700 dark:text-gray-400 dark:group-hover:text-violet-300 dark:data-[active=true]:text-violet-300' />
                       </div>
-                      {!effectiveCollapsed && (
+                      {(!effectiveCollapsed || isCockpitViewport) && (
                         <span className='whitespace-nowrap transition-opacity duration-200 opacity-100'>
                           {item.label}
                         </span>

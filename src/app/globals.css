@@ -460,18 +460,38 @@ div[data-media-provider] video {
 /*
  * Cockpit landscape: Tesla's 1254x784 display currently reports an effective
  * browser viewport around 773x601. Keep the player and selector side by side
- * without scaling the document: 64px navigation | fluid player | 204px rail.
+ * without scaling the document: 72px labelled navigation | fluid player |
+ * 160px rail.
  * Fullscreen remains on the untransformed player node, so Canvas, danmaku and
  * media controls retain their native coordinate system.
  */
 @media (min-width: 720px) and (max-width: 899px) and (max-height: 720px) {
   .tesla-app-shell .tesla-sidebar,
   .tesla-app-shell .tesla-sidebar-offset {
-    width: 4rem !important;
+    width: 4.5rem !important;
   }
 
   .tesla-app-shell .tesla-sidebar-toggle {
     display: none !important;
+  }
+
+  .tesla-app-shell .tesla-sidebar-nav-link {
+    min-height: 3.25rem;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.125rem;
+    padding: 0.25rem;
+  }
+
+  .tesla-app-shell .tesla-sidebar-nav-link > span {
+    display: block;
+    max-width: 4rem;
+    overflow: hidden;
+    font-size: 0.625rem;
+    line-height: 0.75rem;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tesla-vod-route .tesla-vod-content {
@@ -480,7 +500,7 @@ div[data-media-provider] video {
   }
 
   .tesla-vod-route .tesla-vod-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(12.75rem, 26vw) !important;
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 22vw) !important;
     gap: 0.5rem;
   }
 
