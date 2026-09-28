@@ -269,17 +269,10 @@ export default function TeslaDanmakuOverlay({
               episodeId: match.episodeId,
               episodeTitle: match.episodeTitle,
             }));
-      const directEpisode = directMatches.find(
-        (match) =>
-          match.animeId === selected.animeId &&
-          parseTeslaDanmakuEpisodeNumber(match.episodeTitle || '') ===
-            wantedEpisode
-      );
       const manualEpisode = manualEpisodeId
         ? episodes.find((episode) => episode.episodeId === manualEpisodeId)
         : null;
       const automaticEpisode =
-        directEpisode ||
         selectTeslaDanmakuEpisode(episodes, episodeNumber, episodeLabel);
       const selectedEpisode = manualEpisode || automaticEpisode;
       onChoicesChange?.({
@@ -305,6 +298,7 @@ export default function TeslaDanmakuOverlay({
         {
           animeId: selected.animeId,
           animeTitle: selected.animeTitle,
+          episodeId,
           episodeTitle: matchedEpisodeTitle,
           searchKeyword: baseTitle,
         }

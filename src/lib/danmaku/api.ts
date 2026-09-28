@@ -149,6 +149,7 @@ export async function getDanmakuById(
   },
   metadata?: {
     animeId?: number;
+    episodeId?: number;
     animeTitle?: string;
     episodeTitle?: string;
     searchKeyword?: string;
@@ -161,7 +162,8 @@ export async function getDanmakuById(
       const cachedData = await getDanmakuFromCache(
         title,
         episodeIndex,
-        metadata?.animeId
+        metadata?.animeId,
+        metadata?.episodeId ?? episodeId
       );
       if (cachedData) {
         console.log(

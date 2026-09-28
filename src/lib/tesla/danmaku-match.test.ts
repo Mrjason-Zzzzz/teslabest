@@ -156,4 +156,32 @@ describe('Tesla danmaku automatic match identity', () => {
       )
     ).toBe(1);
   });
+
+  test('keeps upper, lower and bonus variety editions separate', () => {
+    const episodes = [
+      { episodeTitle: '第1期上：开场' },
+      { episodeTitle: '第1期下：游戏' },
+      { episodeTitle: '第1期加更：幕后' },
+    ];
+    expect(selectTeslaDanmakuEpisode(episodes, 1, '第1期下')).toBe(
+      episodes[1]
+    );
+    expect(selectTeslaDanmakuEpisode(episodes, 1, '第1期加更')).toBe(
+      episodes[2]
+    );
+  });
+
+  test('requires manual selection when a plain variety episode is ambiguous', () => {
+    expect(
+      selectTeslaDanmakuEpisode(
+        [
+          { episodeTitle: '第1期上' },
+          { episodeTitle: '第1期下' },
+          { episodeTitle: '第1期加更' },
+        ],
+        1,
+        '第1期'
+      )
+    ).toBeNull();
+  });
 });

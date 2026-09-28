@@ -23,16 +23,21 @@ export interface DanmakuCacheData {
   danmakuCount?: number; // 弹幕数量
 }
 
-// 生成缓存键。animeId 可区分同名翻拍、电影版、动画版与电视剧版。
+// 生成缓存键。animeId 可区分同名翻拍；episodeId 进一步区分同一期的
+// 上/下/加更/番外，不能再把它们共用同一个播放列表下标缓存。
 export function generateCacheKey(
   title: string,
   episodeIndex: number,
-  animeId?: number
+  animeId?: number,
+  episodeId?: number
 ): string {
   const animeIdentity = Number.isFinite(animeId)
     ? `|anime:${Number(animeId)}`
     : '';
-  return `${title}|${episodeIndex}${animeIdentity}`;
+  const episodeIdentity = Number.isFinite(episodeId)
+    ? `|episode:${Number(episodeId)}`
+    : '';
+  return `${title}|${episodeIndex}${animeIdentity}${episodeIdentity}`;
 }
 
 // 获取弹幕缓存失效时间（毫秒）
@@ -120,7 +125,12 @@ export async function saveDanmakuToCache(
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const objectStore = transaction.objectStore(STORE_NAME);
 
-    const cacheKey = generateCacheKey(title, episodeIndex, metadata?.animeId);
+    const cacheKey = generateCacheKey(
+      title,
+      episodeIndex,
+      metadata?.animeId,
+      metadata?.episodeId
+    );
     const cacheData: DanmakuCacheData = {
       cacheKey,
       comments,
@@ -175,7 +185,8 @@ export async function saveDanmakuToCache(
 export async function getDanmakuFromCache(
   title: string,
   episodeIndex: number,
-  animeId?: number
+  animeId?: number,
+  episodeId?: number
 ): Promise<{
   comments: DanmakuComment[];
   metadata?: {
@@ -199,7 +210,7 @@ export async function getDanmakuFromCache(
     const transaction = db.transaction([STORE_NAME], 'readonly');
     const objectStore = transaction.objectStore(STORE_NAME);
 
-    const cacheKey = generateCacheKey(title, episodeIndex, animeId);
+    const cacheKey = generateCacheKey(title, episodeIndex, animeId, episodeId);
 
     return new Promise((resolve, reject) => {
       const request = objectStore.get(cacheKey);

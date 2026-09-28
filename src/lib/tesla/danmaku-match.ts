@@ -177,6 +177,40 @@ export function parseTeslaDanmakuEpisodeNumber(value: string) {
   return null;
 }
 
+type TeslaDanmakuEpisodeIdentity = {
+  number: number | null;
+  /**
+   * "第 1 期上"、"第 1 期下"、"加更" 不能只按数字视为同一集。
+   * 这里保留可比较的版本身份；未知时宁可要求手动选择，也不串弹幕。
+   */
+  variant: string | null;
+};
+
+function readTeslaDanmakuEpisodeVariant(
+  value: string
+): TeslaDanmakuEpisodeIdentity['variant'] {
+  const normalized = value
+    .replace(/\s+/g, '')
+    .replace(/[（(][^)）]*[)）]/g, '');
+  if (/(?:上半|上集|上篇|上)/u.test(normalized)) return 'upper';
+  if (/(?:下半|下集|下篇|下)/u.test(normalized)) return 'lower';
+  if (/(?:中集|中篇|中)/u.test(normalized)) return 'middle';
+  if (/(?:加更|加长|会员加更|plus)/iu.test(normalized)) return 'bonus';
+  if (/(?:先导|抢先|预告)/u.test(normalized)) return 'preview';
+  if (/(?:花絮|番外|特别篇|特别节目|彩蛋)/u.test(normalized)) return 'special';
+  if (/(?:精编|纯享)/u.test(normalized)) return 'cut';
+  return null;
+}
+
+function getTeslaDanmakuEpisodeIdentity(
+  value: string
+): TeslaDanmakuEpisodeIdentity {
+  return {
+    number: parseTeslaDanmakuEpisodeNumber(value),
+    variant: readTeslaDanmakuEpisodeVariant(value),
+  };
+}
+
 export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
   episodes: T[],
   wantedEpisode: number,
@@ -188,7 +222,7 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
   const wanted = Math.max(1, Math.floor(labelNumber || wantedEpisode || 1));
   const numbered = episodes.map((episode) => ({
     episode,
-    number: parseTeslaDanmakuEpisodeNumber(episode.episodeTitle),
+    identity: getTeslaDanmakuEpisodeIdentity(episode.episodeTitle),
   }));
 
   if (episodeLabel) {
@@ -202,11 +236,32 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
     if (labelMatch) return labelMatch;
   }
 
-  const exact = numbered.find((item) => item.number === wanted)?.episode;
-  if (exact) return exact;
+  const candidates = numbered.filter(
+    (item) => item.identity.number === wanted
+  );
+  const requestedVariant = episodeLabel
+    ? readTeslaDanmakuEpisodeVariant(episodeLabel)
+    : null;
+
+  if (requestedVariant) {
+    const matchingVariant = candidates.filter(
+      (item) => item.identity.variant === requestedVariant
+    );
+    // More than one item with the same semantic identity still needs an exact
+    // manual choice.  Choosing the first one recreates the old串片problem.
+    if (matchingVariant.length === 1) return matchingVariant[0].episode;
+    return null;
+  }
+
+  // A plain "第 1 期" must not silently resolve to "第 1 期上/下/加更".
+  // The single, unqualified item is safe; several variants are not.
+  const plainCandidates = candidates.filter((item) => !item.identity.variant);
+  if (plainCandidates.length === 1) return plainCandidates[0].episode;
+  if (candidates.length === 1) return candidates[0].episode;
+  if (candidates.length > 1) return null;
 
   const knownNumbers = numbered
-    .map((item) => item.number)
+    .map((item) => item.identity.number)
     .filter((value): value is number => value !== null);
   if (episodes.length === 1 && wanted === 1) return episodes[0];
   const isMonotonic =
