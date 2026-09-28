@@ -424,8 +424,9 @@ div[data-media-provider] video {
  * usable height is very small. The live pages used to stay fixed in that
  * state, leaving the channel/source panel below the fold with no way to
  * scroll. Treat short or effectively narrow viewports as a compact layout:
- * retain a playable video area, then make the selector reachable by normal
- * page scrolling. Large car displays retain the two-column locked layout.
+ * retain a playable video area, keep the selector on its right, and make the
+ * selector reachable by normal page scrolling. Large car displays retain the
+ * same two-column information architecture.
  */
 .tesla-live-route.tesla-live-route--compact {
     position: relative !important;
@@ -447,19 +448,48 @@ div[data-media-provider] video {
     height: auto !important;
     max-height: none !important;
     min-height: calc(100dvh - 4rem) !important;
-    grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: minmax(14rem, 48dvh) auto !important;
+    grid-template-columns: minmax(0, 1fr) clamp(18rem, 27vw, 24rem) !important;
+    grid-template-rows: auto !important;
+    align-items: start;
   }
 
 .tesla-live-route.tesla-live-route--compact > main > section {
+    position: sticky;
+    top: 4rem;
+    align-self: start;
+    height: calc(100dvh - 4rem) !important;
     min-height: 14rem !important;
   }
 
 .tesla-live-route.tesla-live-route--compact > main > aside {
+    grid-column: auto !important;
     min-height: 24rem !important;
     margin: 0 !important;
     overflow: visible !important;
     border-radius: 0 !important;
+}
+
+/* The actual page owns vertical scrolling in compact Tesla mode. Let the
+ * right-side list grow into that page rather than relying on a nested list
+ * scroller, which the current Tesla browser can ignore. */
+.tesla-live-route.tesla-live-route--compact > main > aside [class~='overflow-y-auto'] {
+  overflow: visible !important;
+}
+
+/* Phones and genuinely narrow tablets do not have room for a safe right
+ * rail. They retain the natural one-column order instead of squeezing player
+ * controls or touch targets. */
+@media (max-width: 900px) {
+  .tesla-live-route.tesla-live-route--compact > main {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(14rem, 48dvh) auto !important;
+  }
+
+  .tesla-live-route.tesla-live-route--compact > main > section {
+    position: relative;
+    top: auto;
+    height: auto !important;
+  }
 }
 
 /*
