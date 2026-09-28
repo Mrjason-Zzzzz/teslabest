@@ -463,57 +463,76 @@ div[data-media-provider] video {
  * Instead, switch just those marked routes to a compact single-column layout,
  * make the document scrollable, and keep an icon-only 76px navigation rail.
  */
-@media (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-width: 1600px),
-  (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-height: 1100px) {
-  .tesla-vehicle-scroll-shell {
-    min-height: 100dvh !important;
-    overflow: visible !important;
-  }
+/* This state is set from the real visual viewport, not a guessed browser
+ * zoom percentage. It is intentionally scoped to the two normal live routes.
+ */
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout {
+  position: fixed !important;
+  inset: 0 !important;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+}
 
-  .tesla-vehicle-scroll-shell .tesla-sidebar,
-  .tesla-vehicle-scroll-shell .tesla-sidebar-offset {
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar,
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar-offset {
     width: 4.75rem !important;
-  }
+}
 
-  .tesla-vehicle-scroll-shell .tesla-sidebar {
-    overflow: hidden !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar {
+  overflow: hidden !important;
+}
 
-  .tesla-vehicle-scroll-shell .tesla-sidebar .whitespace-nowrap,
-  .tesla-vehicle-scroll-shell .tesla-sidebar .w-\[calc\(100\%-4rem\)\] {
-    display: none !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-sidebar
+  .whitespace-nowrap,
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-sidebar
+  .w-\[calc\(100\%-4rem\)\] {
+  display: none !important;
+}
 
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
   .tesla-vehicle-scroll-content {
-    min-height: 100dvh !important;
-    overflow: visible !important;
-  }
+  min-height: 100dvh !important;
+  overflow: visible !important;
+  touch-action: pan-y;
+}
 
-  .tesla-vehicle-scroll-content .tesla-legacy-live-page {
-    gap: 0.75rem;
-    padding: 0.75rem 1rem 1.5rem !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-page {
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 1.5rem !important;
+}
 
-  .tesla-vehicle-scroll-content .tesla-legacy-live-grid {
-    height: auto !important;
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-grid {
+  height: auto !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+}
 
-  .tesla-vehicle-scroll-content .tesla-legacy-live-player,
-  .tesla-vehicle-scroll-content .tesla-legacy-live-panel {
-    grid-column: 1 / -1 !important;
-    height: auto !important;
-    min-height: 0 !important;
-    overflow: visible !important;
-    opacity: 1 !important;
-    transform: none !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-player,
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-panel {
+  grid-column: 1 / -1 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
 
-  .tesla-vehicle-scroll-content .tesla-legacy-live-video {
-    height: min(48dvh, 31rem) !important;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-video {
+  height: min(48dvh, 31rem) !important;
+}
 
-  .tesla-vehicle-scroll-content .tesla-legacy-live-panel > div {
-    min-height: 22rem;
-  }
+.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
+  .tesla-legacy-live-panel > div {
+  min-height: 22rem;
 }
