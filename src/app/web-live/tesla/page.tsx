@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Search,
   Server,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -26,6 +27,10 @@ import {
 
 import TeslaPlayer from '@/components/TeslaPlayer';
 import { detectWebLivePlatform } from '@/lib/tesla/web-live-source';
+import {
+  LiveLayoutMode,
+  useAdaptiveLiveLayout,
+} from '@/lib/tesla/use-adaptive-live-layout';
 
 interface WebLiveSource {
   key: string;
@@ -94,6 +99,7 @@ function TeslaWebLivePageInner() {
     platform: 'douyin',
     roomId: '',
   });
+  const { mode: layoutMode, chooseMode, isCompact } = useAdaptiveLiveLayout();
   const triedTransportIdsRef = useRef(new Set<string>());
   const automaticReparseAttemptsRef = useRef(0);
 
@@ -422,7 +428,11 @@ function TeslaWebLivePageInner() {
     qualityOptions.find((option) => option.id === activeQualityId) || null;
 
   return (
-    <div className='tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden'>
+    <div
+      className={`tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden${
+        isCompact ? ' tesla-live-route--compact' : ''
+      }`}
+    >
       <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
@@ -450,17 +460,43 @@ function TeslaWebLivePageInner() {
             </p>
           </div>
         </div>
-        <button
-          type='button'
-          onClick={reconnectStream}
-          disabled={!currentSource || loadingStream}
-          className='flex min-h-12 items-center gap-2 rounded-2xl bg-violet-500 px-4 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40'
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${loadingStream ? 'animate-spin' : ''}`}
-          />
-          重新连接
-        </button>
+        <div className='flex items-center gap-2'>
+          <div className='hidden rounded-2xl bg-white/10 p-1 sm:flex'>
+            {(
+              [
+                ['auto', '自动'],
+                ['compact', '紧凑'],
+                ['standard', '标准'],
+              ] as [LiveLayoutMode, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type='button'
+                onClick={() => chooseMode(value)}
+                aria-label={`页面布局：${label}`}
+                className={`min-h-10 rounded-xl px-3 text-xs transition ${
+                  layoutMode === value
+                    ? 'bg-violet-500 text-white'
+                    : 'text-white/55 active:scale-95'
+                }`}
+              >
+                {value === 'auto' && <SlidersHorizontal className='mr-1 inline h-3.5 w-3.5' />}
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            type='button'
+            onClick={reconnectStream}
+            disabled={!currentSource || loadingStream}
+            className='flex min-h-12 items-center gap-2 rounded-2xl bg-violet-500 px-4 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40'
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${loadingStream ? 'animate-spin' : ''}`}
+            />
+            重新连接
+          </button>
+        </div>
       </header>
 
       <main className='grid min-h-[calc(100dvh-4rem)] grid-rows-[minmax(14rem,48dvh)_auto] lg:h-[calc(100%-4rem)] lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>

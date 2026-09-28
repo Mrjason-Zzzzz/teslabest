@@ -412,8 +412,7 @@ div[data-media-provider] video {
  * retain a playable video area, then make the selector reachable by normal
  * page scrolling. Large car displays retain the two-column locked layout.
  */
-@media (max-width: 1600px), (max-height: 1100px) {
-  .tesla-live-route {
+.tesla-live-route.tesla-live-route--compact {
     position: relative !important;
     inset: auto !important;
     height: auto !important;
@@ -426,13 +425,13 @@ div[data-media-provider] video {
     touch-action: pan-y;
   }
 
-  .tesla-live-route > header {
+.tesla-live-route.tesla-live-route--compact > header {
     position: sticky !important;
     top: 0;
     z-index: 40;
   }
 
-  .tesla-live-route > main {
+.tesla-live-route.tesla-live-route--compact > main {
     height: auto !important;
     max-height: none !important;
     min-height: calc(100dvh - 4rem) !important;
@@ -440,16 +439,15 @@ div[data-media-provider] video {
     grid-template-rows: minmax(14rem, 48dvh) auto !important;
   }
 
-  .tesla-live-route > main > section {
+.tesla-live-route.tesla-live-route--compact > main > section {
     min-height: 14rem !important;
   }
 
-  .tesla-live-route > main > aside {
+.tesla-live-route.tesla-live-route--compact > main > aside {
     min-height: 24rem !important;
     margin: 0 !important;
     overflow: visible !important;
     border-radius: 0 !important;
-  }
 }
 
 /*

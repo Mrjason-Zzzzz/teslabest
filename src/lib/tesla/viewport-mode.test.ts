@@ -6,7 +6,8 @@ describe('compact vehicle viewport selection', () => {
       shouldUseCompactVehicleLayout({
         width: 1440,
         height: 900,
-        physicalWidth: 1440,
+        physicalWidth: 2560,
+        frameWidth: 1440,
       })
     ).toBe(false);
   });
@@ -17,6 +18,7 @@ describe('compact vehicle viewport selection', () => {
         width: 1280,
         height: 800,
         physicalWidth: 1920,
+        frameWidth: 1920,
       })
     ).toBe(true);
   });
@@ -27,6 +29,19 @@ describe('compact vehicle viewport selection', () => {
         width: 960,
         height: 600,
         physicalWidth: 1440,
+        frameWidth: 1440,
+      })
+    ).toBe(true);
+  });
+
+  it('uses an explicit visual viewport scale when browser frame metrics are unavailable', () => {
+    expect(
+      shouldUseCompactVehicleLayout({
+        width: 1280,
+        height: 800,
+        physicalWidth: 1280,
+        frameWidth: 1280,
+        scale: 1.25,
       })
     ).toBe(true);
   });

@@ -8,6 +8,7 @@ import {
   RotateCcw,
   Search,
   Server,
+  SlidersHorizontal,
   Tv,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -27,6 +28,10 @@ import {
   getLogicalLiveChannelKey,
   groupLiveChannelVariants,
 } from '@/lib/tesla/live-channel-identity';
+import {
+  LiveLayoutMode,
+  useAdaptiveLiveLayout,
+} from '@/lib/tesla/use-adaptive-live-layout';
 
 interface LiveSource {
   key: string;
@@ -96,6 +101,7 @@ function TeslaLivePageInner() {
     Record<string, string>
   >({});
   const [error, setError] = useState<string | null>(null);
+  const { mode: layoutMode, chooseMode, isCompact } = useAdaptiveLiveLayout();
 
   const channelCacheRef = useRef(new Map<string, LiveChannel[]>());
   const failedChannelLinesRef = useRef(new Set<string>());
@@ -384,7 +390,11 @@ function TeslaLivePageInner() {
   }, [sources, initialSourceKey, initialChannelId]);
 
   return (
-    <div className='tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden'>
+    <div
+      className={`tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden${
+        isCompact ? ' tesla-live-route--compact' : ''
+      }`}
+    >
       <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
@@ -420,6 +430,30 @@ function TeslaLivePageInner() {
             <RotateCcw className='h-4 w-4' />
             恢复
           </button>
+          <div className='hidden rounded-2xl bg-white/10 p-1 sm:flex'>
+            {(
+              [
+                ['auto', '自动'],
+                ['compact', '紧凑'],
+                ['standard', '标准'],
+              ] as [LiveLayoutMode, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type='button'
+                onClick={() => chooseMode(value)}
+                aria-label={`页面布局：${label}`}
+                className={`min-h-10 rounded-xl px-3 text-xs transition ${
+                  layoutMode === value
+                    ? 'bg-violet-500 text-white'
+                    : 'text-white/55 active:scale-95'
+                }`}
+              >
+                {value === 'auto' && <SlidersHorizontal className='mr-1 inline h-3.5 w-3.5' />}
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
