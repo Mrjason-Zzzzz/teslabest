@@ -62,21 +62,6 @@ body {
   overscroll-behavior: none;
 }
 
-/*
- * Tesla 2026 browser updates can consume vertical gestures inside a fixed
- * application shell. This is a deliberately page-level escape hatch for the
- * compact live layout: source and channel selection must remain reachable
- * below the player, even when nested scrolling is not honoured.
- */
-html.tesla-live-document-scroll,
-body.tesla-live-document-scroll {
-  height: auto !important;
-  min-height: 100%;
-  overflow-y: auto !important;
-  overscroll-behavior-y: auto;
-  touch-action: pan-y;
-}
-
 body {
   color: rgb(var(--foreground-rgb));
 }
@@ -420,159 +405,40 @@ div[data-media-provider] video {
 }
 
 /*
- * Tesla browser updates and desktop zoom can report a wide viewport while the
- * usable height is very small. The live pages used to stay fixed in that
- * state, leaving the channel/source panel below the fold with no way to
- * scroll. Treat short or effectively narrow viewports as a compact layout:
- * retain a playable video area, keep the selector on its right, and make the
- * selector reachable by normal page scrolling. Large car displays retain the
- * same two-column information architecture.
+ * The Tesla browser can report a CSS width below Tailwind's `lg` breakpoint
+ * after an update even on a physically wide display. Live playback therefore
+ * uses one stable information architecture from 720px upward: player on the
+ * left, source/channel selector on the right. This is structural, not an
+ * inferred zoom mode, so it cannot unexpectedly stack the selector below.
  */
-.tesla-live-route.tesla-live-route--compact {
-    position: relative !important;
-    inset: auto !important;
-    height: auto !important;
-    max-height: none !important;
-    min-height: 100dvh;
-    overflow: visible !important;
-    touch-action: pan-y;
+@media (min-width: 720px) {
+  .tesla-live-route {
+    position: fixed !important;
+    inset: 0 !important;
+    height: 100dvh !important;
+    overflow: hidden !important;
   }
 
-.tesla-live-route.tesla-live-route--compact > header {
-    position: sticky !important;
-    top: 0;
-    z-index: 40;
+  .tesla-live-route > header {
+    position: static !important;
   }
 
-.tesla-live-route.tesla-live-route--compact > main {
-    height: auto !important;
-    max-height: none !important;
-    min-height: calc(100dvh - 4rem) !important;
-    grid-template-columns: minmax(0, 1fr) clamp(18rem, 27vw, 24rem) !important;
-    grid-template-rows: auto !important;
-    align-items: start;
-  }
-
-.tesla-live-route.tesla-live-route--compact > main > section {
-    position: sticky;
-    top: 4rem;
-    align-self: start;
+  .tesla-live-route > main {
     height: calc(100dvh - 4rem) !important;
-    min-height: 14rem !important;
+    min-height: 0 !important;
+    grid-template-columns: minmax(0, 1fr) clamp(17rem, 24vw, 21rem) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
   }
 
-.tesla-live-route.tesla-live-route--compact > main > aside {
-    grid-column: auto !important;
-    min-height: 24rem !important;
-    margin: 0 !important;
-    overflow: visible !important;
-    border-radius: 0 !important;
-}
-
-/* The actual page owns vertical scrolling in compact Tesla mode. Let the
- * right-side list grow into that page rather than relying on a nested list
- * scroller, which the current Tesla browser can ignore. */
-.tesla-live-route.tesla-live-route--compact > main > aside [class~='overflow-y-auto'] {
-  overflow: visible !important;
-}
-
-/* Phones and genuinely narrow tablets do not have room for a safe right
- * rail. They retain the natural one-column order instead of squeezing player
- * controls or touch targets. */
-@media (max-width: 900px) {
-  .tesla-live-route.tesla-live-route--compact > main {
-    grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: minmax(14rem, 48dvh) auto !important;
+  .tesla-live-route > main > section {
+    min-height: 0 !important;
   }
 
-  .tesla-live-route.tesla-live-route--compact > main > section {
-    position: relative;
-    top: auto;
-    height: auto !important;
+  .tesla-live-route > main > aside {
+    min-height: 0 !important;
+    margin: 0.75rem 0.75rem 0.75rem 0 !important;
+    overflow: hidden !important;
+    border: 1px solid rgb(255 255 255 / 0.1) !important;
+    border-radius: 1rem !important;
   }
-}
-
-/*
- * The main sidebar links open the legacy /live and /web-live pages, not the
- * standalone Tesla workbench above. At 125%–150% vehicle browser zoom those
- * pages still matched Tailwind's `lg` desktop rules: a 256px sidebar and a
- * fixed-height two-column player, all inside PageLayout's overflow-hidden
- * shell. The result was a large sidebar and an unreachable lower source list.
- *
- * Do not scale the page: it moves touch hit areas away from what is drawn.
- * Instead, switch just those marked routes to a compact single-column layout,
- * make the document scrollable, and keep an icon-only 76px navigation rail.
- */
-/* This state is set from the real visual viewport, not a guessed browser
- * zoom percentage. It is intentionally scoped to the two normal live routes.
- */
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout {
-  position: fixed !important;
-  inset: 0 !important;
-  height: 100dvh !important;
-  min-height: 0 !important;
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
-  touch-action: pan-y;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar,
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar-offset {
-    width: 4.75rem !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout .tesla-sidebar {
-  overflow: hidden !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-sidebar
-  .whitespace-nowrap,
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-sidebar
-  .w-\[calc\(100\%-4rem\)\] {
-  display: none !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-vehicle-scroll-content {
-  min-height: 100dvh !important;
-  overflow: visible !important;
-  touch-action: pan-y;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-page {
-  gap: 0.75rem;
-  padding: 0.75rem 1rem 1.5rem !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-grid {
-  height: auto !important;
-  grid-template-columns: minmax(0, 1fr) !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-player,
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-panel {
-  grid-column: 1 / -1 !important;
-  height: auto !important;
-  min-height: 0 !important;
-  overflow: visible !important;
-  opacity: 1 !important;
-  transform: none !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-video {
-  height: min(48dvh, 31rem) !important;
-}
-
-.tesla-vehicle-scroll-shell.tesla-vehicle-compact-layout
-  .tesla-legacy-live-panel > div {
-  min-height: 22rem;
 }

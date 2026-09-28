@@ -11,7 +11,6 @@ import { ThemeToggle } from './ThemeToggle';
 import { UpdateNotification } from './UpdateNotification';
 import { UserMenu } from './UserMenu';
 import { VersionCheckProvider } from './VersionCheckProvider';
-import { shouldUseCompactVehicleLayout } from '@/lib/tesla/viewport-mode';
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -26,48 +25,7 @@ const PageLayout = ({
 }: PageLayoutProps) => {
   const router = useRouter();
   const [backgroundImage, setBackgroundImage] = useState('');
-  const [isCompactVehicleViewport, setIsCompactVehicleViewport] =
-    useState(false);
   const shouldShowSharedBackground = !hideNavigation && activePath !== '/play';
-  // The regular live entry points intentionally keep the site chrome, unlike
-  // /live/tesla. Mark them so compact vehicle viewports can use document
-  // scrolling rather than being clipped by the desktop app shell.
-  const isVehicleScrollableRoute =
-    activePath === '/live' || activePath === '/web-live';
-
-  useEffect(() => {
-    if (!isVehicleScrollableRoute) {
-      setIsCompactVehicleViewport(false);
-      return;
-    }
-
-    let frame = 0;
-    const updateViewportMode = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const visualViewport = window.visualViewport;
-        const width = visualViewport?.width || window.innerWidth;
-        const height = visualViewport?.height || window.innerHeight;
-        const physicalWidth = window.screen?.width || width;
-        setIsCompactVehicleViewport(
-          shouldUseCompactVehicleLayout({
-            width,
-            height,
-            physicalWidth,
-          })
-        );
-      });
-    };
-
-    updateViewportMode();
-    window.addEventListener('resize', updateViewportMode);
-    window.visualViewport?.addEventListener('resize', updateViewportMode);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('resize', updateViewportMode);
-      window.visualViewport?.removeEventListener('resize', updateViewportMode);
-    };
-  }, [isVehicleScrollableRoute]);
 
   useEffect(() => {
     router.prefetch('/search');
@@ -117,11 +75,7 @@ const PageLayout = ({
 
   return (
     <VersionCheckProvider>
-      <div
-        className={`tesla-app-shell relative w-full min-h-screen overflow-hidden${
-          isVehicleScrollableRoute ? ' tesla-vehicle-scroll-shell' : ''
-        }${isCompactVehicleViewport ? ' tesla-vehicle-compact-layout' : ''}`}
-      >
+      <div className='tesla-app-shell relative w-full min-h-screen overflow-hidden'>
         {shouldShowSharedBackground && backgroundImage && (
           <>
             <div
@@ -168,9 +122,7 @@ const PageLayout = ({
 
             {/* 主内容 */}
             <main
-              className={`flex-1 md:min-h-0 mb-14 md:mb-0 md:mt-0 mt-[calc(3rem+env(safe-area-inset-top))]${
-                isVehicleScrollableRoute ? ' tesla-vehicle-scroll-content' : ''
-              }`}
+              className='flex-1 md:min-h-0 mb-14 md:mb-0 md:mt-0 mt-[calc(3rem+env(safe-area-inset-top))]'
               style={{
                 paddingBottom: 'calc(3.5rem + env(safe-area-inset-bottom))',
               }}
