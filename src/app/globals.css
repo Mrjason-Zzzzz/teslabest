@@ -451,3 +451,69 @@ div[data-media-provider] video {
     border-radius: 0 !important;
   }
 }
+
+/*
+ * The main sidebar links open the legacy /live and /web-live pages, not the
+ * standalone Tesla workbench above. At 125%–150% vehicle browser zoom those
+ * pages still matched Tailwind's `lg` desktop rules: a 256px sidebar and a
+ * fixed-height two-column player, all inside PageLayout's overflow-hidden
+ * shell. The result was a large sidebar and an unreachable lower source list.
+ *
+ * Do not scale the page: it moves touch hit areas away from what is drawn.
+ * Instead, switch just those marked routes to a compact single-column layout,
+ * make the document scrollable, and keep an icon-only 76px navigation rail.
+ */
+@media (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-width: 1600px),
+  (min-width: 768px) and (min-aspect-ratio: 16/9) and (max-height: 1100px) {
+  .tesla-vehicle-scroll-shell {
+    min-height: 100dvh !important;
+    overflow: visible !important;
+  }
+
+  .tesla-vehicle-scroll-shell .tesla-sidebar,
+  .tesla-vehicle-scroll-shell .tesla-sidebar-offset {
+    width: 4.75rem !important;
+  }
+
+  .tesla-vehicle-scroll-shell .tesla-sidebar {
+    overflow: hidden !important;
+  }
+
+  .tesla-vehicle-scroll-shell .tesla-sidebar .whitespace-nowrap,
+  .tesla-vehicle-scroll-shell .tesla-sidebar .w-\[calc\(100\%-4rem\)\] {
+    display: none !important;
+  }
+
+  .tesla-vehicle-scroll-content {
+    min-height: 100dvh !important;
+    overflow: visible !important;
+  }
+
+  .tesla-vehicle-scroll-content .tesla-legacy-live-page {
+    gap: 0.75rem;
+    padding: 0.75rem 1rem 1.5rem !important;
+  }
+
+  .tesla-vehicle-scroll-content .tesla-legacy-live-grid {
+    height: auto !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .tesla-vehicle-scroll-content .tesla-legacy-live-player,
+  .tesla-vehicle-scroll-content .tesla-legacy-live-panel {
+    grid-column: 1 / -1 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .tesla-vehicle-scroll-content .tesla-legacy-live-video {
+    height: min(48dvh, 31rem) !important;
+  }
+
+  .tesla-vehicle-scroll-content .tesla-legacy-live-panel > div {
+    min-height: 22rem;
+  }
+}

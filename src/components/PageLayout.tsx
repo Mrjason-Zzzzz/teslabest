@@ -26,6 +26,11 @@ const PageLayout = ({
   const router = useRouter();
   const [backgroundImage, setBackgroundImage] = useState('');
   const shouldShowSharedBackground = !hideNavigation && activePath !== '/play';
+  // The regular live entry points intentionally keep the site chrome, unlike
+  // /live/tesla. Mark them so compact vehicle viewports can use document
+  // scrolling rather than being clipped by the desktop app shell.
+  const isVehicleScrollableRoute =
+    activePath === '/live' || activePath === '/web-live';
 
   useEffect(() => {
     router.prefetch('/search');
@@ -75,7 +80,11 @@ const PageLayout = ({
 
   return (
     <VersionCheckProvider>
-      <div className='tesla-app-shell relative w-full min-h-screen overflow-hidden'>
+      <div
+        className={`tesla-app-shell relative w-full min-h-screen overflow-hidden${
+          isVehicleScrollableRoute ? ' tesla-vehicle-scroll-shell' : ''
+        }`}
+      >
         {shouldShowSharedBackground && backgroundImage && (
           <>
             <div
@@ -122,7 +131,9 @@ const PageLayout = ({
 
             {/* 主内容 */}
             <main
-              className='flex-1 md:min-h-0 mb-14 md:mb-0 md:mt-0 mt-[calc(3rem+env(safe-area-inset-top))]'
+              className={`flex-1 md:min-h-0 mb-14 md:mb-0 md:mt-0 mt-[calc(3rem+env(safe-area-inset-top))]${
+                isVehicleScrollableRoute ? ' tesla-vehicle-scroll-content' : ''
+              }`}
               style={{
                 paddingBottom: 'calc(3.5rem + env(safe-area-inset-bottom))',
               }}
