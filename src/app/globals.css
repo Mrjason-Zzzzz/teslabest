@@ -528,4 +528,57 @@ div[data-media-provider] video {
     font-size: 0.75rem;
     line-height: 1rem;
   }
+
+  /* Both dedicated live workbenches share the same compact rail in a Tesla
+     effective viewport. Keep 40px+ hit targets, but reduce visual typography
+     and panel width rather than scaling the page or its media canvas. */
+  .tesla-live-route > main {
+    grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 21vw) !important;
+  }
+
+  .tesla-live-route > main > aside {
+    margin: 0.5rem 0.5rem 0.5rem 0 !important;
+    border-radius: 0.75rem !important;
+  }
+
+  .tesla-live-route .text-sm {
+    font-size: 0.75rem;
+    line-height: 1rem;
+  }
+
+  .tesla-live-route .text-base,
+  .tesla-live-route .lg\:text-lg {
+    font-size: 0.875rem;
+    line-height: 1.125rem;
+  }
+
+  /* The non-Tesla live links still use the legacy route. Preserve its two
+     columns and internal scrolling at the same breakpoint. */
+  .tesla-legacy-live-page {
+    gap: 0.5rem !important;
+    padding: 0.5rem !important;
+  }
+
+  .tesla-legacy-live-grid {
+    height: auto !important;
+    min-height: 0 !important;
+    grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 21vw) !important;
+    gap: 0.5rem !important;
+  }
+
+  .tesla-legacy-live-video {
+    height: auto !important;
+    aspect-ratio: 16 / 9;
+  }
+
+  .tesla-legacy-live-panel {
+    height: auto !important;
+    max-height: calc(100dvh - 5rem) !important;
+    overflow-y: auto !important;
+  }
+
+  .tesla-legacy-live-page .text-sm {
+    font-size: 0.75rem;
+    line-height: 1rem;
+  }
 }
