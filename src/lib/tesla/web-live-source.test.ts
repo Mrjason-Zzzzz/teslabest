@@ -2,6 +2,7 @@ import {
   detectWebLivePlatform,
   getDefaultWebLiveName,
   normalizeWebLiveSource,
+  resolvePublicWebLiveSource,
 } from './web-live-source';
 
 describe('Tesla web live source input', () => {
@@ -26,5 +27,42 @@ describe('Tesla web live source input', () => {
       'douyin'
     );
     expect(getDefaultWebLiveName('douyin', '88')).toBe('抖音 88');
+  });
+
+  test('resolves a Douyin share link without following an off-platform redirect', async () => {
+    const originalFetch = global.fetch;
+    const originalTimeout = AbortSignal.timeout;
+    Object.defineProperty(AbortSignal, 'timeout', {
+      configurable: true,
+      value: jest.fn(() => undefined),
+    });
+    try {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          status: 302,
+          headers: { get: () => 'https://live.douyin.com/998877' },
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { get: () => null },
+        } as unknown as Response);
+      await expect(
+        resolvePublicWebLiveSource('https://v.douyin.com/example/')
+      ).resolves.toEqual({ platform: 'douyin', roomId: '998877' });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      global.fetch = originalFetch;
+      Object.defineProperty(AbortSignal, 'timeout', {
+        configurable: true,
+        value: originalTimeout,
+      });
+    }
+  });
+
+  test('rejects unsupported share domains before making an outbound request', async () => {
+    await expect(
+      resolvePublicWebLiveSource('https://example.com/live/123')
+    ).rejects.toThrow('公开直播间链接');
   });
 });

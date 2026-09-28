@@ -11,6 +11,7 @@ import {
   getBilibiliQualityLabels,
   parseHuyaAvcQualities,
 } from '@/lib/tesla/web-live-quality';
+import { normalizeWebLiveSource } from '@/lib/tesla/web-live-source';
 
 function getAntiCode(oldAntiCode: string, streamName: string): string {
   const paramsT = 100;
@@ -305,28 +306,46 @@ export async function GET(request: NextRequest) {
     );
     if (authResult instanceof NextResponse) return authResult;
     const { searchParams } = new URL(request.url);
-    const sourceKey = searchParams.get('source');
+    const sourceKey = searchParams.get('source') || '';
+    const isHandoff = searchParams.get('handoff') === '1';
+    let resolvedPlatform = '';
+    let resolvedRoomId = '';
 
-    if (!sourceKey) {
-      return NextResponse.json({ error: '缺少参数' }, { status: 400 });
-    }
-    const config = await getConfig();
-    const configuredSource = config.WebLiveConfig?.find(
-      (source) => source.key === sourceKey && !source.disabled
-    );
-    if (
-      !configuredSource ||
-      !(await isSourceAllowedForUser(authResult.username, configuredSource))
-    ) {
-      return NextResponse.json(
-        { error: '无权限访问该网络直播源' },
-        { status: 403 }
+    if (sourceKey) {
+      const config = await getConfig();
+      const configuredSource = config.WebLiveConfig?.find(
+        (source) => source.key === sourceKey && !source.disabled
       );
+      if (
+        !configuredSource ||
+        !(await isSourceAllowedForUser(authResult.username, configuredSource))
+      ) {
+        return NextResponse.json(
+          { error: '无权限访问该网络直播源' },
+          { status: 403 }
+        );
+      }
+      // The stored source key is authoritative. Client platform/room values may
+      // be stale after an admin edit and must not cause a false 403.
+      resolvedPlatform = configuredSource.platform;
+      resolvedRoomId = configuredSource.roomId;
+    } else if (isHandoff) {
+      try {
+        const normalized = normalizeWebLiveSource(
+          searchParams.get('platform'),
+          searchParams.get('roomId')
+        );
+        resolvedPlatform = normalized.platform;
+        resolvedRoomId = normalized.roomId;
+      } catch (error) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : '直播接力参数无效' },
+          { status: 400 }
+        );
+      }
+    } else {
+      return NextResponse.json({ error: '缺少直播源参数' }, { status: 400 });
     }
-    // The source key is the server-side authority. Client platform/room values
-    // may be stale after an admin edit and must not cause a false 403.
-    const resolvedPlatform = configuredSource.platform;
-    const resolvedRoomId = configuredSource.roomId;
 
     if (resolvedPlatform === 'huya') {
       const res = await fetch(`https://www.huya.com/${resolvedRoomId}`, {

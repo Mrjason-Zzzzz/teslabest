@@ -36,7 +36,7 @@ interface WebLiveSource {
   avatar?: string;
   title?: string;
   status?: 'live' | 'offline';
-  from?: 'custom' | 'config';
+  from?: 'custom' | 'config' | 'handoff';
 }
 
 interface StreamTransport {
@@ -67,6 +67,7 @@ function TeslaWebLivePageInner() {
   const searchParams = useSearchParams();
   const initialPlatform = searchParams.get('platform') || '';
   const initialRoomId = searchParams.get('roomId') || '';
+  const isHandoff = searchParams.get('handoff') === '1';
 
   const [sources, setSources] = useState<WebLiveSource[]>([]);
   const [currentSource, setCurrentSource] = useState<WebLiveSource | null>(
@@ -118,17 +119,40 @@ function TeslaWebLivePageInner() {
           ? data
           : data?.sources || [];
         setCanManage(!Array.isArray(data) && data?.canManage === true);
-        setSources(list);
+        const handoffSource =
+          isHandoff && initialPlatform && initialRoomId
+            ? {
+                key: `handoff:${initialPlatform}:${initialRoomId}`,
+                name: `临时投送 · ${platformLabel(initialPlatform)}`,
+                platform: initialPlatform,
+                roomId: initialRoomId,
+                status: 'live' as const,
+                from: 'handoff' as const,
+              }
+            : null;
+        const availableSources =
+          handoffSource &&
+          !list.some(
+            (source) =>
+              source.platform === handoffSource.platform &&
+              source.roomId === handoffSource.roomId
+          )
+            ? [handoffSource, ...list]
+            : list;
+        setSources(availableSources);
         const matched =
-          list.find(
+          availableSources.find(
             (source) =>
               source.platform === initialPlatform &&
               source.roomId === initialRoomId
           ) ||
-          list[0] ||
+          availableSources[0] ||
           null;
         setCurrentSource((previous) => {
-          if (previous && list.some((source) => source.key === previous.key))
+          if (
+            previous &&
+            availableSources.some((source) => source.key === previous.key)
+          )
             return previous;
           return matched;
         });
@@ -139,7 +163,7 @@ function TeslaWebLivePageInner() {
         setError(requestError?.message || '加载直播间失败');
         setLoadingSources(false);
       });
-  }, [initialPlatform, initialRoomId]);
+  }, [initialPlatform, initialRoomId, isHandoff]);
 
   useEffect(() => loadSources(), [loadSources]);
 
@@ -198,10 +222,11 @@ function TeslaWebLivePageInner() {
     triedTransportIdsRef.current.clear();
 
     const params = new URLSearchParams({
-      source: currentSource.key,
       platform: currentSource.platform,
       roomId: currentSource.roomId,
     });
+    if (currentSource.from === 'handoff') params.set('handoff', '1');
+    else params.set('source', currentSource.key);
     fetch(`/api/web-live/stream?${params.toString()}`, {
       cache: 'no-store',
       signal: controller.signal,

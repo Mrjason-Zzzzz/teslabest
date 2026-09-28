@@ -528,6 +528,16 @@ div[data-media-provider] video {
     line-height: 1rem;
   }
 
+  .tesla-vod-route .tesla-vod-side-panel .text-xs,
+  .tesla-vod-route .tesla-vod-side-panel button {
+    font-size: 0.625rem;
+    line-height: 0.875rem;
+  }
+
+  .tesla-vod-route .tesla-vod-side-panel button {
+    min-width: 0;
+  }
+
   /* Keep the auto-next control inside the narrow vehicle source rail. The
      label may shrink, but the switch retains its accessible hit target. */
   .tesla-vod-route .tesla-vod-autoplay-row {

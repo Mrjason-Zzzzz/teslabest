@@ -12,7 +12,8 @@ type CastSession = {
   expiresAt: number;
   payload?:
     | { type: 'direct'; url: string; label?: string }
-    | { type: 'search'; query: string; label?: string };
+    | { type: 'live'; platform: string; roomId: string; label?: string }
+    | { type: 'vod'; query: string; label?: string };
 };
 
 export default function CastPage() {
@@ -64,6 +65,14 @@ export default function CastPage() {
           );
           return;
         }
+        if (next.payload.type === 'live') {
+          const target = new URL('/web-live/tesla', window.location.origin);
+          target.searchParams.set('platform', next.payload.platform);
+          target.searchParams.set('roomId', next.payload.roomId);
+          target.searchParams.set('handoff', '1');
+          window.location.assign(`${target.pathname}${target.search}`);
+          return;
+        }
         window.location.assign(`/search?q=${encodeURIComponent(next.payload.query)}`);
       } catch {
         // A transient polling failure must not end a valid vehicle session.
@@ -97,7 +106,7 @@ export default function CastPage() {
             手机接力播放
           </h1>
           <p className='mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300'>
-            用手机扫描二维码，把可播放直链或影片名称发送到当前车机。
+            用手机扫描二维码，把公开直播或片名发送到当前车机。
           </p>
 
           {qrUrl ? (
@@ -118,8 +127,8 @@ export default function CastPage() {
           </div>
           <div className='mx-auto mt-6 max-w-xl rounded-2xl bg-violet-50 px-4 py-3 text-left text-sm leading-6 text-violet-950 dark:bg-violet-950/35 dark:text-violet-100'>
             <p className='font-bold'>支持范围</p>
-            <p>直播：发送可直接播放的 m3u8、MP4、WebM 或 FLV 链接。</p>
-            <p>影视网页：发送影片名称后在本站结果中选择正确版本；爱奇艺等受保护网页不会被破解成播放直链。</p>
+            <p>直播：支持可直接播放的直链，或抖音、虎牙、哔哩哔哩公开直播间链接。</p>
+            <p>点播：发送影片名称后在本站结果中选择正确版本；受保护网页不会被破解成播放直链。</p>
           </div>
         </section>
       </div>

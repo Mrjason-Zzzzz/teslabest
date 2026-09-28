@@ -1,13 +1,15 @@
 import crypto from 'crypto';
 
 import { db } from '@/lib/db';
+import type { WebLivePlatform } from '@/lib/tesla/web-live-source';
 
 const SESSION_PREFIX = 'tesla:cast:session:';
 const SESSION_TTL_MS = 5 * 60 * 1000;
 
 export type CastPayload =
   | { type: 'direct'; url: string; label?: string }
-  | { type: 'search'; query: string; label?: string };
+  | { type: 'live'; platform: WebLivePlatform; roomId: string; label?: string }
+  | { type: 'vod'; query: string; label?: string };
 
 interface StoredCastSession {
   owner: string;

@@ -7,6 +7,7 @@ import {
   submitCastPayload,
   type CastPayload,
 } from '@/lib/cast-session';
+import { resolvePublicWebLiveSource } from '@/lib/tesla/web-live-source';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,15 +43,32 @@ export async function POST(
   const label = body?.label?.trim().slice(0, 120) || undefined;
 
   let payload: CastPayload;
-  if (body?.type === 'direct') {
-    if (!isDirectPlayableUrl(value)) {
+  if (body?.type === 'live') {
+    if (!value || value.length > 2048) {
       return NextResponse.json(
-        { error: '仅接受可直接播放的 HLS、MP4、WebM 或 FLV 链接' },
+        { error: '请输入直播直链或公开直播间链接' },
         { status: 400, headers: noStore }
       );
     }
-    payload = { type: 'direct', url: value, label };
-  } else if (body?.type === 'search') {
+    if (isDirectPlayableUrl(value)) {
+      payload = { type: 'direct', url: value, label };
+    } else {
+      try {
+        const resolved = await resolvePublicWebLiveSource(value);
+        payload = { type: 'live', ...resolved, label };
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : '未能识别公开直播间链接',
+          },
+          { status: 400, headers: noStore }
+        );
+      }
+    }
+  } else if (body?.type === 'vod') {
     if (!value || value.length > 120) {
       return NextResponse.json(
         { error: '请输入不超过 120 个字符的影片名称' },
@@ -66,7 +84,7 @@ export async function POST(
     } catch {
       // A plain title is the expected search handoff input.
     }
-    payload = { type: 'search', query: value, label };
+    payload = { type: 'vod', query: value, label };
   } else {
     return NextResponse.json(
       { error: 'Unsupported cast payload' },

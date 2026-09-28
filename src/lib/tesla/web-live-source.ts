@@ -52,6 +52,51 @@ export function normalizeWebLiveSource(
   return { platform, roomId };
 }
 
+function isHttpRedirect(response: Response): boolean {
+  return response.status >= 300 && response.status < 400;
+}
+
+/**
+ * Resolves only public share URLs for the platforms we already support. The
+ * redirect walk is deliberately manual: following an arbitrary Location would
+ * turn this utility into an SSRF primitive. A final URL must remain on the
+ * same supported platform and the loop is short and time-bounded.
+ */
+export async function resolvePublicWebLiveSource(value: string) {
+  const initial = String(value || '').trim();
+  const initialPlatform = detectWebLivePlatform(initial);
+  if (!initialPlatform) {
+    throw new Error('请粘贴抖音、虎牙或哔哩哔哩的公开直播间链接');
+  }
+
+  let current = new URL(initial);
+  const mustResolveShortLink = current.hostname.toLowerCase() === 'v.douyin.com';
+  if (!mustResolveShortLink) return normalizeWebLiveSource(initialPlatform, current.toString());
+
+  for (let hop = 0; hop < 4; hop += 1) {
+    const response = await fetch(current, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; DorezstTeslaLive/1.0)',
+      },
+    });
+    if (!isHttpRedirect(response)) break;
+    const location = response.headers.get('location');
+    if (!location) throw new Error('直播分享链接没有返回跳转地址');
+    const next = new URL(location, current);
+    if (detectWebLivePlatform(next.toString()) !== initialPlatform) {
+      throw new Error('直播分享链接跳转到了不受支持的站点');
+    }
+    current = next;
+  }
+
+  const resolved = normalizeWebLiveSource(initialPlatform, current.toString());
+  if (resolved.roomId.length < 2) throw new Error('未识别到公开直播间，请改用直播间页面链接');
+  return resolved;
+}
+
 export function getDefaultWebLiveName(
   platform: WebLivePlatform,
   roomId: string
