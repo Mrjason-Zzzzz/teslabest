@@ -142,6 +142,7 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
   const [exportPassword, setExportPassword] = useState('');
   const [importPassword, setImportPassword] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [configOnlyImport, setConfigOnlyImport] = useState(true);
   const [includeMangaExport, setIncludeMangaExport] = useState(true);
   const [includeBooksExport, setIncludeBooksExport] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
@@ -319,6 +320,7 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('password', importPassword);
+      formData.append('configOnly', String(configOnlyImport));
 
       const response = await fetch('/api/admin/data_migration/import', {
         method: 'POST',
@@ -336,8 +338,10 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
         title: '导入成功',
         html: `
           <div class="text-left">
-            <p><strong>导入完成！</strong></p>
-            <p class="mt-2">导入的用户数量: ${result.importedUsers}</p>
+            <p><strong>${result.importMode === 'config-only' ? '配置覆盖完成！' : '导入完成！'}</strong></p>
+            <p class="mt-2">${result.importMode === 'config-only'
+              ? '已覆盖站点与资源配置；用户、兑换码、播放记录均未改动。'
+              : `导入的用户数量: ${result.importedUsers}`}</p>
             <p>备份时间: ${new Date(result.timestamp).toLocaleString('zh-CN')}</p>
             <p>服务器版本: ${result.serverVersion || '未知版本'}</p>
             <p>漫画数据: ${result.importedMangaData ? '已导入' : '未导入'}</p>
@@ -510,7 +514,7 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
               </div>
               <div>
                 <h3 className="font-semibold text-gray-900 dark:text-gray-100">数据导入</h3>
-                <p className="text-sm text-red-600 dark:text-red-400">⚠️ 将清空现有数据</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">默认安全覆盖配置，不清理用户数据</p>
               </div>
             </div>
 
@@ -537,6 +541,25 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
                   />
                 </div>
 
+                <label className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-100">
+                  <input
+                    type="checkbox"
+                    checked={configOnlyImport}
+                    onChange={(e) => setConfigOnlyImport(e.target.checked)}
+                    disabled={isImporting}
+                    className="mt-0.5 h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>
+                    <span className="font-medium">仅覆盖管理员配置（推荐）</span>
+                    <span className="mt-1 block text-xs text-blue-800 dark:text-blue-200">
+                      迁移站名、提示词和所有资源设置；保留阿里云已有的账户、兑换码、播放记录与收藏。
+                    </span>
+                  </span>
+                </label>
+                {!configOnlyImport && (
+                  <p className="text-xs font-medium text-red-600 dark:text-red-400">完整导入会清空当前用户数据并以备份内容替换，请确认已有独立备份。</p>
+                )}
+
                 {/* 密码输入 */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -561,7 +584,7 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
                 disabled={isImporting || !selectedFile || !importPassword.trim()}
                 className={`w-full px-4 py-2.5 rounded-lg font-medium transition-colors mt-10 ${isImporting || !selectedFile || !importPassword.trim()
                   ? 'bg-gray-100 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400'
-                  : 'bg-red-600 hover:bg-red-700 text-white'
+                  : configOnlyImport ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
                   }`}
               >
                 {isImporting ? (
@@ -587,7 +610,7 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
                 ) : (
                   <div className="flex items-center justify-center gap-2">
                     <Upload className="w-4 h-4" />
-                    导入数据
+                    {configOnlyImport ? '安全覆盖配置' : '完整导入数据'}
                   </div>
                 )}
               </button>

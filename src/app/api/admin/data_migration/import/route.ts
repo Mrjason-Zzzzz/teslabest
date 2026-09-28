@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get('file') as File;
     const password = formData.get('password') as string;
+    // Default to the non-destructive mode. Existing backup files remain fully
+    // compatible; only an explicit "full" request may replace user data.
+    const configOnly = formData.get('configOnly') !== 'false';
 
     if (!file) {
       return NextResponse.json({ error: '请选择备份文件' }, { status: 400 });
@@ -76,8 +79,50 @@ export async function POST(req: NextRequest) {
     }
 
     // 验证数据格式
-    if (!importData.data || !importData.data.adminConfig || !importData.data.userData) {
+    if (
+      !importData.data ||
+      !importData.data.adminConfig ||
+      (!configOnly && !importData.data.userData)
+    ) {
       return NextResponse.json({ error: '备份文件格式无效' }, { status: 400 });
+    }
+
+    // A configuration-only restore is the normal server-migration path. It
+    // must use saveAdminConfig instead of writing Redis keys directly so the
+    // primary document, history and latest recovery copy are updated together.
+    if (configOnly) {
+      updateProgress(username, 'import', 'configuring', 0, 1, '正在安全覆盖管理员配置...');
+      const adminConfig = configSelfCheck(importData.data.adminConfig);
+      await db.saveAdminConfig(adminConfig);
+      await setCachedConfig(adminConfig);
+
+      try {
+        await db.deleteGlobalValue('duanju');
+      } catch (error) {
+        // Cache removal only affects freshness and must not turn a successful
+        // configuration restore into a failed migration.
+        console.error('清除短剧视频源缓存失败:', error);
+      }
+
+      updateProgress(
+        username,
+        'import',
+        'completed',
+        1,
+        1,
+        '管理员配置覆盖完成，用户数据未改动。'
+      );
+      setTimeout(() => clearProgress(username, 'import'), 3000);
+      return NextResponse.json({
+        message: '管理员配置覆盖成功，用户数据未改动',
+        importMode: 'config-only',
+        importedUsers: 0,
+        importedUsersV2: 0,
+        importedMangaData: false,
+        importedBookData: false,
+        timestamp: importData.timestamp,
+        serverVersion: typeof importData.serverVersion === 'string' ? importData.serverVersion : '未知版本'
+      });
     }
 
     const importUsernames = Object.keys(importData.data.userData || {});
