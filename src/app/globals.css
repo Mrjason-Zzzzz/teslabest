@@ -102,6 +102,27 @@ html:not(.dark) body {
   .tesla-app-shell .tesla-home-banner {
     max-height: min(420px, 44vh);
   }
+
+  /* Browser zoom on the vehicle shrinks the effective viewport first. The
+     normal VOD minimum height (420–540px) then pushes the controls and the
+     fullscreen action below the visible area. Keep the 16:9 geometry but size
+     it from usable viewport height, rather than hiding controls or scaling the
+     entire document. */
+  .tesla-vod-route .tesla-vod-breadcrumb {
+    display: none !important;
+  }
+
+  .tesla-vod-route .tesla-vod-content {
+    padding-top: 0.5rem;
+    padding-bottom: 1.25rem;
+  }
+
+  .tesla-vod-route .tesla-vod-player-frame {
+    width: min(100%, 92dvh) !important;
+    min-height: 0 !important;
+    max-height: 51.75dvh !important;
+    margin-inline: auto;
+  }
 }
 
 /* 自定义滚动条样式 */

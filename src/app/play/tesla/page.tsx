@@ -792,9 +792,9 @@ function TeslaPlayPageInner() {
 
   return (
     <PageLayout activePath='/play'>
-      <div className='min-h-screen'>
+      <div className='tesla-vod-route min-h-screen'>
         {/* 面包屑标题 */}
-        <div className='hidden px-4 pt-4 md:block'>
+        <div className='tesla-vod-breadcrumb hidden px-4 pt-4 md:block'>
           <div className='flex items-center gap-2 text-sm pl-12'>
             <span className='font-medium text-gray-800 dark:text-gray-100'>
               {initialTitle}
@@ -814,7 +814,7 @@ function TeslaPlayPageInner() {
         </div>
 
         {/* 主体 */}
-        <div className='mx-auto max-w-[1800px] px-3 pb-8 pt-2 sm:px-4'>
+        <div className='tesla-vod-content mx-auto max-w-[1800px] px-3 pb-8 pt-2 sm:px-4'>
           <div
             className={`grid items-start gap-4 transition-all duration-300 ease-in-out ${
               rightPanelCollapsed
@@ -825,7 +825,7 @@ function TeslaPlayPageInner() {
             {/* 左侧：播放器 + 详情 */}
             <div className='min-w-0 rounded-2xl border border-violet-200/40 bg-gradient-to-b from-violet-50/50 to-transparent p-1.5 shadow-xl shadow-violet-950/5 transition-all duration-300 ease-in-out dark:border-violet-400/20 dark:from-violet-950/20'>
               {/* 播放器容器 */}
-              <div className='relative aspect-video w-full min-h-[420px] max-h-[72vh] md:min-h-[460px] lg:min-h-[500px] xl:min-h-[540px]'>
+              <div className='tesla-vod-player-frame relative aspect-video w-full min-h-[420px] max-h-[72vh] md:min-h-[460px] lg:min-h-[500px] xl:min-h-[540px]'>
                 <div className='absolute inset-0 h-full w-full overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/20 ring-1 ring-white/10'>
                   {isLoading && loadingStage !== 'error' && (
                     <div className='absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white dark:bg-gray-900'>
