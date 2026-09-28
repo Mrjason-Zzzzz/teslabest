@@ -1011,8 +1011,8 @@ function TeslaPlayPageInner() {
 
                     {rightTab === 'episodes' && (
                       <div className='flex flex-col overflow-hidden'>
-                        <div className='flex items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-800'>
-                          <span className='text-xs text-gray-500 dark:text-gray-400'>
+                        <div className='tesla-vod-autoplay-row flex min-w-0 items-center gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800'>
+                          <span className='min-w-0 flex-1 truncate text-xs text-gray-500 dark:text-gray-400'>
                             播放完自动进入下一集
                           </span>
                           <button

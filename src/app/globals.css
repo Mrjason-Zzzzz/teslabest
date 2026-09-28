@@ -528,6 +528,21 @@ div[data-media-provider] video {
     line-height: 1rem;
   }
 
+  /* Keep the auto-next control inside the narrow vehicle source rail. The
+     label may shrink, but the switch retains its accessible hit target. */
+  .tesla-vod-route .tesla-vod-autoplay-row {
+    min-width: 0;
+    padding-inline: 0.5rem;
+  }
+
+  .tesla-vod-route .tesla-vod-autoplay-row > span {
+    overflow: hidden;
+    font-size: 0.6875rem;
+    line-height: 0.875rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* Both dedicated live workbenches share the same compact rail in a Tesla
      effective viewport. Keep 40px+ hit targets, but reduce visual typography
      and panel width rather than scaling the page or its media canvas. */
