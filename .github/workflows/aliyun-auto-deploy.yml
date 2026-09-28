@@ -1,4 +1,4 @@
-name: Deploy tested commit to Aliyun
+name: Deploy tested commit to Aliyun ECS
 
 on:
   push:
