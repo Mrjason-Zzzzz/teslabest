@@ -427,10 +427,9 @@ div[data-media-provider] video {
   }
 
   .tesla-live-route {
-    position: fixed !important;
-    inset: 0 !important;
-    height: 100dvh !important;
-    overflow: hidden !important;
+    min-height: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
   }
 
   .tesla-live-route > header {
@@ -438,8 +437,8 @@ div[data-media-provider] video {
   }
 
   .tesla-live-route > main {
-    height: calc(100dvh - 4rem) !important;
-    min-height: 0 !important;
+    height: auto !important;
+    min-height: calc(100dvh - 4rem) !important;
     grid-template-columns: minmax(0, 1fr) clamp(17rem, 24vw, 21rem) !important;
     grid-template-rows: minmax(0, 1fr) !important;
   }

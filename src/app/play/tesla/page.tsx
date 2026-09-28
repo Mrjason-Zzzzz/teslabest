@@ -865,12 +865,6 @@ function TeslaPlayPageInner() {
                           title={fullTitle}
                           poster={currentDetail.poster}
                           live={false}
-                          // This is the vehicle-specific route. Tesla browser
-                          // updates can change pointer/touch reporting, but a
-                          // moving vehicle still needs Canvas/WebCodecs rather
-                          // than the native video layer. TeslaPlayer only
-                          // falls back when the API is genuinely unavailable.
-                          defaultMode='webcodecs'
                           sourceKey={currentDetail.source}
                           sourceName={currentDetail.source_name}
                           contentTitle={

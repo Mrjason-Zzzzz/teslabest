@@ -25,6 +25,7 @@ import {
 } from 'react';
 
 import TeslaPlayer from '@/components/TeslaPlayer';
+import PageLayout from '@/components/PageLayout';
 import { detectWebLivePlatform } from '@/lib/tesla/web-live-source';
 
 interface WebLiveSource {
@@ -422,7 +423,8 @@ function TeslaWebLivePageInner() {
     qualityOptions.find((option) => option.id === activeQualityId) || null;
 
   return (
-    <div className='tesla-live-route min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[#06080c] text-white lg:fixed lg:inset-0 lg:overflow-hidden'>
+    <PageLayout activePath='/web-live'>
+      <div className='tesla-live-route min-h-screen overflow-x-hidden overflow-y-auto bg-[#06080c] text-white'>
       <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
@@ -787,7 +789,8 @@ function TeslaWebLivePageInner() {
           </div>
         </aside>
       </main>
-    </div>
+      </div>
+    </PageLayout>
   );
 }
 
@@ -816,7 +819,7 @@ export default function TeslaWebLivePage() {
   return (
     <Suspense
       fallback={
-        <div className='fixed inset-0 flex items-center justify-center bg-slate-950 text-white'>
+        <div className='flex min-h-screen items-center justify-center bg-slate-950 text-white'>
           <Loader2 className='h-6 w-6 animate-spin' />
         </div>
       }

@@ -38,15 +38,27 @@ describe('Tesla playback mode selection', () => {
     ).toBe('video');
   });
 
-  it('keeps Canvas for a wide touch-only VOD surface without relying on UA', () => {
+  it('keeps Canvas for the confirmed Tesla cockpit CSS viewport', () => {
     expect(
       selectTeslaVodDefaultMode({
-        maxTouchPoints: 1,
+        maxTouchPoints: 0,
+        hasCoarsePointer: false,
+        hasNoHover: false,
+        viewportWidth: 773,
+        viewportHeight: 601,
+      })
+    ).toBe('webcodecs');
+  });
+
+  it('does not mistake a large desktop or tablet viewport for the cockpit', () => {
+    expect(
+      selectTeslaVodDefaultMode({
+        maxTouchPoints: 10,
         hasCoarsePointer: true,
         hasNoHover: true,
         viewportWidth: 1280,
         viewportHeight: 720,
       })
-    ).toBe('webcodecs');
+    ).toBe('video');
   });
 });

@@ -10,22 +10,26 @@ export interface TeslaVodEnvironment {
 }
 
 /**
- * Ordinary desktop VOD benefits from the browser's native media clock and
- * avoids a WebAudio unlock. A wide touch-only surface stays on Canvas. This
- * deliberately does not use the browser user-agent: recent Tesla releases
- * can identify as generic Chromium/Linux.
+ * Ordinary desktop/tablet VOD benefits from the browser's native media clock
+ * and avoids a WebAudio unlock. The confirmed Tesla cockpit CSS viewport
+ * stays on Canvas. This deliberately does not use user-agent or input-device
+ * detection: recent Tesla releases can identify as generic Chromium/Linux.
  */
 export function selectTeslaVodDefaultMode(
   environment: TeslaVodEnvironment
 ): TeslaPlaybackMode {
-  const isWideTouchSurface =
-    environment.maxTouchPoints > 0 &&
-    environment.hasCoarsePointer &&
-    environment.hasNoHover &&
+  // The vehicle browser currently exposes a CSS viewport close to 773×601
+  // after its software update. Input capabilities are not stable across
+  // Tesla Chromium releases (and are also shared by tablets), so geometry is
+  // the only deliberate mode contract here. Keep desktop/tablet sessions on
+  // the browser media clock; reserve Canvas/WebCodecs for this cockpit band.
+  const isTeslaCockpitViewport =
     environment.viewportWidth >= 720 &&
+    environment.viewportWidth <= 899 &&
+    environment.viewportHeight <= 720 &&
     environment.viewportWidth >= environment.viewportHeight * 1.2;
 
-  return isWideTouchSurface ? 'webcodecs' : 'video';
+  return isTeslaCockpitViewport ? 'webcodecs' : 'video';
 }
 
 export function resolveTeslaVodDefaultMode(): TeslaPlaybackMode {
