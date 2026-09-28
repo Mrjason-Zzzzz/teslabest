@@ -83,6 +83,7 @@ import {
   CUSTOM_SUBTITLE_ACCEPT,
 } from '@/lib/subtitle-converter';
 import { getTMDBImageUrl } from '@/lib/tmdb.search';
+import { applyConfiguredAdFilterSafely } from '@/lib/hls/ad-filter-custom';
 import {
   DanmakuFilterConfig,
   EpisodeFilterConfig,
@@ -4325,91 +4326,16 @@ function PlayPageClient() {
   };
 
   function filterAdsFromM3U8(type: string, m3u8Content: string): string {
-    // 尝试使用缓存的自定义去广告代码
-    if (customAdFilterCodeRef.current && customAdFilterCodeRef.current.trim()) {
-      try {
-        // 移除 TypeScript 类型注解，转换为纯 JavaScript
-        const jsCode = customAdFilterCodeRef.current
-          // 移除函数参数的类型注解：name: type
-          .replace(
-            /(\w+)\s*:\s*(string|number|boolean|any|void|never|unknown|object)\s*([,)])/g,
-            '$1$3'
-          )
-          // 移除函数返回值类型注解：): type {
-          .replace(
-            /\)\s*:\s*(string|number|boolean|any|void|never|unknown|object)\s*\{/g,
-            ') {'
-          )
-          // 移除变量声明的类型注解：const name: type =
-          .replace(
-            /(const|let|var)\s+(\w+)\s*:\s*(string|number|boolean|any|void|never|unknown|object)\s*=/g,
-            '$1 $2 ='
-          );
-
-        // 创建并执行自定义函数
-        const customFunction = new Function(
-          'type',
-          'm3u8Content',
-          jsCode + '\nreturn filterAdsFromM3U8(type, m3u8Content);'
-        );
-        return customFunction(type, m3u8Content);
-      } catch (err) {
-        console.error('执行自定义去广告代码失败，使用默认规则:', err);
-        // 如果自定义代码执行失败，继续使用默认规则
-      }
-    }
-
-    // 默认去广告规则
-    if (!m3u8Content) return '';
-
-    // 广告关键字列表
-    const adKeywords = [
-      'sponsor',
-      '/ad/',
-      '/ads/',
-      'advert',
-      'advertisement',
-      '/adjump',
-      'redtraffic',
-    ];
-
-    // 按行分割M3U8内容
-    const lines = m3u8Content.split('\n');
-    const filteredLines = [];
-
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-
-      // 跳过 #EXT-X-DISCONTINUITY 标识
-      if (line.includes('#EXT-X-DISCONTINUITY')) {
-        i++;
-        continue;
-      }
-
-      // 如果是 EXTINF 行，检查下一行 URL 是否包含广告关键字
-      if (line.includes('#EXTINF:')) {
-        // 检查下一行 URL 是否包含广告关键字
-        if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1];
-          const containsAdKeyword = adKeywords.some((keyword) =>
-            nextLine.toLowerCase().includes(keyword.toLowerCase())
-          );
-
-          if (containsAdKeyword) {
-            // 跳过 EXTINF 行和 URL 行
-            i += 2;
-            continue;
-          }
-        }
-      }
-
-      // 保留当前行
-      filteredLines.push(line);
-      i++;
-    }
-
-    return filteredLines.join('\n');
+    // Desktop ArtPlayer must use the same VOD-safe list rewriter as the
+    // Tesla and server-proxy paths. The historical line-by-line implementation
+    // discarded DISCONTINUITY tags and missed provider-side ad islands, which
+    // could both leak ads and corrupt the shared A/V timeline.
+    return applyConfiguredAdFilterSafely(
+      type,
+      m3u8Content,
+      customAdFilterCodeRef.current || '',
+      true
+    );
   }
 
   // 跳过片头片尾配置相关函数
