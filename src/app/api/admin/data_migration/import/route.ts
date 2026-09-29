@@ -93,6 +93,18 @@ export async function POST(req: NextRequest) {
     if (configOnly) {
       updateProgress(username, 'import', 'configuring', 0, 1, '正在安全覆盖管理员配置...');
       const adminConfig = configSelfCheck(importData.data.adminConfig);
+      // Backups carry the revision of their source instance.  A configuration
+      // migration is intentionally allowed to replace the destination's
+      // configuration, so it must use the destination revision for the
+      // compare-and-set write instead of being rejected as a stale editor.
+      const currentConfig = await db.getAdminConfig();
+      if (!currentConfig) {
+        return NextResponse.json(
+          { error: '当前管理员配置缺失，请先恢复服务器备份后再导入' },
+          { status: 409 }
+        );
+      }
+      (adminConfig as any)._storageRevision = (currentConfig as any)._storageRevision || '';
       await db.saveAdminConfig(adminConfig);
       await setCachedConfig(adminConfig);
 
@@ -162,8 +174,12 @@ export async function POST(req: NextRequest) {
     }
     console.log(`已清除 ${existingUsers.users.length} 个现有V2用户`);
 
-    // 导入管理员配置
+    // clearAllData removes the primary document.  The source backup revision
+    // belongs to another instance, so it must not be reused after that reset;
+    // otherwise Redis correctly rejects it as a stale write and leaves the
+    // site without a primary configuration record.
     importData.data.adminConfig = configSelfCheck(importData.data.adminConfig);
+    delete (importData.data.adminConfig as any)._storageRevision;
     await db.saveAdminConfig(importData.data.adminConfig);
     await setCachedConfig(importData.data.adminConfig);
 
