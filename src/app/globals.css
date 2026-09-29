@@ -474,6 +474,18 @@ div[data-media-provider] video {
     display: none !important;
   }
 
+  /* In the compact cockpit rail the logo and collapse affordance are both
+     intentionally hidden, so retaining their 48px wrapper only creates an
+     empty first grid cell. Start the labelled navigation at the top instead. */
+  .tesla-app-shell .tesla-sidebar-brand {
+    height: 0 !important;
+    overflow: hidden;
+  }
+
+  .tesla-app-shell .tesla-sidebar-primary-nav {
+    margin-top: 0 !important;
+  }
+
   .tesla-app-shell .tesla-sidebar-nav-link {
     min-height: 3.25rem;
     flex-direction: column;
@@ -507,6 +519,8 @@ div[data-media-provider] video {
     width: 100% !important;
     min-height: 0 !important;
     max-height: none !important;
+    /* Gain useful vertical preview space without consuming either rail. */
+    aspect-ratio: 16 / 10 !important;
   }
 
   .tesla-vod-route .tesla-vod-side-panel {
@@ -553,11 +567,85 @@ div[data-media-provider] video {
     white-space: nowrap;
   }
 
+  .tesla-vod-route .tesla-vod-autoplay-row > button {
+    flex: 0 0 auto;
+  }
+
+  /* The 773px cockpit content width must retain a permanently reachable
+     fullscreen action. The primary group may scroll by a few pixels; the
+     secondary group never shrinks or gets covered by danmaku controls. */
+  .tesla-vod-route .tesla-player-controls {
+    column-gap: 0.125rem;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls {
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls > button,
+  .tesla-vod-route .tesla-player-primary-controls > div > button,
+  .tesla-vod-route .tesla-player-primary-controls .min-h-11,
+  .tesla-vod-route .tesla-player-primary-controls .min-h-9 {
+    min-height: 2rem !important;
+    min-width: 2rem !important;
+    padding: 0.25rem !important;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls svg,
+  .tesla-vod-route .tesla-player-secondary-controls svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls .text-xs,
+  .tesla-vod-route .tesla-player-primary-controls .text-sm,
+  .tesla-vod-route .tesla-player-primary-controls .text-\[10px\],
+  .tesla-vod-route .tesla-player-secondary-controls .text-xs {
+    font-size: 0.625rem !important;
+    line-height: 0.75rem !important;
+  }
+
+  .tesla-vod-route .tesla-player-primary-controls > div.text-xs {
+    max-width: 4.75rem;
+    margin-left: 0.125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tesla-vod-route .tesla-player-fullscreen-control {
+    min-height: 2rem !important;
+    min-width: 2rem !important;
+    padding: 0.25rem !important;
+  }
+
   /* Both dedicated live workbenches share the same compact rail in a Tesla
      effective viewport. Keep 40px+ hit targets, but reduce visual typography
      and panel width rather than scaling the page or its media canvas. */
   .tesla-live-route > main {
     grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 21vw) !important;
+  }
+
+  .tesla-live-route > header {
+    height: 3rem !important;
+    padding-inline: 0.5rem !important;
+  }
+
+  .tesla-live-route > header button {
+    min-height: 2.25rem !important;
+    min-width: 2.25rem !important;
+    border-radius: 0.75rem !important;
+    padding-inline: 0.5rem !important;
+  }
+
+  .tesla-live-route > main {
+    min-height: calc(100dvh - 3rem) !important;
   }
 
   .tesla-live-route > main > aside {
@@ -574,6 +662,20 @@ div[data-media-provider] video {
   .tesla-live-route .lg\:text-lg {
     font-size: 0.875rem;
     line-height: 1.125rem;
+  }
+
+  .tesla-short-video-route {
+    height: calc(100dvh - 0.5rem) !important;
+    min-height: 0 !important;
+  }
+
+  .tesla-short-video-route .tesla-player-primary-controls {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tesla-short-video-route .tesla-player-primary-controls::-webkit-scrollbar {
+    display: none;
   }
 
   /* The non-Tesla live links still use the legacy route. Preserve its two

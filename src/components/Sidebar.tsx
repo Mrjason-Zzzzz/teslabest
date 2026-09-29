@@ -353,7 +353,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
         >
           <div className='flex h-full flex-col'>
             {/* 顶部 Logo 区域 */}
-            <div className='relative h-12'>
+            <div className='tesla-sidebar-brand relative h-12'>
               <div
                 className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${
                   effectiveCollapsed ? 'opacity-0' : 'opacity-100'
@@ -374,7 +374,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
             </div>
 
             {/* 首页和搜索导航 */}
-            <nav className='px-2 mt-2 space-y-1'>
+            <nav className='tesla-sidebar-primary-nav px-2 mt-2 space-y-1'>
               <Link
                 href='/'
                 prefetch={false}

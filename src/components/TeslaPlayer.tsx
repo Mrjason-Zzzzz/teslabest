@@ -1357,7 +1357,10 @@ export default function TeslaPlayer({
     if (mode !== 'webcodecs' || !canvasRef.current) return;
 
     const kind = getUrlKind(url);
-    if (kind === 'flv' || kind === 'file') {
+    // WebCodecsPlayer has a progressive MP4 path (MP4Box + AVC/AAC), which is
+    // required for the short-video feed on the moving vehicle. Do not force
+    // MP4 back into the native media element here.
+    if (kind === 'flv') {
       setMode('video');
       return;
     }
@@ -1869,8 +1872,8 @@ export default function TeslaPlayer({
         )}
 
         {/* 控制按钮行 */}
-        <div className='pointer-events-auto flex items-center justify-between'>
-          <div className='flex items-center gap-1'>
+        <div className='tesla-player-controls pointer-events-auto flex items-center justify-between'>
+          <div className='tesla-player-primary-controls flex min-w-0 flex-1 items-center gap-1'>
             {!live && onPrevious && (
               <button
                 type='button'
@@ -2046,7 +2049,7 @@ export default function TeslaPlayer({
             )}
           </div>
 
-          <div className='flex items-center gap-0.5 md:gap-1'>
+          <div className='tesla-player-secondary-controls flex shrink-0 items-center gap-0.5 md:gap-1'>
             {live && qualityOptions.length > 0 && onQualityChange && (
               <div className='relative'>
                 <button
@@ -2096,7 +2099,7 @@ export default function TeslaPlayer({
                 e.stopPropagation();
                 toggleFullscreen();
               }}
-              className='p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
+              className='tesla-player-fullscreen-control min-h-9 min-w-9 p-1.5 md:p-2 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors'
               title={isFullscreen || isWebFullscreen ? '退出全屏' : '全屏'}
             >
               {isFullscreen || isWebFullscreen ? (

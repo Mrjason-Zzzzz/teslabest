@@ -57,6 +57,22 @@ export async function generateMetadata(): Promise<Metadata> {
         },
       ],
     },
+    openGraph: {
+      title: siteName,
+      description: '影视聚合',
+      images: [
+        {
+          url: '/icons/dorezst-512.png',
+          width: 512,
+          height: 512,
+          alt: `${siteName} 播放器图标`,
+        },
+      ],
+    },
+    twitter: {
+      card: 'summary',
+      images: ['/icons/dorezst-512.png'],
+    },
     // iOS 添加到主屏幕：沉浸式状态栏（需配合 viewport-fit=cover + 顶部 safe-area）
     appleWebApp: {
       capable: true,

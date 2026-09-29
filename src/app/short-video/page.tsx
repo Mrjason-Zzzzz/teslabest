@@ -256,7 +256,7 @@ export default function ShortVideoPage() {
 
   return (
     <PageLayout activePath='/short-video'>
-      <div className='relative h-[calc(100dvh-6.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[420px] overflow-hidden bg-black md:h-screen'>
+      <div className='tesla-short-video-route relative h-[calc(100dvh-6.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[420px] overflow-hidden bg-black md:h-screen'>
         <div className='pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-center bg-gradient-to-b from-black/70 to-transparent px-4 pb-10 pt-3 text-white'>
           <div className='rounded-full bg-black/35 px-4 py-1.5 text-sm font-semibold backdrop-blur'>
             {pageTitle}
