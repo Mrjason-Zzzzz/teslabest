@@ -1992,7 +1992,7 @@ const [rateDiagClicks, setRateDiagClicks] = useState(0);
                   onPointerDown={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'P'); }} onTouchStart={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'T'); }} onTouchEnd={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'E'); }}
                   className='min-h-11 min-w-14 rounded px-3 py-2 text-sm text-white/90 hover:bg-white/10 transition-colors'
                 >
-                  {rate}x[{rateDiagEvents}]{rateDiagClicks}<{showRateMenu ? '1' : '0'}>
+                  {rate}x[{rateDiagEvents}]{rateDiagClicks}({showRateMenu ? '1' : '0'})
                 </button>
                 {showRateMenu && (
                   <div
