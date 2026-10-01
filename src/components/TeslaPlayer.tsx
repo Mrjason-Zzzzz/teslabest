@@ -1784,7 +1784,9 @@ export default function TeslaPlayer({
         {/* 直播没有可拖动的固定时间轴。 */}
         {!live && (
           <div
-            className='pointer-events-auto mb-1 md:mb-2'
+            className={`mb-1 md:mb-2 ${
+              showControls ? 'pointer-events-auto' : 'pointer-events-none'
+            }`}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >
@@ -1871,8 +1873,12 @@ export default function TeslaPlayer({
           </div>
         )}
 
-        {/* 控制按钮行 */}
-        <div className='tesla-player-controls pointer-events-auto flex items-center justify-between'>
+        {/* 控制按钮行：隐藏时不拦截点击，点视频区域即可唤出控制条 */}
+        <div
+          className={`tesla-player-controls flex items-center justify-between ${
+            showControls ? 'pointer-events-auto' : 'pointer-events-none'
+          }`}
+        >
           <div className='tesla-player-primary-controls flex min-w-0 flex-1 items-center gap-1'>
             {!live && onPrevious && (
               <button
@@ -1971,19 +1977,30 @@ export default function TeslaPlayer({
             {/* Both engines expose the same 0.75x–2x menu. WebCodecs uses
                 pitch-preserving overlap-add rather than playbackRate. */}
             {!live && (
-              <div className='relative ml-1'>
+              <div
+                className='relative ml-1'
+                data-no-seek-gesture
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+              >
                 <button
                   type='button'
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowRateMenu(!showRateMenu);
+                    setShowRateMenu((visible) => !visible);
                   }}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className='min-h-11 min-w-14 rounded px-3 py-2 text-sm text-white/90 hover:bg-white/10 transition-colors'
                 >
                   {rate}x
                 </button>
                 {showRateMenu && (
-                  <div className='absolute bottom-full left-0 z-20 mb-2 min-w-[112px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur'>
+                  <div
+                    className='absolute bottom-full left-0 z-20 mb-2 min-w-[112px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur'
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onPointerUp={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     {PLAYBACK_RATES.map((r) => (
                       <button
                         key={r}
