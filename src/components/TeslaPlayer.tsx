@@ -245,7 +245,7 @@ export default function TeslaPlayer({
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
-  const [showRateMenu, setShowRateMenu] = useState(false); const [rateDiagEvents, setRateDiagEvents] = useState(''); const [rateDiagClicks, setRateDiagClicks] = useState(0);
+  const [showRateMenu, setShowRateMenu] = useState(false);
 const [rateDiagEvents, setRateDiagEvents] = useState('');
 const [rateDiagClicks, setRateDiagClicks] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
