@@ -1981,15 +1981,20 @@ export default function TeslaPlayer({
                 className='relative ml-1'
                 data-no-seek-gesture
                 onPointerDown={(event) => event.stopPropagation()}
-                onPointerUp={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}
               >
                 <button
                   type='button'
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowRateMenu((visible) => !visible);
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
+      
+      
+
+
+              }}
+                  
+                  onPointerDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
                   className='min-h-11 min-w-14 rounded px-3 py-2 text-sm text-white/90 hover:bg-white/10 transition-colors'
                 >
                   {rate}x
@@ -1998,7 +2003,7 @@ export default function TeslaPlayer({
                   <div
                     className='absolute bottom-full left-0 z-20 mb-2 min-w-[112px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur'
                     onPointerDown={(event) => event.stopPropagation()}
-                    onPointerUp={(event) => event.stopPropagation()}
+                    onPointerUp={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}
                     onClick={(event) => event.stopPropagation()}
                   >
                     {PLAYBACK_RATES.map((r) => (
