@@ -386,8 +386,8 @@ function TeslaLivePageInner() {
 
   return (
     <PageLayout activePath='/live'>
-      <div className='tesla-live-route min-h-screen overflow-x-hidden overflow-y-auto bg-[#06080c] text-white'>
-      <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
+      <div className='tesla-live-route flex h-dvh flex-col overflow-hidden bg-[#06080c] text-white'>
+      <header className='sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
             type='button'
@@ -425,8 +425,8 @@ function TeslaLivePageInner() {
         </div>
       </header>
 
-      <main className='grid min-h-[calc(100dvh-4rem)] grid-rows-[minmax(14rem,48dvh)_auto] lg:h-[calc(100%-4rem)] lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
-        <section className='bg-[#050609] p-2 lg:min-h-0 lg:p-4 lg:pr-2'>
+      <main className='grid min-h-0 flex-1 grid-rows-[minmax(12rem,46dvh)_minmax(0,1fr)] lg:h-[calc(100%-4rem)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
+        <section className='min-h-0 bg-[#050609] p-2 lg:p-4 lg:pr-2'>
           <div className='relative h-full min-h-[14rem] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10'>
             {loadingSources && (
               <div className='absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65'>
@@ -487,8 +487,8 @@ function TeslaLivePageInner() {
           </div>
         </section>
 
-        <aside className='flex min-h-[24rem] flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:min-h-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10'>
-          <div className='grid grid-cols-2 gap-2 border-b border-white/10 p-3'>
+        <aside className='flex min-h-0 flex-col overflow-hidden border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:rounded-2xl lg:border lg:border-white/10'>
+          <div className='grid shrink-0 grid-cols-2 gap-2 border-b border-white/10 p-3'>
             <button
               type='button'
               onClick={() => setPanel('channels')}
@@ -516,7 +516,7 @@ function TeslaLivePageInner() {
           </div>
 
           {error && (
-            <div className='mx-3 mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-100'>
+            <div className='mx-3 mt-3 flex shrink-0 items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs text-amber-100'>
               <span className='line-clamp-2'>{error}</span>
               <button
                 type='button'
@@ -561,7 +561,7 @@ function TeslaLivePageInner() {
             </div>
           ) : (
             <>
-              <div className='space-y-2 border-b border-white/10 p-3'>
+              <div className='shrink-0 space-y-2 border-b border-white/10 p-3'>
                 <div>
                   <div className='mb-2 flex items-center justify-between text-xs text-white/45'>
                     <span>直播源</span>

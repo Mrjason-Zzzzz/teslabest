@@ -449,8 +449,8 @@ function TeslaWebLivePageInner() {
 
   return (
     <PageLayout activePath='/web-live'>
-      <div className='tesla-live-route min-h-screen overflow-x-hidden overflow-y-auto bg-[#06080c] text-white'>
-      <header className='sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
+      <div className='tesla-live-route flex h-dvh flex-col overflow-hidden bg-[#06080c] text-white'>
+      <header className='sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-[#0a0d12] px-4 lg:static lg:px-6'>
         <div className='flex min-w-0 items-center gap-3'>
           <button
             type='button'
@@ -492,8 +492,8 @@ function TeslaWebLivePageInner() {
         </div>
       </header>
 
-      <main className='grid min-h-[calc(100dvh-4rem)] grid-rows-[minmax(14rem,48dvh)_auto] lg:h-[calc(100%-4rem)] lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
-        <section className='bg-[#050609] p-2 lg:min-h-0 lg:p-4 lg:pr-2'>
+      <main className='grid min-h-0 flex-1 grid-rows-[minmax(12rem,46dvh)_minmax(0,1fr)] lg:h-[calc(100%-4rem)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1'>
+        <section className='min-h-0 bg-[#050609] p-2 lg:p-4 lg:pr-2'>
           <div className='relative h-full min-h-[14rem] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10'>
             {loadingSources && (
               <div className='absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/65'>
@@ -576,8 +576,8 @@ function TeslaWebLivePageInner() {
           </div>
         </section>
 
-        <aside className='flex min-h-[24rem] flex-col border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:min-h-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-white/10'>
-          <div className='flex min-h-16 items-center justify-between border-b border-white/10 px-4'>
+        <aside className='flex min-h-0 flex-col overflow-hidden border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:rounded-2xl lg:border lg:border-white/10'>
+          <div className='flex min-h-16 shrink-0 items-center justify-between border-b border-white/10 px-4'>
             <div>
               <div className='text-sm font-semibold'>
                 直播间 · {sources.length}
@@ -611,7 +611,7 @@ function TeslaWebLivePageInner() {
           </div>
 
           {canManage && showManage && (
-            <div className='space-y-3 border-b border-violet-400/20 bg-violet-500/5 p-3'>
+            <div className='shrink-0 space-y-3 border-b border-violet-400/20 bg-violet-500/5 p-3'>
               <div className='grid grid-cols-3 gap-2'>
                 {[
                   ['douyin', '抖音'],
@@ -678,7 +678,7 @@ function TeslaWebLivePageInner() {
             </div>
           )}
 
-          <div className='space-y-2 border-b border-white/10 p-3'>
+          <div className='shrink-0 space-y-2 border-b border-white/10 p-3'>
             {qualityOptions.length > 0 && (
               <div>
                 <div className='mb-2 text-xs font-medium text-white/45'>
