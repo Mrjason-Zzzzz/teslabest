@@ -51,7 +51,10 @@ import TeslaDanmakuOverlay, {
   type TeslaDanmakuChoices,
 } from '@/components/TeslaDanmakuOverlay';
 import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
-import { parseTeslaDanmakuEpisodeNumber } from '@/lib/tesla/danmaku-match';
+import {
+  extractTeslaDanmakuDateKey,
+  parseTeslaDanmakuEpisodeNumber,
+} from '@/lib/tesla/danmaku-match';
 import {
   resolveTeslaVodDefaultMode,
   selectTeslaPlaybackMode,
@@ -104,6 +107,9 @@ function formatTime(seconds: number): string {
 }
 
 function formatDanmakuEpisodeChoice(title: string): string {
+  const dateKey = extractTeslaDanmakuDateKey(title);
+  if (dateKey)
+    return `${dateKey.slice(0, 4)}-${dateKey.slice(4, 6)}-${dateKey.slice(6)}`;
   const episodeNumber = parseTeslaDanmakuEpisodeNumber(title);
   if (!episodeNumber) return '未标集数';
   const normalized = title.normalize('NFKC').replace(/\s+/g, '');
@@ -246,8 +252,6 @@ export default function TeslaPlayer({
   const [error, setError] = useState<string | null>(null);
   const [rate, setRate] = useState(1);
   const [showRateMenu, setShowRateMenu] = useState(false);
-const [rateDiagEvents, setRateDiagEvents] = useState('');
-const [rateDiagClicks, setRateDiagClicks] = useState(0);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isWebFullscreen, setIsWebFullscreen] = useState(false);
@@ -333,6 +337,13 @@ const [rateDiagClicks, setRateDiagClicks] = useState(0);
   const filteredDanmakuEpisodes = useMemo(() => {
     const keyword = normalizeDanmakuEpisodeQuery(danmakuEpisodeQuery);
     if (!keyword) return danmakuChoices.episodes;
+    const dateQuery = extractTeslaDanmakuDateKey(keyword);
+    if (dateQuery) {
+      return danmakuChoices.episodes.filter(
+        (episode) =>
+          extractTeslaDanmakuDateKey(episode.episodeTitle) === dateQuery
+      );
+    }
     const numberMatch = keyword.match(/\d+/);
     const numericQuery = numberMatch ? Number(numberMatch[0]) : null;
     const qualifier = keyword.replace(/\d+/g, '').replace(/[第期集]/g, '');
@@ -1983,43 +1994,24 @@ const [rateDiagClicks, setRateDiagClicks] = useState(0);
                 className='relative ml-1'
                 data-no-seek-gesture
                 onPointerDown={(event) => event.stopPropagation()}
-                onPointerUp={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                onTouchEnd={(event) => event.stopPropagation()}
               >
                 <button
                   type='button'
-                  onClick={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'C'); setRateDiagClicks((c) => c + 1); setShowRateMenu((visible) => !visible); }}
-                  
-                  onPointerDown={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'P'); }} onTouchStart={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'T'); }} onTouchEnd={(e) => { e.stopPropagation(); setRateDiagEvents((s) => s + 'E'); }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setShowQualityMenu(false);
+                    setShowRateMenu((visible) => !visible);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onTouchStart={(event) => event.stopPropagation()}
+                  onTouchEnd={(event) => event.stopPropagation()}
                   className='min-h-11 min-w-14 rounded px-3 py-2 text-sm text-white/90 hover:bg-white/10 transition-colors'
                 >
-                  {rate}x[{rateDiagEvents}]{rateDiagClicks}({showRateMenu ? '1' : '0'})
+                  {rate}x
                 </button>
-                {showRateMenu && (
-                  <div
-                    className='absolute bottom-full left-0 z-20 mb-2 min-w-[112px] rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur'
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onPointerUp={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    {PLAYBACK_RATES.map((r) => (
-                      <button
-                        key={r}
-                        type='button'
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPlaybackRate(r);
-                        }}
-                        className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${
-                          rate === r
-                            ? 'bg-violet-500 text-white'
-                            : 'text-gray-200 hover:bg-white/10'
-                        }`}
-                      >
-                        {r}x
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
             {!live && (
@@ -2127,6 +2119,35 @@ const [rateDiagClicks, setRateDiagClicks] = useState(0);
             </button>
           </div>
         </div>
+        {!live && showRateMenu && (
+          <div
+            className='tesla-player-rate-menu pointer-events-auto absolute bottom-12 left-1/2 z-40 mb-2 min-w-[112px] -translate-x-1/2 rounded-xl border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur'
+            data-no-seek-gesture
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
+            onTouchEnd={(event) => event.stopPropagation()}
+          >
+            {PLAYBACK_RATES.map((r) => (
+              <button
+                key={r}
+                type='button'
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPlaybackRate(r);
+                }}
+                className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm ${
+                  rate === r
+                    ? 'bg-violet-500 text-white'
+                    : 'text-gray-200 hover:bg-white/10'
+                }`}
+              >
+                {r}x
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!live && danmakuEnabled && showDanmakuSettings && (

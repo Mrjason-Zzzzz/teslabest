@@ -980,11 +980,10 @@ function TeslaPlayPageInner() {
             {/* 选集与换源始终是播放器右侧的独立操作区；窄屏才自然落到下方。 */}
             {currentDetail &&
               currentDetail.episodes &&
-              currentDetail.episodes.length > 0 &&
-              (
+              currentDetail.episodes.length > 0 && (
                 <div className='tesla-vod-side-panel min-w-0'>
                   <div className='overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-gray-200/50 backdrop-blur dark:bg-gray-900/80 dark:ring-gray-700/50'>
-                    <div className='flex border-b border-gray-100 dark:border-gray-800'>
+                    <div className='tesla-vod-side-tabs flex border-b border-gray-100 dark:border-gray-800'>
                       <button
                         type='button'
                         onClick={() => setRightTab('episodes')}
@@ -1084,21 +1083,21 @@ function TeslaPlayPageInner() {
                             </button>
                           </div>
                         )}
-                        <div className='max-h-[500px] overflow-y-auto p-3'>
+                        <div className='tesla-vod-episode-list max-h-[500px] overflow-y-auto p-3'>
                           <div className='grid grid-cols-1 gap-2 xl:grid-cols-2'>
                             {currentPageEpisodes.map(({ idx, label }) => (
                               <button
                                 key={idx}
                                 type='button'
                                 onClick={() => handleSelectEpisode(idx)}
-                                className={`rounded px-2.5 py-2 text-xs transition-colors ${
+                                className={`tesla-vod-episode-button rounded px-2.5 py-2 text-xs transition-colors ${
                                   idx === currentEpisodeIndex
                                     ? 'bg-violet-500 font-medium text-white shadow-sm'
                                     : 'bg-gray-50 text-gray-700 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
                                 }`}
                               >
                                 <span
-                                  className='block min-h-[2.5rem] break-words text-left leading-5'
+                                  className='tesla-vod-episode-label block min-h-[2.5rem] break-words text-left leading-5'
                                   title={label}
                                 >
                                   {label.startsWith('第 ') &&
@@ -1121,7 +1120,7 @@ function TeslaPlayPageInner() {
                     )}
 
                     {rightTab === 'sources' && (
-                      <div className='max-h-[500px] overflow-y-auto'>
+                      <div className='tesla-vod-source-list max-h-[500px] overflow-y-auto'>
                         {allSources.length === 0 ? (
                           <div className='p-4 text-center text-xs text-gray-400'>
                             暂无其他源
@@ -1165,7 +1164,7 @@ function TeslaPlayPageInner() {
                                 >
                                   <div className='min-w-0 flex-1'>
                                     <div className='flex items-center gap-2'>
-                                      <span className='truncate text-sm font-medium'>
+                                      <span className='tesla-vod-source-name truncate text-sm font-medium'>
                                         {s.source_name || s.source}
                                       </span>
                                       {recommendedSource &&

@@ -24,6 +24,7 @@ import {
   selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
 } from '@/lib/tesla/danmaku-match';
+import { resolveTeslaDanmakuTimeline } from '@/lib/tesla/danmaku-timeline';
 
 type OverlayComment = {
   id: string;
@@ -31,6 +32,8 @@ type OverlayComment = {
   color: string;
   lane: number;
   startedAt: number;
+  /** Seconds the animation was already due when React rendered this item. */
+  elapsedAtStart: number;
 };
 
 export type TeslaDanmakuProgrammeChoice = {
@@ -118,7 +121,13 @@ export default function TeslaDanmakuOverlay({
   const commentCursorRef = useRef(0);
   const currentTimeRef = useRef(currentTime);
   const lastTimingLogAtRef = useRef(0);
-  currentTimeRef.current = currentTime;
+  const timeline = resolveTeslaDanmakuTimeline({
+    contentTime: currentTime,
+    mediaTime,
+    timelineOffsetSec,
+  });
+  const timelineTime = timeline.time;
+  currentTimeRef.current = timelineTime;
 
   const safeLaneCount = Math.max(3, Math.min(8, Math.floor(laneCount || 7)));
   const safeSpeed = Math.max(1, Math.min(5, Math.floor(speed || 3)));
@@ -272,8 +281,11 @@ export default function TeslaDanmakuOverlay({
       const manualEpisode = manualEpisodeId
         ? episodes.find((episode) => episode.episodeId === manualEpisodeId)
         : null;
-      const automaticEpisode =
-        selectTeslaDanmakuEpisode(episodes, episodeNumber, episodeLabel);
+      const automaticEpisode = selectTeslaDanmakuEpisode(
+        episodes,
+        episodeNumber,
+        episodeLabel
+      );
       const selectedEpisode = manualEpisode || automaticEpisode;
       onChoicesChange?.({
         programmes,
@@ -365,15 +377,15 @@ export default function TeslaDanmakuOverlay({
   useEffect(() => {
     if (!enabled) {
       setActiveComments([]);
-      lastTimeRef.current = currentTime;
-      commentCursorRef.current = lowerBoundComment(comments, currentTime);
+      lastTimeRef.current = timelineTime;
+      commentCursorRef.current = lowerBoundComment(comments, timelineTime);
       return;
     }
 
     const previousTime = lastTimeRef.current;
-    if (currentTime < previousTime || currentTime - previousTime > 2) {
+    if (timelineTime < previousTime || timelineTime - previousTime > 2) {
       setActiveComments([]);
-      const resumeFrom = Math.max(0, currentTime - 0.2);
+      const resumeFrom = Math.max(0, timelineTime - 0.2);
       lastTimeRef.current = resumeFrom;
       commentCursorRef.current = lowerBoundComment(comments, resumeFrom);
       return;
@@ -385,7 +397,7 @@ export default function TeslaDanmakuOverlay({
     const due: typeof comments = [];
     while (
       cursor < comments.length &&
-      comments[cursor].time <= currentTime + 0.25 &&
+      comments[cursor].time <= timelineTime + 0.25 &&
       due.length < 6
     ) {
       due.push(comments[cursor]);
@@ -396,7 +408,7 @@ export default function TeslaDanmakuOverlay({
     setActiveComments((current) => {
       const stillVisible = current.filter(
         (comment) =>
-          currentTime - comment.startedAt < animationDurationSec + 0.5
+          timelineTime - comment.startedAt < animationDurationSec + 0.5
       );
       if (due.length === 0) return stillVisible;
 
@@ -422,7 +434,11 @@ export default function TeslaDanmakuOverlay({
           text: comment.text,
           color: comment.color,
           lane,
-          startedAt: currentTime,
+          // The CSS animation starts with a negative delay, so a comment that
+          // arrives between React ticks is rendered at its real position
+          // instead of visibly lagging behind the video frame.
+          startedAt: comment.time,
+          elapsedAtStart: Math.max(0, timelineTime - comment.time),
         });
       });
       if (
@@ -437,20 +453,22 @@ export default function TeslaDanmakuOverlay({
             (due[0].time + timelineOffsetSec).toFixed(3)
           ),
           timelineOffsetSec: Number(timelineOffsetSec.toFixed(3)),
+          presentationClockAccepted: timeline.aligned,
         });
       }
       return [...stillVisible, ...spawned];
     });
 
-    lastTimeRef.current = currentTime;
+    lastTimeRef.current = timelineTime;
   }, [
     animationDurationSec,
     comments,
-    currentTime,
     enabled,
     mediaTime,
     safeLaneCount,
     timelineOffsetSec,
+    timeline.aligned,
+    timelineTime,
   ]);
 
   const visibleComments = useMemo(
@@ -481,6 +499,10 @@ export default function TeslaDanmakuOverlay({
             top: `${Math.round(10 + comment.lane * displayFontSize * 1.35)}px`,
             color: comment.color,
             animationDuration: `${animationDurationSec}s`,
+            animationDelay: `-${Math.min(
+              animationDurationSec,
+              comment.elapsedAtStart
+            )}s`,
             animationPlayState: playing ? 'running' : 'paused',
             fontSize: `${displayFontSize}px`,
           }}

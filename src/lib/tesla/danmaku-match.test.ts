@@ -2,6 +2,7 @@ import {
   buildTeslaDanmakuFileName,
   buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
+  extractTeslaDanmakuDateKey,
   inferTeslaDanmakuSeason,
   parseTeslaDanmakuEpisodeNumber,
   rankTeslaDanmakuCandidates,
@@ -163,9 +164,7 @@ describe('Tesla danmaku automatic match identity', () => {
       { episodeTitle: '第1期下：游戏' },
       { episodeTitle: '第1期加更：幕后' },
     ];
-    expect(selectTeslaDanmakuEpisode(episodes, 1, '第1期下')).toBe(
-      episodes[1]
-    );
+    expect(selectTeslaDanmakuEpisode(episodes, 1, '第1期下')).toBe(episodes[1]);
     expect(selectTeslaDanmakuEpisode(episodes, 1, '第1期加更')).toBe(
       episodes[2]
     );
@@ -181,6 +180,28 @@ describe('Tesla danmaku automatic match identity', () => {
         ],
         1,
         '第1期'
+      )
+    ).toBeNull();
+  });
+
+  test('matches date-labelled broadcasts by exact air date, not playlist index', () => {
+    const episodes = [
+      { episodeTitle: '2026-05-24 正片' },
+      { episodeTitle: '20260531 加更' },
+      { episodeTitle: '20260607 正片' },
+    ];
+    expect(extractTeslaDanmakuDateKey('第20260531期')).toBe('20260531');
+    expect(selectTeslaDanmakuEpisode(episodes, 1, '20260531')).toBe(
+      episodes[1]
+    );
+  });
+
+  test('does not guess a dated broadcast when the danmaku dates differ', () => {
+    expect(
+      selectTeslaDanmakuEpisode(
+        [{ episodeTitle: '20260524 正片' }, { episodeTitle: '20260607 正片' }],
+        1,
+        '20260531'
       )
     ).toBeNull();
   });

@@ -576,7 +576,7 @@ function TeslaWebLivePageInner() {
           </div>
         </section>
 
-        <aside className='flex min-h-0 flex-col overflow-hidden border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:rounded-2xl lg:border lg:border-white/10'>
+        <aside className='tesla-live-selector-panel flex min-h-0 flex-col overflow-hidden border-t border-white/10 bg-[#0c0f15] lg:m-4 lg:ml-2 lg:rounded-2xl lg:border lg:border-white/10'>
           <div className='flex min-h-16 shrink-0 items-center justify-between border-b border-white/10 px-4'>
             <div>
               <div className='text-sm font-semibold'>

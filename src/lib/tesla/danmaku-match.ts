@@ -177,8 +177,37 @@ export function parseTeslaDanmakuEpisodeNumber(value: string) {
   return null;
 }
 
+/**
+ * Variety and daily programmes are commonly identified by their air date
+ * (for example 20260531), not a sequential episode number.  Treating that
+ * token as a number would make the episode picker choose a wrong comment set.
+ */
+export function extractTeslaDanmakuDateKey(value: string): string | null {
+  const normalized = value.normalize('NFKC');
+  const match = normalized.match(
+    /(?:^|[^\d])((?:19|20)\d{2})\s*(?:年|[./-])?\s*(0?[1-9]|1[0-2])\s*(?:月|[./-])?\s*(0?[1-9]|[12]\d|3[01])(?:日)?(?=$|[^\d])/
+  );
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${year}${String(month).padStart(2, '0')}${String(day).padStart(
+    2,
+    '0'
+  )}`;
+}
+
 type TeslaDanmakuEpisodeIdentity = {
   number: number | null;
+  dateKey: string | null;
   /**
    * "第 1 期上"、"第 1 期下"、"加更" 不能只按数字视为同一集。
    * 这里保留可比较的版本身份；未知时宁可要求手动选择，也不串弹幕。
@@ -207,6 +236,7 @@ function getTeslaDanmakuEpisodeIdentity(
 ): TeslaDanmakuEpisodeIdentity {
   return {
     number: parseTeslaDanmakuEpisodeNumber(value),
+    dateKey: extractTeslaDanmakuDateKey(value),
     variant: readTeslaDanmakuEpisodeVariant(value),
   };
 }
@@ -216,6 +246,9 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
   wantedEpisode: number,
   episodeLabel?: string
 ): T | null {
+  const requestedDate = episodeLabel
+    ? extractTeslaDanmakuDateKey(episodeLabel)
+    : null;
   const labelNumber = episodeLabel
     ? parseTeslaDanmakuEpisodeNumber(episodeLabel)
     : null;
@@ -224,6 +257,16 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
     episode,
     identity: getTeslaDanmakuEpisodeIdentity(episode.episodeTitle),
   }));
+
+  // Air-date labels identify one real broadcast, so require an exact and
+  // unique date match.  Never fall back to playlist position for a dated
+  // programme: a wrong danmaku episode is worse than asking the user to pick.
+  if (requestedDate) {
+    const dateMatches = numbered.filter(
+      (item) => item.identity.dateKey === requestedDate
+    );
+    return dateMatches.length === 1 ? dateMatches[0].episode : null;
+  }
 
   if (episodeLabel) {
     const normalizedLabel = normalizeComparableTitle(episodeLabel);
@@ -236,9 +279,7 @@ export function selectTeslaDanmakuEpisode<T extends { episodeTitle: string }>(
     if (labelMatch) return labelMatch;
   }
 
-  const candidates = numbered.filter(
-    (item) => item.identity.number === wanted
-  );
+  const candidates = numbered.filter((item) => item.identity.number === wanted);
   const requestedVariant = episodeLabel
     ? readTeslaDanmakuEpisodeVariant(episodeLabel)
     : null;

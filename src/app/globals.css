@@ -552,6 +552,53 @@ div[data-media-provider] video {
     min-width: 0;
   }
 
+  /* Keep the right rail readable in the narrow cockpit viewport without
+     changing the player canvas or its 16:10 frame.  Episode/source labels are
+     intentionally two lines at most; the full label remains available via
+     title on desktop and touch/scroll stays inside the selector. */
+  .tesla-vod-route .tesla-vod-side-tabs > button {
+    padding-block: 0.4rem !important;
+    font-size: 0.6875rem !important;
+    line-height: 0.875rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-episode-list,
+  .tesla-vod-route .tesla-vod-source-list {
+    padding: 0.5rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-episode-list .grid {
+    gap: 0.375rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-episode-button {
+    min-height: 2rem;
+    padding: 0.375rem 0.5rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-episode-label {
+    display: -webkit-box !important;
+    min-height: 0 !important;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 0.8125rem !important;
+    overflow-wrap: anywhere;
+  }
+
+  .tesla-vod-route .tesla-vod-source-list .mb-1\.5 {
+    margin-bottom: 0.375rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-source-list button {
+    padding: 0.375rem 0.5rem !important;
+  }
+
+  .tesla-vod-route .tesla-vod-source-name {
+    font-size: 0.6875rem !important;
+    line-height: 0.875rem !important;
+  }
+
   /* Keep the auto-next control inside the narrow vehicle source rail. The
      label may shrink, but the switch retains its accessible hit target. */
   .tesla-vod-route .tesla-vod-autoplay-row {
@@ -662,6 +709,49 @@ div[data-media-provider] video {
   .tesla-live-route .lg\:text-lg {
     font-size: 0.875rem;
     line-height: 1.125rem;
+  }
+
+  /* TV and web-live now use the same labelled side rail.  Cards, platform
+     icons and action text fit the effective Tesla viewport instead of forcing
+     a large icon next to an over-wrapped label. */
+  .tesla-live-route .tesla-live-selector-panel > div {
+    padding: 0.5rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel .gap-3 {
+    gap: 0.5rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel .min-h-16 {
+    min-height: 2.5rem !important;
+    padding-block: 0.5rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel .min-h-14,
+  .tesla-live-route .tesla-live-selector-panel .min-h-12 {
+    min-height: 2.25rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel .min-h-11,
+  .tesla-live-route .tesla-live-selector-panel .min-h-10 {
+    min-height: 2rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel button,
+  .tesla-live-route .tesla-live-selector-panel input {
+    font-size: 0.6875rem !important;
+    line-height: 0.875rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel svg {
+    width: 0.875rem !important;
+    height: 0.875rem !important;
+  }
+
+  .tesla-live-route .tesla-live-selector-panel .h-10.w-10 {
+    width: 2rem !important;
+    height: 2rem !important;
+    border-radius: 0.5rem !important;
   }
 
   .tesla-short-video-route {
