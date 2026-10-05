@@ -60,15 +60,27 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           test -s .next/BUILD_ID
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          node --check server.js
+          node -e 'console.log("Node:", process.version); console.log("Next:", require("next/package.json").version); require("socket.io"); require("redis"); console.log("Linux runtime dependency check passed")'
+          pnpm prune --prod
+          test -d node_modules/next
+          test -d node_modules/socket.io
+          test -d node_modules/redis
+          rm -rf .next/standalone
           {
             printf 'commit=%s\n' "$GITHUB_SHA"
             printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             printf 'storage=redis-local-on-ecs\n'
+            printf 'runtime=linux-x64-production-dependencies\n'
+            printf 'node=%s\n' "$(node --version)"
           } > P002_BUILD_INFO.txt
           tar \
             --exclude='./.git' \
             --exclude='./.github' \
             --exclude='./.next/cache' \
+            --exclude='./.next/standalone' \
             --exclude='./.env*' \
             -czf "$RUNNER_TEMP/p002-linux-x64.tar.gz" .
           sha256sum "$RUNNER_TEMP/p002-linux-x64.tar.gz" \
