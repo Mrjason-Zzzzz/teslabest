@@ -65,15 +65,30 @@ jobs:
           pnpm build
           test -s .next/BUILD_ID
 
+      - name: Verify Linux runtime and keep production dependencies only
+        run: |
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          node --check server.js
+          node -e 'console.log("Node:", process.version); console.log("Next:", require("next/package.json").version); require("socket.io"); require("redis"); console.log("Linux runtime dependency check passed")'
+          pnpm prune --prod
+          test -d node_modules/next
+          test -d node_modules/socket.io
+          test -d node_modules/redis
+          rm -rf .next/standalone
+
       - name: Package Linux application
         run: |
           printf 'commit=%s\n' "$(git rev-parse HEAD)" > P002_BUILD_INFO.txt
           printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> P002_BUILD_INFO.txt
           printf 'storage=redis-local-on-ecs\n' >> P002_BUILD_INFO.txt
+          printf 'runtime=linux-x64-production-dependencies\n' >> P002_BUILD_INFO.txt
+          printf 'node=%s\n' "$(node --version)" >> P002_BUILD_INFO.txt
           tar \
             --exclude='./.git' \
             --exclude='./.github' \
             --exclude='./.next/cache' \
+            --exclude='./.next/standalone' \
             --exclude='./.env*' \
             -czf "$RUNNER_TEMP/p002-linux-x64.tar.gz" .
           cd "$RUNNER_TEMP"
