@@ -278,7 +278,22 @@ function inferDiscontinuityAdIslandIndexes(lines: string[]) {
 
   const runs: Array<typeof segments> = [];
   for (const segment of segments) {
-    if (segment.boundaryBefore || runs.length === 0) runs.push([]);
+    const previousRun = runs[runs.length - 1];
+    const previousSegment = previousRun?.[previousRun.length - 1];
+    // Some providers mark only the entry into an inserted ad with
+    // DISCONTINUITY and then return to the programme CDN without a matching
+    // closing marker. Split on a proven media-family change as well, so the
+    // short foreign island remains visible to the conservative A -> B -> A
+    // topology check below.
+    if (
+      segment.boundaryBefore ||
+      runs.length === 0 ||
+      (previousSegment &&
+        previousRun[0]?.boundaryBefore &&
+        !isSameProgrammeFamily(previousSegment.family, segment.family))
+    ) {
+      runs.push([]);
+    }
     runs[runs.length - 1].push(segment);
   }
 

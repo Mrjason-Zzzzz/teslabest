@@ -153,6 +153,40 @@ https://bf.modujx17.com/20260923/UVqm0CSC/3050kb/hls/original-002.ts
     expect(filtered).toContain('#EXT-X-DISCONTINUITY');
   });
 
+  it('识别只有广告入口 discontinuity 的当前魔都资源插播结构', () => {
+    // 当前源只在进入广告前写 DISCONTINUITY，广告结束后直接切回正片
+    // CDN；广告 URI 也没有 ad/ads 等关键字，必须依赖 A -> B -> A
+    // 媒体目录拓扑识别，不能依赖站长旧版关键词脚本。
+    const playlist = `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:2,
+https://bf.modujx17.com/20260923/UVqm0CSC/3050kb/hls/pReimJQk.ts
+#EXT-X-DISCONTINUITY
+#EXT-X-KEY:METHOD=NONE
+#EXTINF:3,
+/20261009/Bjf6z0RU/10152kb/hls/6JFnQsqe.ts
+#EXTINF:3,
+/20261009/Bjf6z0RU/10152kb/hls/WfGR4xIS.ts
+#EXTINF:5,
+/20261009/Bjf6z0RU/10152kb/hls/KMplaxXV.ts
+#EXTINF:3,
+/20261009/Bjf6z0RU/10152kb/hls/0ONtLMnT.ts
+#EXTINF:3,
+/20261009/Bjf6z0RU/10152kb/hls/auT4G7cp.ts
+#EXTINF:1.6,
+https://bf.modujx17.com/20260923/UVqm0CSC/3050kb/hls/SKmoWqnf.ts
+#EXTINF:2,
+https://bf.modujx17.com/20260923/UVqm0CSC/3050kb/hls/wA7VPa2H.ts
+#EXT-X-ENDLIST`;
+
+    const filtered = applyConfiguredAdFilterSafely('modum3u8', playlist);
+
+    expect(filtered).toContain('pReimJQk.ts');
+    expect(filtered).toContain('SKmoWqnf.ts');
+    expect(filtered).not.toContain('Bjf6z0RU');
+    expect(filtered).toContain('#EXT-X-DISCONTINUITY');
+  });
+
   it('移除同一清单内已被证实广告岛的重复末尾插入', () => {
     const playlist = `#EXTM3U
 #EXT-X-PLAYLIST-TYPE:VOD

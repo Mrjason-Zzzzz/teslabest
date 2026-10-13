@@ -65,6 +65,7 @@ interface TeslaDanmakuOverlayProps {
   currentTime: number;
   mediaTime?: number;
   timelineOffsetSec?: number;
+  danmakuDelaySec?: number;
   playing: boolean;
   laneCount?: number;
   speed?: number;
@@ -100,6 +101,7 @@ export default function TeslaDanmakuOverlay({
   currentTime,
   mediaTime = currentTime,
   timelineOffsetSec = 0,
+  danmakuDelaySec = 0,
   playing,
   laneCount = 7,
   speed = 3,
@@ -125,6 +127,7 @@ export default function TeslaDanmakuOverlay({
     contentTime: currentTime,
     mediaTime,
     timelineOffsetSec,
+    danmakuDelaySec,
   });
   const timelineTime = timeline.time;
   currentTimeRef.current = timelineTime;

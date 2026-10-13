@@ -67,11 +67,27 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      const proto =
-        request.headers.get('x-forwarded-proto') ||
-        (host.includes('localhost') || host.includes('127.0.0.1')
-          ? 'http'
-          : 'https');
+      // Direct access to the ECS Node listener carries no x-forwarded-proto.
+      // Use the actual request scheme instead of assuming all public hosts
+      // are HTTPS; otherwise an HTTP-only :3000 listener emits unreachable
+      // https://<host>:3000 URLs for every nested manifest and segment.
+      const forwardedProto = request.headers
+        .get('x-forwarded-proto')
+        ?.split(',')[0]
+        ?.trim()
+        .toLowerCase();
+      let proto =
+        forwardedProto === 'https' || forwardedProto === 'http'
+          ? forwardedProto
+          : '';
+      if (!proto) {
+        try {
+          const requestProto = new URL(request.url).protocol.replace(':', '');
+          proto = requestProto === 'https' ? 'https' : 'http';
+        } catch {
+          proto = 'http';
+        }
+      }
       origin = `${proto}://${host}`;
     }
 

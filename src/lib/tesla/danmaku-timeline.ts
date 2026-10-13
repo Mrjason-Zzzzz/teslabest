@@ -5,6 +5,8 @@ export type TeslaDanmakuTimelineInput = {
   mediaTime?: number;
   /** Media PTS minus content time. */
   timelineOffsetSec?: number;
+  /** Positive values delay comments without changing media playback. */
+  danmakuDelaySec?: number;
 };
 
 export type TeslaDanmakuTimeline = {
@@ -21,13 +23,23 @@ export function resolveTeslaDanmakuTimeline({
   contentTime,
   mediaTime,
   timelineOffsetSec,
+  danmakuDelaySec = 0,
 }: TeslaDanmakuTimelineInput): TeslaDanmakuTimeline {
-  const fallback = Number.isFinite(contentTime) ? Math.max(0, contentTime) : 0;
+  const safeDelay = Number.isFinite(danmakuDelaySec)
+    ? Math.max(-60, Math.min(60, danmakuDelaySec))
+    : 0;
+  const baseContentTime = Number.isFinite(contentTime)
+    ? Math.max(0, contentTime)
+    : 0;
+  const fallback = Math.max(0, baseContentTime - safeDelay);
   if (!Number.isFinite(mediaTime) || !Number.isFinite(timelineOffsetSec)) {
     return { time: fallback, aligned: false };
   }
 
-  const renderedContentTime = Math.max(0, mediaTime! - timelineOffsetSec!);
+  const renderedContentTime = Math.max(
+    0,
+    mediaTime! - timelineOffsetSec! - safeDelay
+  );
   // The state clock and the actually painted-frame clock normally differ by a
   // fraction of a second.  Beyond this boundary the input is stale; retaining
   // the content clock is safer than showing a visibly wrong comment.

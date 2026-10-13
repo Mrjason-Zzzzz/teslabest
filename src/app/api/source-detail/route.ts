@@ -98,11 +98,27 @@ function getRequestSiteOrigin(request: NextRequest): string {
     }
   }
 
-  const proto =
-    request.headers.get('x-forwarded-proto') ||
-    (host.includes('localhost') || host.includes('127.0.0.1')
-      ? 'http'
-      : 'https');
+  // A direct ECS request has no reverse-proxy header.  Do not infer HTTPS
+  // from a public IP/hostname here: that previously rewrote every media
+  // segment from http://<ecs>:3000 to https://<ecs>:3000, although the
+  // Node listener only serves HTTP.  Tesla then loaded the manifest but
+  // failed every rewritten segment request.
+  const forwardedProto = request.headers
+    .get('x-forwarded-proto')
+    ?.split(',')[0]
+    ?.trim()
+    .toLowerCase();
+  let proto = forwardedProto === 'https' || forwardedProto === 'http'
+    ? forwardedProto
+    : '';
+  if (!proto) {
+    try {
+      const requestProto = new URL(request.url).protocol.replace(':', '');
+      proto = requestProto === 'https' ? 'https' : 'http';
+    } catch {
+      proto = 'http';
+    }
+  }
 
   return `${proto}://${host}`.replace(/\/$/, '');
 }

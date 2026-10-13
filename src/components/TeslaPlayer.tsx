@@ -277,6 +277,7 @@ export default function TeslaPlayer({
   const [danmakuRows, setDanmakuRows] = useState(7);
   const [danmakuSpeed, setDanmakuSpeed] = useState(3);
   const [danmakuFontSize, setDanmakuFontSize] = useState(30);
+  const [danmakuDelaySec, setDanmakuDelaySec] = useState(0);
   const [manualDanmakuAnimeId, setManualDanmakuAnimeId] = useState<
     number | null
   >(null);
@@ -312,6 +313,29 @@ export default function TeslaPlayer({
         verifiedAdRanges
       ),
     [currentTime, presentedVideoTime, verifiedAdRanges]
+  );
+  const danmakuDelayStorageKey = useMemo(
+    () =>
+      `tesla_danmaku_delay:${encodeURIComponent(
+        [
+          contentTitle || danmakuTitle || title,
+          danmakuYear,
+          danmakuMediaType,
+          danmakuEpisodeNumber,
+          danmakuEpisodeLabel,
+          sourceKey,
+        ].join('|')
+      )}`,
+    [
+      contentTitle,
+      danmakuEpisodeLabel,
+      danmakuEpisodeNumber,
+      danmakuMediaType,
+      danmakuTitle,
+      danmakuYear,
+      sourceKey,
+      title,
+    ]
   );
   const [danmakuChoices, setDanmakuChoices] = useState<TeslaDanmakuChoices>({
     programmes: [],
@@ -424,6 +448,31 @@ export default function TeslaPlayer({
       localStorage.setItem('tesla_danmaku_font_size', String(danmakuFontSize));
     } catch {}
   }, [danmakuFontSize, danmakuRows, danmakuSpeed, live]);
+
+  useEffect(() => {
+    if (live) return;
+    try {
+      const storedDelay = Number(localStorage.getItem(danmakuDelayStorageKey));
+      setDanmakuDelaySec(
+        Number.isFinite(storedDelay)
+          ? Math.max(-60, Math.min(60, storedDelay))
+          : 0
+      );
+    } catch {
+      setDanmakuDelaySec(0);
+    }
+  }, [danmakuDelayStorageKey, live]);
+
+  const adjustDanmakuDelay = useCallback(
+    (nextDelay: number) => {
+      const safeDelay = Math.max(-60, Math.min(60, nextDelay));
+      setDanmakuDelaySec(safeDelay);
+      try {
+        localStorage.setItem(danmakuDelayStorageKey, String(safeDelay));
+      } catch {}
+    },
+    [danmakuDelayStorageKey]
+  );
 
   const toggleDanmaku = useCallback(() => {
     setDanmakuEnabled((current) => {
@@ -1641,6 +1690,7 @@ export default function TeslaPlayer({
           timelineOffsetSec={
             (presentedVideoTime || currentTime) - danmakuContentTime
           }
+          danmakuDelaySec={danmakuDelaySec}
           playing={playing}
           laneCount={danmakuRows}
           speed={danmakuSpeed}
@@ -2229,6 +2279,55 @@ export default function TeslaPlayer({
               </div>
             </div>
           ))}
+          <div
+            className={`block text-sm text-white/80 ${
+              isWebFullscreen || isFullscreen ? 'mb-5' : 'mb-2'
+            }`}
+          >
+            <span className='mb-2 flex items-center justify-between gap-2'>
+              <span>弹幕时间校准</span>
+              <strong>
+                {danmakuDelaySec === 0
+                  ? '同步'
+                  : `${danmakuDelaySec > 0 ? '延后' : '提前'} ${Math.abs(
+                      danmakuDelaySec
+                    )} 秒`}
+              </strong>
+            </span>
+            <div className='grid grid-cols-[3rem_1fr_3rem] items-center gap-2'>
+              <button
+                type='button'
+                className='min-h-12 rounded-xl bg-white/10 text-base active:scale-95 disabled:opacity-30'
+                disabled={danmakuDelaySec <= -60}
+                onClick={() => adjustDanmakuDelay(danmakuDelaySec - 1)}
+                aria-label='弹幕提前一秒'
+              >
+                提前
+              </button>
+              <button
+                type='button'
+                className='min-h-12 rounded-xl bg-violet-500/20 px-2 text-center text-sm font-semibold text-violet-100 active:scale-95'
+                onClick={() => adjustDanmakuDelay(0)}
+                aria-label='重置弹幕时间'
+              >
+                {danmakuDelaySec === 0
+                  ? '当前同步'
+                  : '点击重置为同步'}
+              </button>
+              <button
+                type='button'
+                className='min-h-12 rounded-xl bg-white/10 text-base active:scale-95 disabled:opacity-30'
+                disabled={danmakuDelaySec >= 60}
+                onClick={() => adjustDanmakuDelay(danmakuDelaySec + 1)}
+                aria-label='弹幕延后一秒'
+              >
+                延后
+              </button>
+            </div>
+            <p className='mt-2 text-[11px] leading-4 text-white/45'>
+              只校准当前节目与集数，不改变视频播放和声音时间线。
+            </p>
+          </div>
           <div className='mt-3 border-t border-white/10 pt-3'>
             <div className='mb-2 flex items-center justify-between gap-2'>
               <span className='text-sm font-semibold text-white/80'>
