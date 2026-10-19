@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import {
+  type CastPayload,
   isDirectPlayableUrl,
   readCastSessionForOwner,
+  readCastSessionForToken,
   submitCastPayload,
-  type CastPayload,
 } from '@/lib/cast-session';
 import { resolvePublicWebLiveSource } from '@/lib/tesla/web-live-source';
 
@@ -69,22 +70,71 @@ export async function POST(
       }
     }
   } else if (body?.type === 'vod') {
-    if (!value || value.length > 120) {
-      return NextResponse.json(
-        { error: '请输入不超过 120 个字符的影片名称' },
-        { status: 400, headers: noStore }
-      );
+    const structured = body as typeof body & {
+      source?: string;
+      id?: string;
+      title?: string;
+      year?: string;
+      episodeIndex?: number;
+    };
+    const source = structured.source?.trim() || '';
+    const id = structured.id?.trim() || '';
+    const title = structured.title?.trim() || '';
+    if (source && id && title) {
+      const session = await readCastSessionForToken(params.sessionId, token);
+      if (!session) {
+        return NextResponse.json(
+          { error: '二维码已过期或无效，请在车机重新打开接力页' },
+          { status: 404, headers: noStore }
+        );
+      }
+      const { getAvailableApiSites } = await import('@/lib/config');
+      const sites = await getAvailableApiSites(session.owner);
+      if (!sites.some((site) => site.key === source)) {
+        return NextResponse.json(
+          { error: '所选资源已停用，请重新搜索' },
+          { status: 400, headers: noStore }
+        );
+      }
+      if (id.length > 300 || title.length > 160) {
+        return NextResponse.json(
+          { error: '资源参数过长，请重新选择' },
+          { status: 400, headers: noStore }
+        );
+      }
+      payload = {
+        type: 'vod',
+        source,
+        id,
+        title,
+        year: structured.year?.trim().slice(0, 12),
+        episodeIndex: Math.max(
+          0,
+          Math.min(9999, Math.floor(Number(structured.episodeIndex) || 0))
+        ),
+        label,
+      };
+    } else {
+      if (!value || value.length > 120) {
+        return NextResponse.json(
+          { error: '请输入不超过 120 个字符的影片名称' },
+          { status: 400, headers: noStore }
+        );
+      }
+      try {
+        new URL(value);
+        return NextResponse.json(
+          {
+            error:
+              '受保护的平台网页不能直接转成视频流，请填写片名后由本站资源匹配播放',
+          },
+          { status: 400, headers: noStore }
+        );
+      } catch {
+        // A plain title is the expected search handoff input.
+      }
+      payload = { type: 'vod', query: value, label };
     }
-    try {
-      new URL(value);
-      return NextResponse.json(
-        { error: '受保护的平台网页不能直接转成视频流，请填写片名后由本站资源匹配播放' },
-        { status: 400, headers: noStore }
-      );
-    } catch {
-      // A plain title is the expected search handoff input.
-    }
-    payload = { type: 'vod', query: value, label };
   } else {
     return NextResponse.json(
       { error: 'Unsupported cast payload' },

@@ -166,6 +166,10 @@ export class WebCodecsPlayer {
   private nextAudioStartTime = 0;
   private volume = 1;
   private playbackRate = 1;
+  private rateReloadTimer: number | null = null;
+  private backgroundSuspended = false;
+  private backgroundResumeTime = 0;
+  private backgroundWasPlaying = false;
   // At non-1x use the browser media path for audio when it exposes a
   // pitch-preservation flag. Canvas/WebCodecs still renders the video.
   private useNativePitchPreservingAudio = false;
@@ -2414,7 +2418,44 @@ export class WebCodecsPlayer {
 
     if (!this.sourceUrl) return;
     this.wantPlaying = true;
-    void this.load(this.sourceUrl, restartAt);
+    if (this.rateReloadTimer !== null) {
+      clearTimeout(this.rateReloadTimer);
+    }
+    // Tesla can emit more than one click/touch event for a single tap.  A
+    // short coalescing window guarantees that one user choice creates one
+    // decoder/HLS rebuild instead of several overlapping generations.
+    this.rateReloadTimer = window.setTimeout(() => {
+      this.rateReloadTimer = null;
+      if (this.destroyed || !this.sourceUrl) return;
+      void this.load(this.sourceUrl, restartAt);
+    }, 220);
+  }
+
+  suspendForBackground() {
+    if (this.backgroundSuspended || this.destroyed || !this.sourceUrl) return;
+    this.backgroundSuspended = true;
+    this.backgroundResumeTime = Math.max(0, this.getMediaTime());
+    this.backgroundWasPlaying =
+      this.wantPlaying && this.state !== 'paused' && this.state !== 'ended';
+    this.wantPlaying = false;
+    this.loadGeneration++;
+    this.teardown();
+    this.teardownAudioGraph();
+    if (this.state !== 'ended' && this.state !== 'error') {
+      this.setState('paused');
+    }
+  }
+
+  async resumeFromBackground() {
+    if (!this.backgroundSuspended || this.destroyed || !this.sourceUrl) return;
+    const resumeAt = this.liveHint ? 0 : this.backgroundResumeTime;
+    const shouldPlay = this.backgroundWasPlaying;
+    this.backgroundSuspended = false;
+    this.backgroundResumeTime = 0;
+    this.backgroundWasPlaying = false;
+    this.wantPlaying = shouldPlay;
+    await this.load(this.sourceUrl, resumeAt);
+    if (!shouldPlay) this.pause();
   }
 
   async seek(seconds: number) {
@@ -2542,6 +2583,11 @@ export class WebCodecsPlayer {
 
   destroy() {
     this.destroyed = true;
+    if (this.rateReloadTimer !== null) {
+      clearTimeout(this.rateReloadTimer);
+      this.rateReloadTimer = null;
+    }
+    this.backgroundSuspended = false;
     this.loadGeneration++;
     this.sourceUrl = '';
     this.teardown();

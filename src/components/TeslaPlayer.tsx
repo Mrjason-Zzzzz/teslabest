@@ -46,20 +46,20 @@ import {
   unlockTeslaAudioSession,
   updateTeslaAudioSession,
 } from '@/lib/tesla/audio-session';
-
-import TeslaDanmakuOverlay, {
-  type TeslaDanmakuChoices,
-} from '@/components/TeslaDanmakuOverlay';
-import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 import {
   extractTeslaDanmakuDateKey,
   parseTeslaDanmakuEpisodeNumber,
 } from '@/lib/tesla/danmaku-match';
 import {
+  type TeslaVodPlaybackPreference,
   resolveTeslaVodDefaultMode,
   selectTeslaPlaybackMode,
-  type TeslaVodPlaybackPreference,
 } from '@/lib/tesla/playback-mode';
+
+import TeslaDanmakuOverlay, {
+  type TeslaDanmakuChoices,
+} from '@/components/TeslaDanmakuOverlay';
+import { WebCodecsPlayer } from '@/components/webcodecs/WebCodecsPlayer';
 
 type PlayMode = 'video' | 'webcodecs';
 
@@ -138,7 +138,7 @@ function normalizeDanmakuEpisodeQuery(value: string): string {
   return value
     .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\s·•，,。.:：()（）【】\[\]_-]+/g, '');
+    .replace(/[\s·•，,。.:：()（）【】[\]_-]+/g, '');
 }
 
 // Persisting every three seconds caused hundreds of API requests per viewing
@@ -917,6 +917,36 @@ export default function TeslaPlayer({
     };
   }, [live, persistProgress]);
 
+  useEffect(() => {
+    if (mode !== 'webcodecs') return;
+    const handlePlaybackVisibility = () => {
+      const player = wcPlayerRef.current;
+      if (!player) return;
+      if (document.visibilityState === 'hidden') {
+        persistProgress();
+        player.suspendForBackground();
+        setReconnectMessage('已暂停后台解码，返回页面后自动恢复…');
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        setReconnectMessage('正在恢复播放…');
+        void player.resumeFromBackground().then(
+          () => setReconnectMessage(''),
+          () => {
+            setReconnectMessage('后台恢复失败，正在重建播放器…');
+            setPlaybackSession((value) => value + 1);
+          }
+        );
+      }
+    };
+    document.addEventListener('visibilitychange', handlePlaybackVisibility);
+    return () =>
+      document.removeEventListener(
+        'visibilitychange',
+        handlePlaybackVisibility
+      );
+  }, [mode, persistProgress]);
+
   const beginSeekGesture = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (live || durationRef.current <= 0 || event.button !== 0) return;
@@ -1692,6 +1722,7 @@ export default function TeslaPlayer({
           }
           danmakuDelaySec={danmakuDelaySec}
           playing={playing}
+          playbackRate={rate}
           laneCount={danmakuRows}
           speed={danmakuSpeed}
           fontSize={danmakuFontSize}

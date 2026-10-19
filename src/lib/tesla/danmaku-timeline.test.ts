@@ -1,4 +1,7 @@
-import { resolveTeslaDanmakuTimeline } from './danmaku-timeline';
+import {
+  resolveTeslaDanmakuAnimationDuration,
+  resolveTeslaDanmakuTimeline,
+} from './danmaku-timeline';
 
 describe('Tesla danmaku presentation timeline', () => {
   test('uses the presented frame PTS translated to the content timeline', () => {
@@ -45,5 +48,13 @@ describe('Tesla danmaku presentation timeline', () => {
         danmakuDelaySec: 120,
       })
     ).toEqual({ time: 0, aligned: false });
+  });
+});
+
+describe('Tesla danmaku animation rate', () => {
+  test('keeps screen travel aligned with media time at playback speed', () => {
+    expect(resolveTeslaDanmakuAnimationDuration(10, 1)).toBe(10);
+    expect(resolveTeslaDanmakuAnimationDuration(10, 1.25)).toBe(8);
+    expect(resolveTeslaDanmakuAnimationDuration(10, 2)).toBe(5);
   });
 });

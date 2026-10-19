@@ -16,15 +16,19 @@ import {
   searchAnime,
 } from '@/lib/danmaku/api';
 import {
-  buildTeslaDanmakuFileName,
+  buildTeslaDanmakuMatchFileNames,
   buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
+  extractTeslaDanmakuDateKey,
   parseTeslaDanmakuEpisodeNumber,
   scoreTeslaDanmakuCandidate,
   selectTeslaDanmakuCandidate,
   selectTeslaDanmakuEpisode,
 } from '@/lib/tesla/danmaku-match';
-import { resolveTeslaDanmakuTimeline } from '@/lib/tesla/danmaku-timeline';
+import {
+  resolveTeslaDanmakuAnimationDuration,
+  resolveTeslaDanmakuTimeline,
+} from '@/lib/tesla/danmaku-timeline';
 
 type OverlayComment = {
   id: string;
@@ -67,6 +71,7 @@ interface TeslaDanmakuOverlayProps {
   timelineOffsetSec?: number;
   danmakuDelaySec?: number;
   playing: boolean;
+  playbackRate?: number;
   laneCount?: number;
   speed?: number;
   fontSize?: number;
@@ -103,6 +108,7 @@ export default function TeslaDanmakuOverlay({
   timelineOffsetSec = 0,
   danmakuDelaySec = 0,
   playing,
+  playbackRate = 1,
   laneCount = 7,
   speed = 3,
   fontSize = 30,
@@ -139,7 +145,10 @@ export default function TeslaDanmakuOverlay({
     14,
     Math.round(safeFontSize * Math.min(1, stageSize.height / 540))
   );
-  const animationDurationSec = 14 - (safeSpeed - 1) * 2;
+  const animationDurationSec = resolveTeslaDanmakuAnimationDuration(
+    14 - (safeSpeed - 1) * 2,
+    playbackRate
+  );
   const baseTitle = cleanTeslaDanmakuTitle(title);
   const contentIdentity = `${baseTitle}|${year}|${mediaType}|${episodeNumber}|${episodeLabel}|${totalEpisodes}|${
     manualAnimeId || 0
@@ -181,15 +190,22 @@ export default function TeslaDanmakuOverlay({
 
     const load = async () => {
       const context = { title: baseTitle, year, mediaType, totalEpisodes };
-      const wantedEpisode =
-        parseTeslaDanmakuEpisodeNumber(episodeLabel) || episodeNumber;
+      const dateKey = extractTeslaDanmakuDateKey(episodeLabel);
+      const wantedEpisode = dateKey
+        ? episodeNumber
+        : parseTeslaDanmakuEpisodeNumber(episodeLabel) || episodeNumber;
       const searchKeywords = buildTeslaDanmakuSearchKeywords(baseTitle);
-      const fileNames = searchKeywords.map((keyword) =>
-        buildTeslaDanmakuFileName({
-          title: keyword,
-          year,
-          episode: wantedEpisode,
-        })
+      const fileNames = Array.from(
+        new Set(
+          searchKeywords.flatMap((keyword) =>
+            buildTeslaDanmakuMatchFileNames({
+              title: keyword,
+              year,
+              episode: wantedEpisode,
+              episodeLabel,
+            })
+          )
+        )
       );
       const [matchResults, searchResults] = await Promise.all([
         Promise.all(fileNames.map((fileName) => matchAnime(fileName))),

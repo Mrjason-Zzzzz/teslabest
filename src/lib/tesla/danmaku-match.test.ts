@@ -1,5 +1,6 @@
 import {
   buildTeslaDanmakuFileName,
+  buildTeslaDanmakuMatchFileNames,
   buildTeslaDanmakuSearchKeywords,
   cleanTeslaDanmakuTitle,
   extractTeslaDanmakuDateKey,
@@ -194,6 +195,17 @@ describe('Tesla danmaku automatic match identity', () => {
     expect(selectTeslaDanmakuEpisode(episodes, 1, '20260531')).toBe(
       episodes[1]
     );
+  });
+
+  test('never turns a date-labelled broadcast into a huge episode number', () => {
+    const fileNames = buildTeslaDanmakuMatchFileNames({
+      title: '某电视节目',
+      year: '2026',
+      episode: 12,
+      episodeLabel: '第20260531期 正片',
+    });
+    expect(fileNames).toContain('某电视节目 20260531');
+    expect(fileNames.some((item) => item.includes('E20260531'))).toBe(false);
   });
 
   test('does not guess a dated broadcast when the danmaku dates differ', () => {

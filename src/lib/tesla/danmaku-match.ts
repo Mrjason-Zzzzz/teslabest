@@ -340,3 +340,34 @@ export function buildTeslaDanmakuFileName({
     safeEpisode
   ).padStart(2, '0')}`;
 }
+
+/**
+ * Build conservative match filenames for the remote matching API.
+ *
+ * A broadcast date such as 20260531 is an episode identity, not episode
+ * number 20,260,531.  Keep a normal SxxExx fallback for providers that expose
+ * the programme as a sequential season, and add a date-labelled filename for
+ * daily/variety catalogues.  The final episode selection still requires an
+ * exact date match, so this wider search cannot silently choose another day.
+ */
+export function buildTeslaDanmakuMatchFileNames({
+  title,
+  year,
+  episode,
+  episodeLabel,
+}: {
+  title: string;
+  year?: string;
+  episode: number;
+  episodeLabel?: string;
+}) {
+  const sequential = buildTeslaDanmakuFileName({ title, year, episode });
+  const dateKey = extractTeslaDanmakuDateKey(episodeLabel || '');
+  if (!dateKey) return [sequential];
+  return Array.from(
+    new Set([
+      `${cleanTeslaDanmakuTitle(title)} ${dateKey}`.trim(),
+      sequential,
+    ])
+  );
+}

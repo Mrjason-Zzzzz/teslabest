@@ -3,8 +3,9 @@
 import { Loader2, Smartphone, Tv2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import PageLayout from '@/components/PageLayout';
 import { base58Encode } from '@/lib/utils';
+
+import PageLayout from '@/components/PageLayout';
 
 type CastSession = {
   sessionId: string;
@@ -13,7 +14,16 @@ type CastSession = {
   payload?:
     | { type: 'direct'; url: string; label?: string }
     | { type: 'live'; platform: string; roomId: string; label?: string }
-    | { type: 'vod'; query: string; label?: string };
+    | {
+        type: 'vod';
+        query?: string;
+        source?: string;
+        id?: string;
+        title?: string;
+        year?: string;
+        episodeIndex?: number;
+        label?: string;
+      };
 };
 
 export default function CastPage() {
@@ -73,7 +83,24 @@ export default function CastPage() {
           window.location.assign(`${target.pathname}${target.search}`);
           return;
         }
-        window.location.assign(`/search?q=${encodeURIComponent(next.payload.query)}`);
+        if (next.payload.source && next.payload.id && next.payload.title) {
+          const target = new URL('/play', window.location.origin);
+          target.searchParams.set('source', next.payload.source);
+          target.searchParams.set('id', next.payload.id);
+          target.searchParams.set('title', next.payload.title);
+          if (next.payload.year) target.searchParams.set('year', next.payload.year);
+          if (Number.isFinite(next.payload.episodeIndex)) {
+            target.searchParams.set(
+              'episode',
+              String(Math.max(0, Number(next.payload.episodeIndex)))
+            );
+          }
+          window.location.assign(`${target.pathname}${target.search}`);
+          return;
+        }
+        window.location.assign(
+          `/search?q=${encodeURIComponent(next.payload.query || '')}`
+        );
       } catch {
         // A transient polling failure must not end a valid vehicle session.
       }

@@ -2,8 +2,8 @@
 
 import Hls from 'hls.js';
 
-import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
 import { detectExplicitLiveAdSignal } from './ad-filter-core';
+import { applyConfiguredAdFilterSafely } from './ad-filter-custom';
 
 interface ConfiguredAdFilterResponse {
   code?: string;
@@ -11,7 +11,8 @@ interface ConfiguredAdFilterResponse {
 }
 
 let configuredAdFilterPromise: Promise<string> | null = null;
-const AD_FILTER_SOFT_WAIT_MS = 800;
+let configuredAdFilterVersion = 0;
+const AD_FILTER_SOFT_WAIT_MS = 1500;
 const AD_FILTER_FETCH_TIMEOUT_MS = 3000;
 
 function readRuntimeFilterVersion(): number {
@@ -23,10 +24,17 @@ function readRuntimeFilterVersion(): number {
 
 async function loadConfiguredAdFilterCode(): Promise<string> {
   if (typeof window === 'undefined') return '';
-  if (configuredAdFilterPromise) return configuredAdFilterPromise;
+  const runtimeVersion = readRuntimeFilterVersion();
+  if (
+    configuredAdFilterPromise &&
+    configuredAdFilterVersion === runtimeVersion
+  ) {
+    return configuredAdFilterPromise;
+  }
+  configuredAdFilterVersion = runtimeVersion;
 
   configuredAdFilterPromise = (async () => {
-    const version = readRuntimeFilterVersion();
+    const version = runtimeVersion;
     const cachedCode =
       localStorage.getItem('custom_ad_filter_code_cache') || '';
     const cachedVersion = Number(
@@ -51,7 +59,11 @@ async function loadConfiguredAdFilterCode(): Promise<string> {
         credentials: 'same-origin',
         signal: controller.signal,
       });
-      if (!response.ok) return cachedCode;
+      if (!response.ok) {
+        // A rejected promise lets the next player instance retry instead of
+        // pinning one transient 401/5xx result for the lifetime of the tab.
+        throw new Error(`ad-filter HTTP ${response.status}`);
+      }
       const data = (await response.json()) as ConfiguredAdFilterResponse;
       const code = typeof data.code === 'string' ? data.code : '';
       const responseVersion = Number(data.version || version);
@@ -64,6 +76,7 @@ async function loadConfiguredAdFilterCode(): Promise<string> {
       }
       return code || cachedCode;
     } catch {
+      configuredAdFilterPromise = null;
       return cachedCode;
     } finally {
       clearTimeout(timeout);

@@ -48,3 +48,17 @@ export function resolveTeslaDanmakuTimeline({
   }
   return { time: renderedContentTime, aligned: true };
 }
+
+/** CSS travels in wall-clock time while comment timestamps use media time. */
+export function resolveTeslaDanmakuAnimationDuration(
+  baseDurationSec: number,
+  playbackRate: number
+) {
+  const base = Number.isFinite(baseDurationSec)
+    ? Math.max(2, Math.min(30, baseDurationSec))
+    : 10;
+  const rate = Number.isFinite(playbackRate)
+    ? Math.max(0.5, Math.min(3, playbackRate))
+    : 1;
+  return base / rate;
+}

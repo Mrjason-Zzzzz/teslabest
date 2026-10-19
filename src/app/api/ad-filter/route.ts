@@ -22,15 +22,29 @@ export async function GET(request: Request) {
 
     if (full) {
       // 返回完整代码和版本号
-      return NextResponse.json({
-        code: config.SiteConfig?.CustomAdFilterCode || '',
-        version,
-      });
+      return NextResponse.json(
+        {
+          code: config.SiteConfig?.CustomAdFilterCode || '',
+          version,
+        },
+        {
+          headers: {
+            'Cache-Control': 'private, no-store, max-age=0',
+            'X-P002-Ad-Filter-Version': String(version),
+          },
+        }
+      );
     } else {
       // 只返回版本号
-      return NextResponse.json({
-        version,
-      });
+      return NextResponse.json(
+        { version },
+        {
+          headers: {
+            'Cache-Control': 'private, no-store, max-age=0',
+            'X-P002-Ad-Filter-Version': String(version),
+          },
+        }
+      );
     }
   } catch (error) {
     console.error('获取去广告代码配置失败:', error);

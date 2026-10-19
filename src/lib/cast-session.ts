@@ -9,7 +9,16 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
 export type CastPayload =
   | { type: 'direct'; url: string; label?: string }
   | { type: 'live'; platform: WebLivePlatform; roomId: string; label?: string }
-  | { type: 'vod'; query: string; label?: string };
+  | {
+      type: 'vod';
+      query?: string;
+      source?: string;
+      id?: string;
+      title?: string;
+      year?: string;
+      episodeIndex?: number;
+      label?: string;
+    };
 
 interface StoredCastSession {
   owner: string;
@@ -64,6 +73,15 @@ export async function readCastSessionForOwner(
 ) {
   const session = await readSession(sessionId);
   if (!session || session.owner !== owner) return null;
+  return toPublicSession(sessionId, session);
+}
+
+export async function readCastSessionForToken(
+  sessionId: string,
+  token: string
+) {
+  const session = await readSession(sessionId);
+  if (!session || !token || session.token !== token) return null;
   return toPublicSession(sessionId, session);
 }
 

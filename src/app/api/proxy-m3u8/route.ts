@@ -180,12 +180,18 @@ export async function GET(request: NextRequest) {
     // discontinuity 边界。
     const config = await getConfig();
     const customAdFilterCode = config.SiteConfig?.CustomAdFilterCode || '';
+    const adFilterVersion = config.SiteConfig?.CustomAdFilterVersion || 0;
+    const originalSegmentCount = (
+      originalM3u8Content.match(/^#EXTINF:/gim) || []
+    ).length;
     m3u8Content = applyConfiguredAdFilterSafely(
       source,
       originalM3u8Content,
       customAdFilterCode,
       true
     );
+    const filteredSegmentCount = (m3u8Content.match(/^#EXTINF:/gim) || [])
+      .length;
 
     // 处理 m3u8 中的相对链接
     m3u8Content = resolveM3u8Links(
@@ -202,6 +208,12 @@ export async function GET(request: NextRequest) {
         'Content-Type': 'application/vnd.apple.mpegurl',
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
+        'X-P002-Ad-Filter-Version': String(adFilterVersion),
+        'X-P002-Ad-Segments-Before': String(originalSegmentCount),
+        'X-P002-Ad-Segments-After': String(filteredSegmentCount),
+        'X-P002-Ad-Segments-Removed': String(
+          Math.max(0, originalSegmentCount - filteredSegmentCount)
+        ),
       },
     });
   } catch (error) {

@@ -308,6 +308,12 @@ function shouldSkipAuth(pathname: string): boolean {
     // one-time capability (submission); it is never a public media endpoint.
     '/cast/send',
     '/api/cast/sessions/',
+    // The payload is executable text, but it contains only the owner's media
+    // segment classifier and is already documented as a public player API.
+    // Keeping it outside access-token renewal is important: hls.js requests it
+    // while a video is starting, and a transient 401 silently disables the
+    // configured ad rules for that whole playback session.
+    '/api/ad-filter',
   ];
 
   return skipPaths.some((path) => pathname.startsWith(path));
@@ -324,6 +330,6 @@ function isTVModePath(pathname: string): boolean {
 // 配置middleware匹配规则
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|login|register|oidc-register|qr-login|warning|tv/login|api/login|api/register|api/logout|api/auth/oidc|api/auth/qr|api/auth/refresh|api/telegram/login|api/telegram/config|api/telegram/webhook|api/cron/|api/health|api/server-config|api/proxy-m3u8|api/cms-proxy|api/tvbox/subscribe|api/theme/css|api/openlist/cms-proxy|api/openlist/play|api/emby/cms-proxy|api/emby/play|api/emby/subtitle|api/emby/sources|tvbox/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|login|register|oidc-register|qr-login|warning|tv/login|api/login|api/register|api/logout|api/auth/oidc|api/auth/qr|api/auth/refresh|api/telegram/login|api/telegram/config|api/telegram/webhook|api/cron/|api/health|api/server-config|api/ad-filter|api/proxy-m3u8|api/cms-proxy|api/tvbox/subscribe|api/theme/css|api/openlist/cms-proxy|api/openlist/play|api/emby/cms-proxy|api/emby/play|api/emby/subtitle|api/emby/sources|tvbox/).*)',
   ],
 };
